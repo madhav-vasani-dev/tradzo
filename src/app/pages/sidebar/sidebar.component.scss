@@ -1,0 +1,112 @@
+@use '../../../theme/theme-variables' as *;
+
+.sidebar-container {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  width: 260px;
+  background-color: $secondary-black;
+  border-right: 1px solid $soft-black;
+  color: $text-primary;
+}
+
+.sidebar-header {
+  padding: 1rem;
+  border-bottom: 1px solid $soft-black;
+  
+  .logo-wrapper {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+
+    .brand-logo {
+      height: 32px;
+      width: 32px;
+      border-radius: 8px;
+      object-fit: contain;
+    }
+
+    .brand-text {
+      font-size: 1.25rem;
+      font-weight: 700;
+      background: linear-gradient(90deg, $primary-green, $primary-blue);
+      background-clip: text;
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+    }
+  }
+}
+
+.sidebar-menu {
+  flex: 1;
+  padding: 1rem;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+
+  &::-webkit-scrollbar { width: 4px; }
+  &::-webkit-scrollbar-thumb { background: $soft-black; border-radius: 4px; }
+
+  .menu-item {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    padding: 0.75rem;
+    color: $text-secondary;
+    text-decoration: none;
+    border-radius: 8px;
+    font-size: 0.95rem;
+    font-weight: 500;
+    transition: all 0.2s ease;
+
+    i {
+      font-size: 1.1rem;
+      transition: color 0.2s ease;
+    }
+
+    &:hover {
+      background-color: $soft-black;
+      color: $text-primary;
+      transform: translateX(2px);
+    }
+
+    &.active {
+      background-color: rgba(0, 255, 156, 0.1);
+      color: $primary-green;
+      border-right: 3px solid $primary-green;
+
+      i {
+        color: $primary-green;
+      }
+    }
+  }
+}
+
+.sidebar-footer {
+  padding: 1rem 1.5rem;
+  border-top: 1px solid $soft-black;
+
+  .logout-btn {
+    width: 100%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 0.75rem;
+    padding: 0.75rem;
+    background: transparent;
+    border: 1px solid $soft-black;
+    color: $text-muted;
+    border-radius: 8px;
+    cursor: pointer;
+    transition: all 0.2s ease;
+    font-size: 0.95rem;
+    font-weight: 600;
+
+    &:hover {
+      background: rgba(255, 77, 77, 0.1);
+      color: $neon-red;
+      border-color: rgba(255, 77, 77, 0.2);
+    }
+  }
+}
