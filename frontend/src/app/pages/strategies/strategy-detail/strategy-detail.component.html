@@ -1,0 +1,211 @@
+@if (isLoading) {
+  <div class="loading-state">
+    <div class="loading-spinner"></div>
+    <p>Loading strategy...</p>
+  </div>
+}
+
+@if (!isLoading && !strategy) {
+  <div class="not-found">
+    <i class="pi pi-exclamation-circle"></i>
+    <h2>Strategy not found</h2>
+    <button class="back-btn" (click)="goBack()">← Back to Strategies</button>
+  </div>
+}
+
+@if (!isLoading && strategy) {
+<div class="detail-page animate-fade-in">
+
+  <!-- Back + Breadcrumb -->
+  <div class="breadcrumb">
+    <button class="back-link" (click)="goBack()">
+      <i class="pi pi-arrow-left"></i> Strategies
+    </button>
+    <span class="breadcrumb-sep">/</span>
+    <span class="breadcrumb-current">{{ strategy.name }}</span>
+  </div>
+
+  <!-- ── Hero Section ───────────────────────────────────────────────────── -->
+  <div class="hero glass-card">
+    <div class="hero-left">
+      <div class="hero-chips">
+        <span class="chip">{{ strategy.category }}</span>
+        <span class="badge" [class]="'badge-' + getRiskClass()">
+          <i class="pi pi-shield"></i> {{ strategy.riskLevel }} Risk
+        </span>
+        @for (tag of strategy.tags; track tag) {
+          <span class="tag-pill">{{ tag }}</span>
+        }
+      </div>
+      <h1 class="hero-name">{{ strategy.name }}</h1>
+      <p class="hero-instrument">{{ strategy.instrumentType }}</p>
+      <p class="hero-description">{{ strategy.description }}</p>
+
+      <div class="backtest-info">
+        <i class="pi pi-calendar-clock"></i>
+        Backtested: {{ strategy.performance.backtestStartDate | date:'MMM yyyy' }}
+        — {{ strategy.performance.backtestEndDate | date:'MMM yyyy' }}
+        ({{ strategy.performance.totalTrades }} trades)
+      </div>
+    </div>
+
+    <!-- Deploy / Status panel -->
+    <div class="deploy-panel">
+      <div class="deploy-panel-inner">
+        <div class="min-amount-label">Minimum Investment</div>
+        <div class="min-amount-value">{{ formatINR(strategy.minimumAmount) }}</div>
+
+        @if (!isDeployed) {
+          <button class="deploy-btn" (click)="onDeploy()">
+            <i class="pi pi-play"></i>
+            Deploy Strategy
+          </button>
+          <p class="deploy-note">Choose your broker account and investment amount in the next step.</p>
+        } @else {
+          <div class="deployed-status">
+            <span class="badge badge-active"><i class="pi pi-check-circle"></i> Active</span>
+            <div class="deploy-actions">
+              <button class="action-btn pause">Pause</button>
+              <button class="action-btn stop">Stop</button>
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Key Metrics Row ────────────────────────────────────────────────── -->
+  <div class="metrics-section">
+    <div class="metrics-primary">
+      <div class="metric-card cyan">
+        <div class="metric-icon"><i class="pi pi-chart-line"></i></div>
+        <div class="metric-body">
+          <div class="metric-value">+{{ strategy.performance.cagr.toFixed(1) }}%</div>
+          <div class="metric-label">CAGR</div>
+        </div>
+      </div>
+      <div class="metric-card green">
+        <div class="metric-icon"><i class="pi pi-percentage"></i></div>
+        <div class="metric-body">
+          <div class="metric-value">{{ strategy.performance.winRate.toFixed(1) }}%</div>
+          <div class="metric-label">Win Rate</div>
+        </div>
+      </div>
+      <div class="metric-card red">
+        <div class="metric-icon"><i class="pi pi-arrow-down"></i></div>
+        <div class="metric-body">
+          <div class="metric-value">{{ strategy.performance.maxDrawdown.toFixed(1) }}%</div>
+          <div class="metric-label">Max Drawdown</div>
+        </div>
+      </div>
+      <div class="metric-card gold">
+        <div class="metric-icon"><i class="pi pi-star"></i></div>
+        <div class="metric-body">
+          <div class="metric-value">{{ strategy.performance.sharpeRatio.toFixed(2) }}</div>
+          <div class="metric-label">Sharpe Ratio</div>
+        </div>
+      </div>
+      <div class="metric-card cyan">
+        <div class="metric-icon"><i class="pi pi-bolt"></i></div>
+        <div class="metric-body">
+          <div class="metric-value">{{ strategy.performance.profitFactor.toFixed(2) }}</div>
+          <div class="metric-label">Profit Factor</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Secondary metrics grid -->
+    <div class="metrics-secondary glass-card">
+      <div class="sec-metric">
+        <div class="sec-label">Calmar Ratio</div>
+        <div class="sec-value">{{ strategy.performance.calmarRatio.toFixed(2) }}</div>
+      </div>
+      <div class="sec-metric">
+        <div class="sec-label">Expectancy / Trade</div>
+        <div class="sec-value">{{ formatINR(strategy.performance.expectancy) }}</div>
+      </div>
+      <div class="sec-metric">
+        <div class="sec-label">Avg Trade Return</div>
+        <div class="sec-value">{{ strategy.performance.avgTradeReturn.toFixed(2) }}%</div>
+      </div>
+      <div class="sec-metric">
+        <div class="sec-label">Avg Duration</div>
+        <div class="sec-value">{{ formatDuration(strategy.performance.avgTradeDurationMinutes) }}</div>
+      </div>
+      <div class="sec-metric">
+        <div class="sec-label">Total Trades</div>
+        <div class="sec-value">{{ strategy.performance.totalTrades }}</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Charts Row ─────────────────────────────────────────────────────── -->
+  <div class="charts-row">
+    <!-- Monthly Returns -->
+    <div class="chart-card glass-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Monthly Returns</div>
+          <div class="chart-subtitle">Monthly P&amp;L performance (%)</div>
+        </div>
+        <div class="chart-legend">
+          <span class="legend-dot green"></span><span>Positive</span>
+          <span class="legend-dot red"></span><span>Negative</span>
+        </div>
+      </div>
+      <div class="chart-container">
+        <p-chart type="bar" [data]="monthlyChartData" [options]="monthlyChartOptions" height="220"></p-chart>
+      </div>
+    </div>
+
+    <!-- Equity Curve -->
+    <div class="chart-card glass-card">
+      <div class="chart-header">
+        <div>
+          <div class="chart-title">Equity Curve</div>
+          <div class="chart-subtitle">Portfolio value growth over backtest</div>
+        </div>
+        <div class="equity-badge">
+          Starting ₹1L
+        </div>
+      </div>
+      <div class="chart-container">
+        <p-chart type="line" [data]="equityChartData" [options]="equityChartOptions" height="220"></p-chart>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Yearly Returns Table ───────────────────────────────────────────── -->
+  <div class="yearly-section glass-card">
+    <div class="section-title">Yearly Performance</div>
+    <table class="yearly-table">
+      <thead>
+        <tr>
+          <th>Year</th>
+          <th>Return</th>
+          <th>Performance</th>
+        </tr>
+      </thead>
+      <tbody>
+        @for (y of strategy.performance.yearlyReturns; track y.year) {
+          <tr>
+            <td class="year-cell">{{ y.year }}</td>
+            <td class="return-cell" [class.positive]="y.returnPct >= 0" [class.negative]="y.returnPct < 0">
+              {{ y.returnPct >= 0 ? '+' : '' }}{{ y.returnPct.toFixed(1) }}%
+            </td>
+            <td>
+              <div class="perf-bar-bg">
+                <div class="perf-bar-fill"
+                  [class.positive]="y.returnPct >= 0"
+                  [style.width.%]="Math.min(Math.abs(y.returnPct), 100)">
+                </div>
+              </div>
+            </td>
+          </tr>
+        }
+      </tbody>
+    </table>
+  </div>
+
+</div>
+}

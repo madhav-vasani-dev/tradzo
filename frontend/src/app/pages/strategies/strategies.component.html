@@ -1,0 +1,105 @@
+<div class="strategies-page">
+  <!-- Page Header -->
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Strategies</h1>
+      <p class="page-subtitle">Browse and deploy algorithmic trading strategies to your broker account</p>
+    </div>
+    <div class="header-stats">
+      <div class="header-stat">
+        <span class="header-stat-value">{{ strategies.length }}</span>
+        <span class="header-stat-label">Available</span>
+      </div>
+      <div class="header-stat">
+        <span class="header-stat-value">{{ deployedIds.size }}</span>
+        <span class="header-stat-label">Deployed</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- Filter Bar -->
+  <div class="filter-bar">
+    <!-- Search -->
+    <div class="search-box">
+      <i class="pi pi-search search-icon"></i>
+      <input
+        type="text"
+        class="search-input"
+        placeholder="Search strategies or tags..."
+        [(ngModel)]="searchQuery"
+      />
+    </div>
+
+    <!-- Category filter -->
+    <div class="filter-group">
+      <span class="filter-label">Category</span>
+      <div class="filter-chips">
+        @for (cat of categories; track cat) {
+          <button
+            class="filter-chip"
+            [class.active]="selectedCategory === cat"
+            (click)="setCategory(cat)"
+          >{{ cat }}</button>
+        }
+      </div>
+    </div>
+
+    <!-- Risk filter -->
+    <div class="filter-group">
+      <span class="filter-label">Risk</span>
+      <div class="filter-chips">
+        @for (risk of riskLevels; track risk) {
+          <button
+            class="filter-chip risk"
+            [class.active]="selectedRisk === risk"
+            [class.low]="risk === 'Low'"
+            [class.medium]="risk === 'Medium'"
+            [class.high]="risk === 'High'"
+            (click)="setRisk(risk)"
+          >{{ risk }}</button>
+        }
+      </div>
+    </div>
+  </div>
+
+  <!-- Loading skeleton -->
+  @if (isLoading) {
+    <div class="strategies-grid">
+      @for (i of [1,2,3,4,5,6]; track i) {
+        <div class="skeleton-card">
+          <div class="skeleton-top"></div>
+          <div class="skeleton-title"></div>
+          <div class="skeleton-metrics"></div>
+          <div class="skeleton-footer"></div>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- Strategy Grid -->
+  @if (!isLoading) {
+    @if (filteredStrategies.length > 0) {
+      <div class="strategies-grid">
+        @for (strategy of filteredStrategies; track strategy.id; let i = $index) {
+          <app-strategy-card
+            [strategy]="strategy"
+            [isDeployed]="isDeployed(strategy.id)"
+            [animDelay]="(i % 12) + 1"
+            (deployClicked)="onDeployClicked($event)"
+          ></app-strategy-card>
+        }
+      </div>
+    } @else {
+      <div class="empty-state">
+        <div class="empty-icon">
+          <i class="pi pi-search"></i>
+        </div>
+        <h3>No strategies found</h3>
+        <p>Try adjusting your search or filters</p>
+        <button class="clear-btn" (click)="searchQuery=''; selectedCategory='All'; selectedRisk='All'">
+          Clear Filters
+        </button>
+      </div>
+    }
+  }
+</div>

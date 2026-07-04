@@ -1,17 +1,35 @@
 import { Component, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
+import { AuthService } from '../../core/services/auth.service';
+
+interface MenuItem {
+  label: string;
+  icon: string;
+  route: string;
+  adminOnly?: boolean;
+}
 
 @Component({
   selector: 'app-sidebar',
+  standalone: true,
   imports: [CommonModule, RouterModule],
   templateUrl: './sidebar.component.html',
   styleUrl: './sidebar.component.scss'
 })
 export class SidebarComponent {
+  authService = inject(AuthService);
 
-  menuItems = [
-    { label: 'Dashboard', icon: 'pi pi-objects-column', route: '/dashboard' },
-    { label: 'Seasonality', icon: 'pi pi-calendar', route: '/seasonality' },
+  mainMenuItems: MenuItem[] = [
+    { label: 'Dashboard',       icon: 'pi pi-objects-column', route: '/dashboard' },
+    { label: 'Strategies',      icon: 'pi pi-chart-bar',      route: '/strategies' },
+    { label: 'Broker Accounts', icon: 'pi pi-building',       route: '/broker-accounts' },
+    { label: 'Profile',         icon: 'pi pi-user',           route: '/profile' },
+  ];
+
+  adminMenuItems: MenuItem[] = [
+    { label: 'Users',               icon: 'pi pi-users',          route: '/admin/users',       adminOnly: true },
+    { label: 'Strategy Management', icon: 'pi pi-sliders-h',      route: '/admin/strategies',  adminOnly: true },
+    { label: 'Activity Monitor',    icon: 'pi pi-desktop',        route: '/admin/activity',    adminOnly: true },
   ];
 }

@@ -1,18 +1,203 @@
-@import 'theme/theme-variables';
+@use 'theme/theme-variables' as *;
 @import 'primeicons/primeicons.css';
-@import url('https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap');
+
+
+// ── Reset & Base ──────────────────────────────────────────────────────────────
+*, *::before, *::after { box-sizing: border-box; }
+
+html { font-size: 16px; scroll-behavior: smooth; }
 
 body {
   margin: 0;
   padding: 0;
-  box-sizing: border-box;
   background-color: $primary-black;
   color: $text-primary;
-  font-family: 'Inter', -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  line-height: 1.6;
 }
 
-*, *::before, *::after {
-  box-sizing: inherit;
+// ── Typography ───────────────────────────────────────────────────────────────
+h1, h2, h3, h4, h5, h6 { margin: 0; font-weight: 700; line-height: 1.3; color: $text-primary; }
+p { margin: 0; color: $text-secondary; }
+a { text-decoration: none; color: inherit; }
+
+// ── Scrollbar ─────────────────────────────────────────────────────────────────
+::-webkit-scrollbar { width: 5px; height: 5px; }
+::-webkit-scrollbar-track { background: $secondary-black; }
+::-webkit-scrollbar-thumb { background: $soft-black; border-radius: 10px; }
+::-webkit-scrollbar-thumb:hover { background: rgba(255,255,255,0.15); }
+
+// ── Glass Card ───────────────────────────────────────────────────────────────
+.glass-card {
+  background: $card-bg;
+  border: 1px solid $card-border;
+  border-radius: 16px;
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+}
+
+// ── Badges ───────────────────────────────────────────────────────────────────
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 0.72rem;
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+
+  &.badge-active    { background: $soft-green;  color: $primary-green; }
+  &.badge-paused    { background: $soft-orange; color: $primary-orange; }
+  &.badge-stopped   { background: $soft-red;    color: $neon-red; }
+  &.badge-pending   { background: rgba(139,149,176,0.12); color: $text-secondary; }
+  &.badge-low       { background: $soft-green;  color: $risk-low; }
+  &.badge-medium    { background: $soft-orange; color: $risk-medium; }
+  &.badge-high      { background: $soft-red;    color: $risk-high; }
+}
+
+// ── Category chip ────────────────────────────────────────────────────────────
+.chip {
+  display: inline-flex;
+  align-items: center;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  background: $soft-cyan;
+  color: $primary-cyan;
+  border: 1px solid rgba(0, 194, 232, 0.2);
+}
+
+// ── Section heading ──────────────────────────────────────────────────────────
+.section-label {
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: $text-muted;
+  margin-bottom: 1rem;
+}
+
+// ── Page header ──────────────────────────────────────────────────────────────
+.page-header {
+  margin-bottom: 2rem;
+
+  .page-title {
+    font-size: 1.75rem;
+    font-weight: 800;
+    color: $text-primary;
+  }
+
+  .page-subtitle {
+    margin-top: 0.25rem;
+    font-size: 0.95rem;
+    color: $text-secondary;
+  }
+}
+
+// ── Divider ──────────────────────────────────────────────────────────────────
+.divider {
+  height: 1px;
+  background: $border-default;
+  margin: 1.5rem 0;
+}
+
+// ── Utility ──────────────────────────────────────────────────────────────────
+.text-cyan   { color: $primary-cyan; }
+.text-green  { color: $primary-green; }
+.text-gold   { color: $primary-gold; }
+.text-red    { color: $neon-red; }
+.text-muted  { color: $text-muted; }
+.text-secondary { color: $text-secondary; }
+
+.fw-500 { font-weight: 500; }
+.fw-600 { font-weight: 600; }
+.fw-700 { font-weight: 700; }
+
+.mt-1 { margin-top: 0.5rem; }
+.mt-2 { margin-top: 1rem; }
+.mt-3 { margin-top: 1.5rem; }
+.mb-1 { margin-bottom: 0.5rem; }
+.mb-2 { margin-bottom: 1rem; }
+.mb-3 { margin-bottom: 1.5rem; }
+
+// ── PrimeNG Overrides ────────────────────────────────────────────────────────
+::ng-deep {
+  .p-dialog {
+    background: $secondary-black !important;
+    border: 1px solid $card-border !important;
+    border-radius: 20px !important;
+    box-shadow: 0 24px 80px rgba(0,0,0,0.6) !important;
+  }
+
+  .p-dialog-header {
+    background: $secondary-black !important;
+    border-bottom: 1px solid $card-border !important;
+    border-radius: 20px 20px 0 0 !important;
+    padding: 1.5rem 2rem !important;
+  }
+
+  .p-dialog-content {
+    background: $secondary-black !important;
+    padding: 1.5rem 2rem !important;
+  }
+
+  .p-dialog-footer {
+    background: $secondary-black !important;
+    border-top: 1px solid $card-border !important;
+    border-radius: 0 0 20px 20px !important;
+    padding: 1rem 2rem !important;
+  }
+
+  .p-button.p-button-primary,
+  .p-button:not(.p-button-text):not(.p-button-outlined):not(.p-button-secondary) {
+    background: $primary-cyan !important;
+    border-color: $primary-cyan !important;
+    color: $primary-black !important;
+    font-weight: 600 !important;
+
+    &:hover {
+      background: $bright-cyan !important;
+      border-color: $bright-cyan !important;
+      box-shadow: $shadow-glow-cyan !important;
+    }
+  }
+
+  .p-chart { width: 100%; }
+}
+
+// ── Animations ───────────────────────────────────────────────────────────────
+@keyframes fadeInUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; }
+  50%       { opacity: 0.4; }
+}
+
+.animate-fade-in-up {
+  animation: fadeInUp 0.4s ease both;
+}
+
+.animate-fade-in {
+  animation: fadeIn 0.3s ease both;
+}
+
+// ── Staggered animation delays for card grids ─────────────────────────────────
+@for $i from 1 through 12 {
+  .anim-delay-#{$i} {
+    animation-delay: #{($i - 1) * 0.06}s;
+  }
 }
