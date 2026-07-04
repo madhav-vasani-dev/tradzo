@@ -48,3 +48,7 @@ frontend/testem.log
 # System files
 .DS_Store
 Thumbs.db
+
+# Local planning docs
+*.md
+!README.md
