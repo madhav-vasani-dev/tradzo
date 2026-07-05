@@ -1,0 +1,126 @@
+<p-toast position="top-right"></p-toast>
+
+<div class="admin-detail-page">
+
+  <!-- ── Back button ─────────────────────────────────────────────────────── -->
+  <button class="back-btn" (click)="goBack()">
+    <i class="pi pi-arrow-left"></i> Back to Users
+  </button>
+
+  @if (isLoading) {
+    <div class="loading-card glass-card">
+      <div class="spinner"></div>
+      <p>Loading user details...</p>
+    </div>
+  }
+
+  @if (!isLoading && user) {
+    <div class="detail-layout">
+
+      <!-- ── User Profile Card ──────────────────────────────────────────── -->
+      <div class="profile-card glass-card">
+        <div class="profile-avatar" [class.super]="user.isSuperUser" [class.admin]="user.isAdmin">
+          {{ (user.username || user.email || '?').charAt(0).toUpperCase() }}
+        </div>
+        <div class="profile-info">
+          <div class="profile-name">{{ user.username || 'Unnamed User' }}</div>
+          <div class="profile-email">{{ user.email }}</div>
+        </div>
+
+        <div class="profile-meta">
+          <div class="meta-row">
+            <span class="meta-label">User ID</span>
+            <span class="meta-value mono">{{ user.uid }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">Joined</span>
+            <span class="meta-value">{{ formatDate(user.createdAt) }}</span>
+          </div>
+          <div class="meta-row">
+            <span class="meta-label">Role</span>
+            <span class="meta-value">
+              <span class="role-badge" [class.role-super]="user.isSuperUser" [class.role-admin]="user.isAdmin && !user.isSuperUser" [class.role-user]="!user.isAdmin">
+                {{ user.isSuperUser ? 'Super Admin' : user.isAdmin ? 'Admin' : 'User' }}
+              </span>
+            </span>
+          </div>
+        </div>
+
+        @if (!user.isSuperUser) {
+          <button
+            class="role-toggle-btn"
+            [class.danger]="user.isAdmin"
+            (click)="toggleAdmin()"
+          >
+            <i class="pi" [class.pi-user-minus]="user.isAdmin" [class.pi-user-plus]="!user.isAdmin"></i>
+            {{ user.isAdmin ? 'Remove Admin Role' : 'Grant Admin Role' }}
+          </button>
+        }
+      </div>
+
+      <!-- ── Deployed Strategies ───────────────────────────────────────── -->
+      <div class="strategies-section">
+        <div class="section-title">
+          <i class="pi pi-chart-line"></i>
+          Deployed Strategies
+          <span class="count-pill">{{ userStrategies.length }}</span>
+        </div>
+
+        @if (userStrategies.length === 0) {
+          <div class="empty-strategies glass-card">
+            <i class="pi pi-chart-bar"></i>
+            <p>No strategies deployed yet</p>
+          </div>
+        }
+
+        <div class="strategies-list">
+          @for (us of userStrategies; track us.id) {
+            <div class="strategy-row glass-card">
+              <div class="sr-main">
+                <div class="sr-name">{{ us.strategyId }}</div>
+                <div class="sr-meta">
+                  <span>{{ us.brokerName | titlecase }}</span>
+                  <span class="sep">·</span>
+                  <span>{{ formatINR(us.deployedAmount) }}</span>
+                  <span class="sep">·</span>
+                  <span>Deployed {{ formatDate(us.deployedAt) }}</span>
+                </div>
+              </div>
+              <div class="sr-right">
+                <span class="status-chip" [class]="getStatusClass(us.status)">
+                  {{ us.status }}
+                </span>
+                <div class="sr-actions">
+                  @if (us.status === 'active') {
+                    <button
+                      class="admin-action-btn pause"
+                      [disabled]="actionLoading === us.id"
+                      (click)="pauseStrategy(us)"
+                    >
+                      @if (actionLoading === us.id) { <span class="spinner-xs"></span> }
+                      @else { <i class="pi pi-pause"></i> }
+                      Pause
+                    </button>
+                  }
+                  @if (us.status === 'paused') {
+                    <button
+                      class="admin-action-btn resume"
+                      [disabled]="actionLoading === us.id"
+                      (click)="resumeStrategy(us)"
+                    >
+                      @if (actionLoading === us.id) { <span class="spinner-xs"></span> }
+                      @else { <i class="pi pi-play"></i> }
+                      Resume
+                    </button>
+                  }
+                </div>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+
+    </div>
+  }
+
+</div>

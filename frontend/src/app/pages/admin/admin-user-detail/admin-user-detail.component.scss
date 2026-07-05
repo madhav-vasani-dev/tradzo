@@ -1,0 +1,206 @@
+@use '../../../../theme/theme-variables' as *;
+
+.admin-detail-page {
+  max-width: 960px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: 3rem;
+}
+
+.back-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  background: none;
+  border: none;
+  color: $text-secondary;
+  font-size: 0.88rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  padding: 0;
+  transition: color 0.18s ease;
+  width: fit-content;
+  &:hover { color: $text-primary; }
+}
+
+.loading-card {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 1rem; padding: 3rem;
+  .spinner {
+    width: 36px; height: 36px;
+    border: 3px solid $card-border;
+    border-top-color: $primary-cyan;
+    border-radius: 50%;
+    animation: spin 0.8s linear infinite;
+  }
+  p { color: $text-muted; font-size: 0.88rem; }
+}
+@keyframes spin { to { transform: rotate(360deg); } }
+
+.detail-layout {
+  display: grid;
+  grid-template-columns: 300px 1fr;
+  gap: 1.5rem;
+  align-items: start;
+
+  @media (max-width: 768px) { grid-template-columns: 1fr; }
+}
+
+// ── Profile Card ──────────────────────────────────────────────────────────────
+.profile-card {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 2rem 1.5rem;
+  text-align: center;
+}
+
+.profile-avatar {
+  width: 72px; height: 72px;
+  border-radius: 50%;
+  border: 3px solid $border-default;
+  background: rgba(255,255,255,0.06);
+  display: flex; align-items: center; justify-content: center;
+  font-size: 2rem; font-weight: 800; color: $text-secondary;
+
+  &.super { border-color: rgba(244,185,66,0.5); background: $soft-gold; color: $primary-gold; }
+  &.admin { border-color: rgba(0,194,232,0.4); background: $soft-cyan; color: $primary-cyan; }
+}
+
+.profile-info {
+  .profile-name { font-size: 1.1rem; font-weight: 700; color: $text-primary; }
+  .profile-email { font-size: 0.8rem; color: $text-muted; margin-top: 2px; }
+}
+
+.profile-meta {
+  width: 100%;
+  display: flex;
+  flex-direction: column;
+  gap: 0.65rem;
+  border-top: 1px solid $border-default;
+  border-bottom: 1px solid $border-default;
+  padding: 1rem 0;
+}
+
+.meta-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 0.5rem;
+
+  .meta-label { font-size: 0.72rem; color: $text-muted; font-weight: 500; }
+  .meta-value { font-size: 0.8rem; font-weight: 600; color: $text-primary; text-align: right; &.mono { font-family: monospace; font-size: 0.7rem; color: $text-muted; word-break: break-all; } }
+}
+
+.role-badge {
+  padding: 2px 8px; border-radius: 100px; font-size: 0.68rem; font-weight: 700;
+  &.role-super { background: $soft-gold; color: $primary-gold; }
+  &.role-admin { background: $soft-cyan; color: $primary-cyan; }
+  &.role-user  { background: rgba(255,255,255,0.04); color: $text-muted; }
+}
+
+.role-toggle-btn {
+  display: flex; align-items: center; justify-content: center; gap: 6px;
+  width: 100%;
+  padding: 0.65rem 1rem;
+  border-radius: 10px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s ease;
+  background: $soft-cyan;
+  color: $primary-cyan;
+  border: 1px solid rgba(0,194,232,0.25);
+
+  &:hover { background: rgba(0,194,232,0.2); }
+  &.danger { background: $soft-red; color: $neon-red; border-color: rgba(239,68,68,0.25); }
+  &.danger:hover { background: rgba(239,68,68,0.2); }
+}
+
+// ── Strategies Section ────────────────────────────────────────────────────────
+.strategies-section {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+.section-title {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: $text-primary;
+
+  i { color: $primary-cyan; font-size: 1rem; }
+}
+
+.count-pill {
+  padding: 2px 8px;
+  border-radius: 100px;
+  font-size: 0.7rem;
+  font-weight: 700;
+  background: $soft-cyan;
+  color: $primary-cyan;
+}
+
+.empty-strategies {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0.75rem; padding: 2.5rem; text-align: center;
+  i { font-size: 1.8rem; color: $text-muted; }
+  p { color: $text-muted; font-size: 0.88rem; }
+}
+
+.strategies-list { display: flex; flex-direction: column; gap: 0.75rem; }
+
+.strategy-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  padding: 1rem 1.25rem;
+}
+
+.sr-main {
+  flex: 1;
+  .sr-name { font-size: 0.9rem; font-weight: 600; color: $text-primary; margin-bottom: 4px; }
+  .sr-meta { display: flex; align-items: center; gap: 0.4rem; font-size: 0.75rem; color: $text-muted; }
+  .sep { color: $border-hover; }
+}
+
+.sr-right { display: flex; align-items: center; gap: 0.75rem; flex-shrink: 0; }
+
+.status-chip {
+  padding: 3px 10px; border-radius: 100px; font-size: 0.72rem; font-weight: 700;
+  &.status-active  { background: $soft-green; color: $primary-green; }
+  &.status-paused  { background: $soft-orange; color: $primary-orange; }
+  &.status-stopped { background: $soft-red; color: $neon-red; }
+  &.status-pending { background: rgba(255,255,255,0.04); color: $text-muted; }
+}
+
+.sr-actions { display: flex; gap: 0.4rem; }
+
+.admin-action-btn {
+  display: flex; align-items: center; gap: 5px;
+  padding: 5px 12px; border-radius: 8px; font-size: 0.75rem; font-weight: 600;
+  cursor: pointer; font-family: inherit; transition: all 0.18s ease;
+  &.pause { background: $soft-orange; color: $primary-orange; border: 1px solid rgba(245,158,11,0.25); }
+  &.pause:hover { background: rgba(245,158,11,0.2); }
+  &.resume { background: $soft-green; color: $primary-green; border: 1px solid rgba(34,197,94,0.25); }
+  &.resume:hover { background: rgba(34,197,94,0.2); }
+  &:disabled { opacity: 0.4; cursor: not-allowed; }
+}
+
+.spinner-xs {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}

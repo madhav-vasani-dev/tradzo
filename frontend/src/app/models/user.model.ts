@@ -6,6 +6,8 @@ export interface TradzoUser {
   isSuperUser: boolean;
   isAdmin: boolean;
   createdAt: any;
+  updatedAt?: any;
   deployedStrategyIds: string[];
   brokerConnected: boolean;
 }
+

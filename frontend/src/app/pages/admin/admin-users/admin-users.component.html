@@ -1,0 +1,141 @@
+<p-toast position="top-right"></p-toast>
+
+<div class="admin-page">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div>
+      <div class="admin-badge"><i class="pi pi-shield"></i> Admin Panel</div>
+      <h1 class="page-title">Users</h1>
+      <p class="page-subtitle">Manage all registered users and their roles</p>
+    </div>
+    <div class="header-stats">
+      <div class="stat-pill">
+        <span class="stat-val">{{ totalUsers }}</span>
+        <span class="stat-lbl">Total Users</span>
+      </div>
+      <div class="stat-pill accent">
+        <span class="stat-val">{{ totalAdmins }}</span>
+        <span class="stat-lbl">Admins</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Search & Filter Bar ─────────────────────────────────────────── -->
+  <div class="toolbar glass-card">
+    <div class="search-wrap">
+      <i class="pi pi-search"></i>
+      <input
+        type="text"
+        class="search-input"
+        placeholder="Search by name or email..."
+        [(ngModel)]="searchQuery"
+      />
+    </div>
+    <div class="role-filters">
+      @for (role of ['all', 'admin', 'user']; track role) {
+        <button
+          class="filter-chip"
+          [class.active]="filterRole === role"
+          (click)="filterRole = role === 'all' ? 'all' : role === 'admin' ? 'admin' : 'user'"
+        >
+          {{ role | titlecase }}
+        </button>
+      }
+    </div>
+  </div>
+
+  <!-- ── Loading ─────────────────────────────────────────────────────── -->
+  @if (isLoading) {
+    <div class="user-table glass-card">
+      @for (i of [1,2,3,4,5]; track i) {
+        <div class="sk-row">
+          <div class="sk-avatar"></div>
+          <div class="sk-body">
+            <div class="sk-line wide"></div>
+            <div class="sk-line narrow"></div>
+          </div>
+          <div class="sk-badge"></div>
+          <div class="sk-btn"></div>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ── Users Table ─────────────────────────────────────────────────── -->
+  @if (!isLoading) {
+    <div class="user-table glass-card">
+
+      <div class="table-header">
+        <div class="th col-user">User</div>
+        <div class="th col-joined">Joined</div>
+        <div class="th col-role">Role</div>
+        <div class="th col-strategies">Strategies</div>
+        <div class="th col-actions">Actions</div>
+      </div>
+
+      @if (filteredUsers.length === 0) {
+        <div class="empty-state">
+          <i class="pi pi-users"></i>
+          <p>No users found</p>
+        </div>
+      }
+
+      @for (user of filteredUsers; track user.uid) {
+        <div class="table-row" (click)="viewUser(user.uid)">
+
+          <!-- Avatar + Name -->
+          <div class="td col-user">
+            <div class="avatar" [class.super]="user.isSuperUser" [class.admin]="user.isAdmin && !user.isSuperUser">
+              {{ (user.username || user.email || '?').charAt(0).toUpperCase() }}
+            </div>
+            <div class="user-info">
+              <div class="user-name">{{ user.username || 'Unnamed' }}</div>
+              <div class="user-email">{{ user.email }}</div>
+            </div>
+          </div>
+
+          <!-- Joined -->
+          <div class="td col-joined">
+            <span class="date-text">{{ formatDate(user.createdAt) }}</span>
+          </div>
+
+          <!-- Role Badge -->
+          <div class="td col-role">
+            <span class="role-badge" [class]="getRoleClass(user)">
+              {{ getRoleBadge(user) }}
+            </span>
+          </div>
+
+          <!-- Strategies count placeholder -->
+          <div class="td col-strategies">
+            <span class="strategies-count">—</span>
+          </div>
+
+          <!-- Actions -->
+          <div class="td col-actions" (click)="$event.stopPropagation()">
+            <button
+              class="action-btn"
+              [class.danger]="user.isAdmin"
+              [disabled]="user.isSuperUser || togglingUid === user.uid"
+              (click)="toggleAdmin(user)"
+              [title]="user.isSuperUser ? 'Superuser cannot be modified' : user.isAdmin ? 'Remove admin' : 'Make admin'"
+            >
+              @if (togglingUid === user.uid) {
+                <span class="spinner-xs"></span>
+              } @else {
+                <i class="pi" [class.pi-user-minus]="user.isAdmin" [class.pi-user-plus]="!user.isAdmin"></i>
+              }
+              {{ user.isAdmin ? 'Remove Admin' : 'Make Admin' }}
+            </button>
+            <button class="action-btn view-btn" (click)="viewUser(user.uid)">
+              <i class="pi pi-eye"></i>
+            </button>
+          </div>
+
+        </div>
+      }
+    </div>
+  }
+
+</div>

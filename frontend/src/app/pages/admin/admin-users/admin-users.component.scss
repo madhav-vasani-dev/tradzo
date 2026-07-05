@@ -1,0 +1,256 @@
+@use '../../../../theme/theme-variables' as *;
+
+.admin-page {
+  max-width: 1100px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: 3rem;
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+.page-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+}
+
+.admin-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  background: rgba(244, 185, 66, 0.1);
+  border: 1px solid rgba(244, 185, 66, 0.25);
+  border-radius: 100px;
+  font-size: 0.72rem;
+  font-weight: 700;
+  color: $primary-gold;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  margin-bottom: 0.5rem;
+  i { font-size: 0.75rem; }
+}
+
+.page-title {
+  font-size: 1.9rem;
+  font-weight: 800;
+  color: $text-primary;
+  letter-spacing: -0.03em;
+}
+
+.page-subtitle {
+  font-size: 0.9rem;
+  color: $text-secondary;
+  margin-top: 0.25rem;
+}
+
+.header-stats {
+  display: flex;
+  gap: 1rem;
+  flex-shrink: 0;
+}
+
+.stat-pill {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  padding: 0.6rem 1.25rem;
+  background: rgba(255,255,255,0.03);
+  border: 1px solid $border-default;
+  border-radius: 12px;
+  min-width: 80px;
+
+  &.accent {
+    background: $soft-gold;
+    border-color: rgba(244, 185, 66, 0.2);
+    .stat-val { color: $primary-gold; }
+  }
+
+  .stat-val { font-size: 1.6rem; font-weight: 800; color: $primary-cyan; line-height: 1; }
+  .stat-lbl { font-size: 0.7rem; color: $text-muted; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 2px; font-weight: 600; }
+}
+
+// ── Toolbar ───────────────────────────────────────────────────────────────────
+.toolbar {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.9rem 1.25rem;
+  flex-wrap: wrap;
+}
+
+.search-wrap {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex: 1;
+  min-width: 200px;
+
+  i { color: $text-muted; font-size: 0.9rem; }
+}
+
+.search-input {
+  flex: 1;
+  background: none;
+  border: none;
+  outline: none;
+  color: $text-primary;
+  font-size: 0.9rem;
+  font-family: inherit;
+
+  &::placeholder { color: $text-muted; }
+}
+
+.role-filters { display: flex; gap: 0.5rem; }
+
+.filter-chip {
+  padding: 5px 14px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid $border-default;
+  color: $text-muted;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s ease;
+
+  &.active, &:hover {
+    background: $soft-gold;
+    color: $primary-gold;
+    border-color: rgba(244, 185, 66, 0.3);
+  }
+}
+
+// ── Table ─────────────────────────────────────────────────────────────────────
+.user-table { padding: 0; overflow: hidden; }
+
+.table-header {
+  display: grid;
+  grid-template-columns: 2.5fr 1fr 1fr 1fr 1.5fr;
+  gap: 1rem;
+  padding: 0.75rem 1.5rem;
+  border-bottom: 1px solid $border-default;
+
+  .th {
+    font-size: 0.7rem;
+    font-weight: 700;
+    color: $text-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+  }
+}
+
+.table-row {
+  display: grid;
+  grid-template-columns: 2.5fr 1fr 1fr 1fr 1.5fr;
+  gap: 1rem;
+  align-items: center;
+  padding: 1rem 1.5rem;
+  border-bottom: 1px solid rgba(255,255,255,0.03);
+  cursor: pointer;
+  transition: background 0.15s ease;
+
+  &:last-child { border-bottom: none; }
+  &:hover { background: rgba(255,255,255,0.03); }
+}
+
+.td { display: flex; align-items: center; }
+
+// ── Avatar ────────────────────────────────────────────────────────────────────
+.col-user { gap: 0.85rem; }
+
+.avatar {
+  width: 38px; height: 38px;
+  border-radius: 50%;
+  background: rgba(255,255,255,0.06);
+  border: 2px solid $border-default;
+  display: flex; align-items: center; justify-content: center;
+  font-size: 1rem; font-weight: 700;
+  color: $text-secondary;
+  flex-shrink: 0;
+  transition: all 0.2s ease;
+
+  &.super { border-color: rgba(244,185,66,0.5); background: $soft-gold; color: $primary-gold; }
+  &.admin { border-color: rgba(0,194,232,0.4); background: $soft-cyan; color: $primary-cyan; }
+}
+
+.user-info {
+  .user-name { font-size: 0.88rem; font-weight: 600; color: $text-primary; }
+  .user-email { font-size: 0.75rem; color: $text-muted; }
+}
+
+.date-text { font-size: 0.82rem; color: $text-secondary; }
+
+// ── Role Badge ────────────────────────────────────────────────────────────────
+.role-badge {
+  padding: 3px 10px;
+  border-radius: 100px;
+  font-size: 0.7rem;
+  font-weight: 700;
+
+  &.role-super { background: $soft-gold; color: $primary-gold; border: 1px solid rgba(244,185,66,0.25); }
+  &.role-admin { background: $soft-cyan; color: $primary-cyan; border: 1px solid rgba(0,194,232,0.2); }
+  &.role-user  { background: rgba(255,255,255,0.04); color: $text-muted; border: 1px solid $border-default; }
+}
+
+.strategies-count { font-size: 0.85rem; color: $text-muted; }
+
+// ── Row Actions ───────────────────────────────────────────────────────────────
+.col-actions { gap: 0.5rem; }
+
+.action-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 8px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid $border-default;
+  background: rgba(255,255,255,0.04);
+  color: $text-secondary;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.18s ease;
+
+  &:hover:not(:disabled) { border-color: $border-hover; color: $text-primary; }
+  &.danger { color: $neon-red; border-color: rgba(239,68,68,0.25); background: $soft-red; }
+  &.danger:hover { background: rgba(239,68,68,0.2); }
+  &:disabled { opacity: 0.4; cursor: not-allowed; }
+
+  &.view-btn { padding: 5px 8px; }
+  i { font-size: 0.78rem; }
+}
+
+// ── Empty state ───────────────────────────────────────────────────────────────
+.empty-state {
+  display: flex; flex-direction: column; align-items: center;
+  gap: 0.75rem; padding: 3rem; text-align: center;
+  i { font-size: 2rem; color: $text-muted; }
+  p { color: $text-muted; font-size: 0.9rem; }
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+@keyframes shimmer { 0% { background-position: -400px 0; } 100% { background-position: 400px 0; } }
+%sk { background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%); background-size: 400px 100%; animation: shimmer 1.4s infinite; border-radius: 6px; }
+
+.sk-row { display: flex; align-items: center; gap: 1rem; padding: 1rem 1.5rem; border-bottom: 1px solid rgba(255,255,255,0.03); }
+.sk-avatar { @extend %sk; width: 38px; height: 38px; border-radius: 50%; flex-shrink: 0; }
+.sk-body { flex: 1; display: flex; flex-direction: column; gap: 6px; }
+.sk-line { @extend %sk; height: 12px; &.wide { width: 60%; } &.narrow { width: 40%; height: 10px; } }
+.sk-badge { @extend %sk; width: 60px; height: 22px; }
+.sk-btn { @extend %sk; width: 100px; height: 30px; }
+
+.spinner-xs {
+  width: 12px; height: 12px;
+  border: 2px solid rgba(255,255,255,0.15);
+  border-top-color: currentColor;
+  border-radius: 50%;
+  animation: spin 0.7s linear infinite;
+  display: inline-block;
+}
+@keyframes spin { to { transform: rotate(360deg); } }
