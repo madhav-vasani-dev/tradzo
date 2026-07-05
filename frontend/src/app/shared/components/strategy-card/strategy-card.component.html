@@ -1,0 +1,54 @@
+<div class="strategy-card animate-fade-in-up" [class]="'anim-delay-' + animDelay" [routerLink]="['/strategies', strategy.id]">
+  <!-- Top row: Category + Risk -->
+  <div class="card-top">
+    <span class="chip">{{ strategy.category }}</span>
+    <span class="badge" [class]="'badge-' + getRiskClass()">
+      <i class="pi pi-shield"></i>
+      {{ strategy.riskLevel }} Risk
+    </span>
+  </div>
+
+  <!-- Name & instrument -->
+  <div class="card-name">{{ strategy.name }}</div>
+  <div class="card-instrument">{{ strategy.instrumentType }}</div>
+
+  <!-- Performance grid -->
+  <div class="metrics-grid">
+    <div class="metric">
+      <div class="metric-value positive">{{ formatPercent(strategy.performance.cagr) }}</div>
+      <div class="metric-label">CAGR</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">{{ strategy.performance.winRate.toFixed(1) }}%</div>
+      <div class="metric-label">Win Rate</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value negative">{{ formatPercent(-strategy.performance.maxDrawdown) }}</div>
+      <div class="metric-label">Max DD</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">{{ strategy.performance.sharpeRatio.toFixed(2) }}</div>
+      <div class="metric-label">Sharpe</div>
+    </div>
+  </div>
+
+  <!-- Footer: Min amount + CTA -->
+  <div class="card-footer">
+    <div class="min-amount">
+      <span class="min-label">Min. ₹</span>
+      <span class="min-value">{{ strategy.minimumAmount | number }}</span>
+    </div>
+
+    @if (isDeployed) {
+      <button class="btn-deployed" (click)="$event.stopPropagation()">
+        <i class="pi pi-check-circle"></i>
+        Active
+      </button>
+    } @else {
+      <button class="btn-deploy" (click)="$event.stopPropagation(); deployClicked.emit(strategy)">
+        Deploy
+        <i class="pi pi-arrow-right"></i>
+      </button>
+    }
+  </div>
+</div>

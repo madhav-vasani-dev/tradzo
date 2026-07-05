@@ -1,0 +1,61 @@
+@use '../../../../theme/theme-variables' as *;
+
+:host { display: inline-flex; }
+
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 4px 12px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+
+  .dot {
+    width: 6px;
+    height: 6px;
+    border-radius: 50%;
+    flex-shrink: 0;
+  }
+
+  &.badge-active {
+    background: $soft-green;
+    color: $primary-green;
+    border: 1px solid rgba(34, 197, 94, 0.25);
+
+    .dot {
+      background: $primary-green;
+      animation: pulse-dot 1.8s ease-in-out infinite;
+    }
+  }
+
+  &.badge-paused {
+    background: $soft-orange;
+    color: $primary-orange;
+    border: 1px solid rgba(245, 158, 11, 0.25);
+
+    .dot { background: $primary-orange; }
+  }
+
+  &.badge-stopped {
+    background: $soft-red;
+    color: $neon-red;
+    border: 1px solid rgba(239, 68, 68, 0.25);
+
+    .dot { background: $neon-red; }
+  }
+
+  &.badge-pending {
+    background: rgba(139, 149, 176, 0.1);
+    color: $text-secondary;
+    border: 1px solid rgba(139, 149, 176, 0.2);
+
+    .dot { background: $text-secondary; }
+  }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50%       { opacity: 0.5; transform: scale(0.8); }
+}

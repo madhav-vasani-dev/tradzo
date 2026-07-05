@@ -1,0 +1,237 @@
+@use '../../../theme/theme-variables' as *;
+
+.strategies-page {
+  max-width: 1400px;
+  margin: 0 auto;
+}
+
+// ── Page Header ───────────────────────────────────────────────────────────────
+.page-header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  margin-bottom: 2rem;
+  gap: 1rem;
+
+  .page-title {
+    font-size: 1.9rem;
+    font-weight: 800;
+    color: $text-primary;
+    letter-spacing: -0.03em;
+  }
+
+  .page-subtitle {
+    margin-top: 0.25rem;
+    font-size: 0.9rem;
+    color: $text-secondary;
+  }
+}
+
+.header-stats {
+  display: flex;
+  gap: 1.5rem;
+  flex-shrink: 0;
+}
+
+.header-stat {
+  text-align: right;
+
+  .header-stat-value {
+    display: block;
+    font-size: 1.6rem;
+    font-weight: 800;
+    color: $primary-cyan;
+    line-height: 1;
+  }
+
+  .header-stat-label {
+    font-size: 0.72rem;
+    color: $text-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.08em;
+    font-weight: 600;
+  }
+}
+
+// ── Filter Bar ────────────────────────────────────────────────────────────────
+.filter-bar {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 1rem 2rem;
+  padding: 1.1rem 1.25rem;
+  background: $card-bg;
+  border: 1px solid $card-border;
+  border-radius: 14px;
+  margin-bottom: 2rem;
+}
+
+.search-box {
+  position: relative;
+  flex: 1;
+  min-width: 200px;
+  max-width: 320px;
+
+  .search-icon {
+    position: absolute;
+    left: 12px;
+    top: 50%;
+    transform: translateY(-50%);
+    color: $text-muted;
+    font-size: 0.85rem;
+    pointer-events: none;
+  }
+
+  .search-input {
+    width: 100%;
+    background: rgba(255,255,255,0.05);
+    border: 1px solid $border-default;
+    border-radius: 8px;
+    padding: 0.55rem 0.75rem 0.55rem 2.25rem;
+    color: $text-primary;
+    font-size: 0.85rem;
+    font-family: inherit;
+    outline: none;
+    transition: border-color 0.2s ease;
+
+    &::placeholder { color: $text-muted; }
+    &:focus { border-color: rgba(0, 194, 232, 0.4); }
+  }
+}
+
+.filter-group {
+  display: flex;
+  align-items: center;
+  gap: 0.6rem;
+  flex-wrap: wrap;
+}
+
+.filter-label {
+  font-size: 0.75rem;
+  font-weight: 600;
+  color: $text-muted;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  white-space: nowrap;
+}
+
+.filter-chips {
+  display: flex;
+  gap: 0.4rem;
+  flex-wrap: wrap;
+}
+
+.filter-chip {
+  padding: 4px 14px;
+  border-radius: 100px;
+  font-size: 0.78rem;
+  font-weight: 600;
+  background: transparent;
+  border: 1px solid $border-default;
+  color: $text-secondary;
+  cursor: pointer;
+  transition: all 0.18s ease;
+  white-space: nowrap;
+
+  &:hover {
+    border-color: $border-hover;
+    color: $text-primary;
+  }
+
+  &.active {
+    background: $soft-cyan;
+    color: $primary-cyan;
+    border-color: rgba(0, 194, 232, 0.3);
+  }
+
+  // Risk level active states
+  &.risk.active.low    { background: $soft-green;  color: $risk-low;    border-color: rgba(34,197,94,0.3); }
+  &.risk.active.medium { background: $soft-orange; color: $risk-medium; border-color: rgba(245,158,11,0.3); }
+  &.risk.active.high   { background: $soft-red;    color: $risk-high;   border-color: rgba(239,68,68,0.3); }
+}
+
+// ── Strategy Grid ─────────────────────────────────────────────────────────────
+.strategies-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(320px, 1fr));
+  gap: 1.25rem;
+
+  @media (min-width: 1200px) {
+    grid-template-columns: repeat(3, 1fr);
+  }
+}
+
+// ── Skeleton ──────────────────────────────────────────────────────────────────
+@keyframes shimmer {
+  0%   { background-position: -400px 0; }
+  100% { background-position: 400px 0; }
+}
+
+.skeleton-card {
+  background: $card-bg;
+  border: 1px solid $card-border;
+  border-radius: 16px;
+  padding: 1.25rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  min-height: 220px;
+}
+
+%skeleton-base {
+  background: linear-gradient(90deg, rgba(255,255,255,0.04) 25%, rgba(255,255,255,0.08) 50%, rgba(255,255,255,0.04) 75%);
+  background-size: 400px 100%;
+  animation: shimmer 1.4s infinite;
+  border-radius: 6px;
+}
+
+.skeleton-top    { @extend %skeleton-base; height: 22px; width: 50%; }
+.skeleton-title  { @extend %skeleton-base; height: 18px; width: 75%; }
+.skeleton-metrics { @extend %skeleton-base; height: 60px; }
+.skeleton-footer { @extend %skeleton-base; height: 36px; margin-top: auto; }
+
+// ── Empty State ───────────────────────────────────────────────────────────────
+.empty-state {
+  text-align: center;
+  padding: 5rem 2rem;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 1rem;
+
+  .empty-icon {
+    width: 72px;
+    height: 72px;
+    background: $soft-cyan;
+    border-radius: 50%;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    margin-bottom: 0.5rem;
+
+    i { font-size: 1.8rem; color: $primary-cyan; }
+  }
+
+  h3 {
+    font-size: 1.2rem;
+    font-weight: 700;
+    color: $text-primary;
+  }
+
+  p { color: $text-secondary; font-size: 0.9rem; }
+}
+
+.clear-btn {
+  padding: 0.6rem 1.5rem;
+  background: $soft-cyan;
+  color: $primary-cyan;
+  border: 1px solid rgba(0,194,232,0.25);
+  border-radius: 8px;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+  font-family: inherit;
+
+  &:hover { background: rgba(0,194,232,0.2); }
+}
