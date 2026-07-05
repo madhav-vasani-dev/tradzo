@@ -1,0 +1,102 @@
+<p-toast position="top-right"></p-toast>
+
+<div class="admin-page">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div>
+      <div class="admin-badge"><i class="pi pi-shield"></i> Admin Panel</div>
+      <h1 class="page-title">Strategy Management</h1>
+      <p class="page-subtitle">Control which strategies are visible to users</p>
+    </div>
+    <div class="header-stats">
+      <div class="stat-pill">
+        <span class="stat-val">{{ strategies.length }}</span>
+        <span class="stat-lbl">Total</span>
+      </div>
+      <div class="stat-pill accent">
+        <span class="stat-val">{{ activeCount }}</span>
+        <span class="stat-lbl">Visible</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Search ──────────────────────────────────────────────────────────── -->
+  <div class="toolbar glass-card">
+    <div class="search-wrap">
+      <i class="pi pi-search"></i>
+      <input type="text" class="search-input" placeholder="Search strategies..." [(ngModel)]="searchQuery" />
+    </div>
+    <div class="phase-note">
+      <i class="pi pi-info-circle"></i>
+      Phase 1: Mock data. Phase 2 will sync with Firestore.
+    </div>
+  </div>
+
+  <!-- ── Loading ─────────────────────────────────────────────────────────── -->
+  @if (isLoading) {
+    <div class="strategy-list">
+      @for (i of [1,2,3,4]; track i) {
+        <div class="sk-row glass-card">
+          <div class="sk-line wide"></div>
+          <div class="sk-line narrow"></div>
+          <div class="sk-toggle"></div>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ── Strategy List ────────────────────────────────────────────────────── -->
+  @if (!isLoading) {
+    <div class="strategy-list">
+      @for (strategy of filteredStrategies; track strategy.id) {
+        <div class="strategy-row glass-card" [class.hidden-strategy]="!strategy.isVisible">
+
+          <!-- Left: Info -->
+          <div class="strategy-info">
+            <div class="strategy-name-row">
+              <span class="strategy-name">{{ strategy.name }}</span>
+              <span class="cat-chip">{{ strategy.category }}</span>
+              <span class="risk-chip" [class]="'risk-' + strategy.riskLevel.toLowerCase()">{{ strategy.riskLevel }}</span>
+            </div>
+            <div class="strategy-meta">
+              <span><i class="pi pi-chart-line"></i> {{ strategy.performance.cagr }}% CAGR</span>
+              <span class="sep">·</span>
+              <span><i class="pi pi-shield"></i> {{ strategy.performance.maxDrawdown }}% Max DD</span>
+              <span class="sep">·</span>
+              <span><i class="pi pi-indian-rupee"></i> {{ formatINR(strategy.minimumAmount) }} min</span>
+              <span class="sep">·</span>
+              <span><i class="pi pi-users"></i> — users deployed</span>
+            </div>
+          </div>
+
+          <!-- Right: Toggle -->
+          <div class="strategy-controls">
+            <div class="visibility-status" [class.visible]="strategy.isVisible">
+              @if (strategy.isVisible) {
+                <i class="pi pi-eye"></i> Visible
+              } @else {
+                <i class="pi pi-eye-slash"></i> Hidden
+              }
+            </div>
+            <label class="toggle-switch" [class.loading]="togglingId === strategy.id">
+              <input
+                type="checkbox"
+                [checked]="strategy.isVisible"
+                [disabled]="togglingId === strategy.id"
+                (change)="toggleVisibility(strategy)"
+              />
+              <span class="toggle-track">
+                <span class="toggle-thumb">
+                  @if (togglingId === strategy.id) { <span class="spinner-xs"></span> }
+                </span>
+              </span>
+            </label>
+          </div>
+
+        </div>
+      }
+    </div>
+  }
+
+</div>

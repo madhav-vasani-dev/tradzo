@@ -1,0 +1,82 @@
+<div class="activity-page">
+
+  <!-- ── Header ─────────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div>
+      <div class="admin-badge"><i class="pi pi-shield"></i> Admin Panel</div>
+      <h1 class="page-title">Activity Monitor</h1>
+      <p class="page-subtitle">Morning execution logs and system events</p>
+    </div>
+    <div class="header-stats">
+      <div class="stat-pill green">
+        <span class="stat-val">{{ successRate }}</span>
+        <span class="stat-lbl">Success Rate</span>
+      </div>
+      <div class="stat-pill">
+        <span class="stat-val">{{ totalRan }}</span>
+        <span class="stat-lbl">Total Ran</span>
+      </div>
+      <div class="stat-pill red">
+        <span class="stat-val">{{ totalFailed }}</span>
+        <span class="stat-lbl">Failed</span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── How morning execution works ─────────────────────────────────────── -->
+  <div class="info-banner glass-card">
+    <i class="pi pi-clock"></i>
+    <div>
+      <div class="info-title">Automatic Execution Schedule</div>
+      <div class="info-text">The Python backend (APScheduler) fires every weekday at <strong>9:15 AM IST</strong>.
+        It reads all active strategies from Firestore, places orders via connected broker accounts,
+        and writes execution results here.
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Phase note ──────────────────────────────────────────────────────── -->
+  <div class="phase-banner">
+    <i class="pi pi-info-circle"></i>
+    Showing mock data for Phase 1. Once the Python backend is running, live logs will appear here automatically.
+  </div>
+
+  <!-- ── Activity Timeline ─────────────────────────────────────────────── -->
+  <div class="timeline">
+    @for (log of logs; track log.id) {
+      <div class="timeline-item" [class]="'status-' + log.status">
+        <div class="timeline-dot">
+          <i class="pi" [class]="getStatusIcon(log.status)"></i>
+        </div>
+        <div class="timeline-line"></div>
+        <div class="timeline-card glass-card">
+          <div class="tc-header">
+            <div class="tc-event">{{ log.event }}</div>
+            <div class="tc-time">
+              <i class="pi pi-calendar"></i>
+              {{ log.date }} at {{ log.time }}
+            </div>
+          </div>
+
+          <div class="tc-details">{{ log.details }}</div>
+
+          @if (log.event === 'Morning Execution') {
+            <div class="tc-stats">
+              <div class="tc-stat green">
+                <i class="pi pi-check-circle"></i>
+                <span>{{ log.strategiesRan }} ran</span>
+              </div>
+              @if (log.strategiesFailed > 0) {
+                <div class="tc-stat red">
+                  <i class="pi pi-times-circle"></i>
+                  <span>{{ log.strategiesFailed }} failed</span>
+                </div>
+              }
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </div>
+
+</div>

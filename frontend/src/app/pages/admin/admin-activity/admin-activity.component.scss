@@ -1,0 +1,153 @@
+@use '../../../../theme/theme-variables' as *;
+
+.activity-page {
+  max-width: 900px;
+  margin: 0 auto;
+  display: flex;
+  flex-direction: column;
+  gap: 1.5rem;
+  padding-bottom: 3rem;
+}
+
+.page-header { display: flex; justify-content: space-between; align-items: flex-start; gap: 1rem; }
+
+.admin-badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 4px 12px;
+  background: rgba(244,185,66,0.1); border: 1px solid rgba(244,185,66,0.25);
+  border-radius: 100px; font-size: 0.72rem; font-weight: 700;
+  color: $primary-gold; text-transform: uppercase; letter-spacing: 0.07em;
+  margin-bottom: 0.5rem;
+  i { font-size: 0.75rem; }
+}
+
+.page-title { font-size: 1.9rem; font-weight: 800; color: $text-primary; letter-spacing: -0.03em; }
+.page-subtitle { font-size: 0.9rem; color: $text-secondary; margin-top: 0.25rem; }
+
+.header-stats { display: flex; gap: 0.75rem; flex-shrink: 0; }
+
+.stat-pill {
+  display: flex; flex-direction: column; align-items: center;
+  padding: 0.6rem 1rem;
+  background: rgba(255,255,255,0.03); border: 1px solid $border-default; border-radius: 12px; min-width: 70px;
+  &.green { background: $soft-green; border-color: rgba(34,197,94,0.2); .stat-val { color: $primary-green; } }
+  &.red   { background: $soft-red; border-color: rgba(239,68,68,0.2); .stat-val { color: $neon-red; } }
+  .stat-val { font-size: 1.4rem; font-weight: 800; color: $primary-cyan; line-height: 1; }
+  .stat-lbl { font-size: 0.68rem; color: $text-muted; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 2px; font-weight: 600; }
+}
+
+// ── Banners ───────────────────────────────────────────────────────────────────
+.info-banner {
+  display: flex; gap: 1rem; align-items: flex-start; padding: 1.25rem 1.5rem;
+  border-color: rgba(0,194,232,0.15) !important;
+  background: rgba(0,194,232,0.03) !important;
+
+  i { color: $primary-cyan; font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
+
+  .info-title { font-size: 0.88rem; font-weight: 700; color: $text-primary; margin-bottom: 4px; }
+  .info-text { font-size: 0.8rem; color: $text-secondary; line-height: 1.6; strong { color: $text-primary; } }
+}
+
+.phase-banner {
+  display: flex; align-items: center; gap: 0.6rem;
+  padding: 0.75rem 1.25rem;
+  background: rgba(244,185,66,0.06); border: 1px solid rgba(244,185,66,0.2); border-radius: 10px;
+  font-size: 0.8rem; color: $text-secondary;
+  i { color: $primary-gold; flex-shrink: 0; }
+}
+
+// ── Timeline ──────────────────────────────────────────────────────────────────
+.timeline {
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+}
+
+.timeline-item {
+  display: grid;
+  grid-template-columns: 36px 20px 1fr;
+  gap: 0 1rem;
+  align-items: start;
+
+  &.status-success .timeline-dot i { color: $primary-green; }
+  &.status-failed  .timeline-dot i { color: $neon-red; }
+  &.status-warning .timeline-dot i { color: $primary-orange; }
+  &.status-info    .timeline-dot i { color: $primary-cyan; }
+
+  &.status-success .timeline-dot { background: $soft-green; }
+  &.status-failed  .timeline-dot { background: $soft-red; }
+  &.status-warning .timeline-dot { background: $soft-orange; }
+  &.status-info    .timeline-dot { background: $soft-cyan; }
+}
+
+.timeline-dot {
+  width: 36px; height: 36px;
+  border-radius: 50%;
+  display: flex; align-items: center; justify-content: center;
+  flex-shrink: 0;
+  i { font-size: 1rem; }
+  z-index: 1;
+  position: relative;
+}
+
+.timeline-line {
+  width: 2px;
+  background: $border-default;
+  margin: 0 auto;
+  min-height: calc(100% + 1rem);
+  align-self: stretch;
+
+  .timeline-item:last-child & { display: none; }
+}
+
+.timeline-card {
+  padding: 1rem 1.25rem;
+  margin-bottom: 1rem;
+}
+
+.tc-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: flex-start;
+  gap: 1rem;
+  margin-bottom: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.tc-event {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: $text-primary;
+}
+
+.tc-time {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  color: $text-muted;
+  i { font-size: 0.8rem; }
+}
+
+.tc-details {
+  font-size: 0.82rem;
+  color: $text-secondary;
+  line-height: 1.5;
+  margin-bottom: 0.75rem;
+}
+
+.tc-stats {
+  display: flex;
+  gap: 1rem;
+}
+
+.tc-stat {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  i { font-size: 0.8rem; }
+  &.green { color: $primary-green; }
+  &.red   { color: $neon-red; }
+}
