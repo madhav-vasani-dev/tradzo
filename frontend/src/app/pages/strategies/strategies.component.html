@@ -1,3 +1,5 @@
+<p-toast position="top-right"></p-toast>
+
 <div class="strategies-page">
   <!-- Page Header -->
   <div class="page-header">
@@ -102,4 +104,14 @@
       </div>
     }
   }
+
+  <!-- Deploy Dialog -->
+  @if (deployTarget) {
+    <app-deploy-strategy-dialog
+      [strategy]="deployTarget"
+      [(visible)]="showDeployDialog"
+      (deployed)="onDeployed($event)"
+    ></app-deploy-strategy-dialog>
+  }
+
 </div>

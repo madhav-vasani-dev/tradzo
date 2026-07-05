@@ -1,0 +1,227 @@
+<p-dialog
+  [(visible)]="visible"
+  [modal]="true"
+  [closable]="true"
+  [draggable]="false"
+  [resizable]="false"
+  styleClass="deploy-dialog"
+  (onHide)="close()"
+  [style]="{ width: '540px' }"
+>
+  <!-- ── Dialog Header ──────────────────────────────────────────────── -->
+  <ng-template pTemplate="header">
+    <div class="dialog-header">
+      <div class="dialog-title">
+        <i class="pi pi-play-circle"></i>
+        Deploy Strategy
+      </div>
+      <div class="dialog-subtitle">{{ strategy.name }}</div>
+    </div>
+  </ng-template>
+
+  <!-- ── Stepper Indicator ──────────────────────────────────────────── -->
+  <div class="stepper">
+    @for (step of [1, 2, 3]; track step) {
+      <div class="step" [class.active]="currentStep === step" [class.completed]="currentStep > step">
+        <div class="step-circle">
+          @if (currentStep > step) {
+            <i class="pi pi-check"></i>
+          } @else {
+            <span>{{ step }}</span>
+          }
+        </div>
+        <div class="step-label">
+          @if (step === 1) { Select Broker }
+          @if (step === 2) { Set Amount }
+          @if (step === 3) { Confirm }
+        </div>
+      </div>
+      @if (step < 3) {
+        <div class="step-connector" [class.completed]="currentStep > step"></div>
+      }
+    }
+  </div>
+
+  <!-- ── Step Content ───────────────────────────────────────────────── -->
+  <div class="step-content">
+
+    <!-- Step 1: Select Broker -->
+    @if (currentStep === 1) {
+      <div class="step-panel animate-fade-in">
+        <p class="step-description">
+          Select the broker account you want to trade this strategy through.
+        </p>
+
+        <div class="broker-list">
+          @for (broker of brokers; track broker.id) {
+            <div
+              class="broker-card"
+              [class.selected]="selectedBroker?.id === broker.id"
+              [class.disabled]="!broker.isConnected"
+              (click)="selectBroker(broker)"
+            >
+              <div class="broker-icon">
+                <i class="pi pi-building"></i>
+              </div>
+              <div class="broker-info">
+                <div class="broker-name">{{ broker.broker | titlecase }}</div>
+                <div class="broker-status">
+                  @if (broker.isConnected) {
+                    <span class="connected"><i class="pi pi-check-circle"></i> Connected</span>
+                  } @else {
+                    <span class="not-connected"><i class="pi pi-exclamation-circle"></i> Not connected</span>
+                  }
+                </div>
+              </div>
+              @if (selectedBroker?.id === broker.id) {
+                <i class="pi pi-check-circle check-icon"></i>
+              }
+            </div>
+          }
+        </div>
+
+        <!-- Connect prompt -->
+        <div class="connect-prompt">
+          <i class="pi pi-info-circle"></i>
+          <span>You need to connect a broker account first. Go to
+            <a href="/broker-accounts">Broker Accounts</a> to connect Upstox.
+          </span>
+        </div>
+      </div>
+    }
+
+    <!-- Step 2: Set Amount -->
+    @if (currentStep === 2) {
+      <div class="step-panel animate-fade-in">
+        <p class="step-description">
+          Enter the capital you want to deploy for this strategy.
+        </p>
+
+        <div class="amount-section">
+          <div class="min-amount-info">
+            <span class="min-label">Minimum Required</span>
+            <span class="min-value">{{ formatINR(strategy.minimumAmount) }}</span>
+          </div>
+
+          <div class="amount-input-wrapper" [class.error]="amountError">
+            <span class="currency-symbol">₹</span>
+            <input
+              type="number"
+              class="amount-input"
+              [(ngModel)]="amount"
+              (ngModelChange)="validateAmount()"
+              [placeholder]="strategy.minimumAmount.toString()"
+              min="0"
+              step="10000"
+            />
+          </div>
+
+          @if (amountError) {
+            <div class="error-msg"><i class="pi pi-exclamation-circle"></i> {{ amountError }}</div>
+          }
+
+          <!-- Quick amount buttons -->
+          <div class="quick-amounts">
+            <span class="quick-label">Quick select:</span>
+            <button class="quick-btn" (click)="setQuickAmount(1)">Min</button>
+            <button class="quick-btn" (click)="setQuickAmount(2)">2×</button>
+            <button class="quick-btn" (click)="setQuickAmount(5)">5×</button>
+            <button class="quick-btn" (click)="setQuickAmount(10)">10×</button>
+          </div>
+
+          <!-- Progress bar showing how much above minimum -->
+          @if (amount > 0) {
+            <div class="amount-bar-section">
+              <div class="amount-bar-bg">
+                <div
+                  class="amount-bar-fill"
+                  [class.valid]="amount >= strategy.minimumAmount"
+                  [style.width.%]="amountProgress"
+                ></div>
+              </div>
+              <div class="amount-bar-labels">
+                <span>₹0</span>
+                <span [class.valid]="amount >= strategy.minimumAmount">
+                  {{ formatINR(strategy.minimumAmount) }} min
+                </span>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    }
+
+    <!-- Step 3: Confirm -->
+    @if (currentStep === 3) {
+      <div class="step-panel animate-fade-in">
+        <p class="step-description">
+          Review your deployment details before confirming.
+        </p>
+
+        <div class="confirm-card">
+          <div class="confirm-row">
+            <span class="confirm-label">Strategy</span>
+            <span class="confirm-value">{{ strategy.name }}</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-label">Category</span>
+            <span class="confirm-value chip small">{{ strategy.category }}</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-label">Risk Level</span>
+            <span class="confirm-value">
+              <span class="badge" [class]="'badge-' + strategy.riskLevel.toLowerCase()">
+                {{ strategy.riskLevel }}
+              </span>
+            </span>
+          </div>
+          <div class="divider-thin"></div>
+          <div class="confirm-row">
+            <span class="confirm-label">Broker</span>
+            <span class="confirm-value">{{ selectedBroker?.broker | titlecase }}</span>
+          </div>
+          <div class="confirm-row highlight">
+            <span class="confirm-label">Deployment Amount</span>
+            <span class="confirm-value amount-display">{{ formatINR(amount) }}</span>
+          </div>
+        </div>
+
+        <div class="confirm-notice">
+          <i class="pi pi-shield"></i>
+          <span>Your capital will be deployed starting from the next trading session (9:15 AM IST on the next market day).</span>
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- ── Dialog Footer ──────────────────────────────────────────────── -->
+  <ng-template pTemplate="footer">
+    <div class="dialog-footer">
+      <button class="btn-secondary" (click)="currentStep === 1 ? close() : prev()" [disabled]="isDeploying">
+        {{ currentStep === 1 ? 'Cancel' : '← Back' }}
+      </button>
+
+      @if (currentStep < 3) {
+        <button
+          class="btn-primary"
+          (click)="next()"
+          [disabled]="!canGoNext"
+        >
+          Continue →
+        </button>
+      } @else {
+        <button
+          class="btn-deploy"
+          (click)="confirm()"
+          [disabled]="isDeploying"
+        >
+          @if (isDeploying) {
+            <span class="spinner"></span> Deploying...
+          } @else {
+            <i class="pi pi-play"></i> Deploy Now
+          }
+        </button>
+      }
+    </div>
+  </ng-template>
+</p-dialog>

@@ -1,3 +1,5 @@
+<p-toast position="top-right"></p-toast>
+
 @if (isLoading) {
   <div class="loading-state">
     <div class="loading-spinner"></div>
@@ -206,6 +208,15 @@
       </tbody>
     </table>
   </div>
+
+  <!-- Deploy Dialog -->
+  @if (strategy) {
+    <app-deploy-strategy-dialog
+      [strategy]="strategy"
+      [(visible)]="showDeployDialog"
+      (deployed)="onDeployed($event)"
+    ></app-deploy-strategy-dialog>
+  }
 
 </div>
 }

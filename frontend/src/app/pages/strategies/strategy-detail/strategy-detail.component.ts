@@ -2,25 +2,31 @@ import { Component, OnInit, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ChartModule } from 'primeng/chart';
+import { ToastModule } from 'primeng/toast';
+import { MessageService } from 'primeng/api';
 import { Strategy } from '../../../models/strategy.model';
 import { MOCK_STRATEGIES } from '../strategies.mock';
+import { DeployStrategyDialogComponent, DeployConfig } from '../../../shared/components/deploy-strategy-dialog/deploy-strategy-dialog.component';
+import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
   selector: 'app-strategy-detail',
   standalone: true,
-  imports: [CommonModule, ChartModule],
+  imports: [CommonModule, ChartModule, ToastModule, DeployStrategyDialogComponent, StatusBadgeComponent],
   templateUrl: './strategy-detail.component.html',
-  styleUrl: './strategy-detail.component.scss'
+  styleUrl: './strategy-detail.component.scss',
+  providers: [MessageService]
 })
 export class StrategyDetailComponent implements OnInit {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private messageService = inject(MessageService);
 
   strategy: Strategy | null = null;
   isDeployed = false;
   isLoading = true;
-  Math = Math; // expose to template
-
+  showDeployDialog = false;
+  Math = Math;
 
   // Chart data
   monthlyChartData: any = {};
@@ -32,9 +38,7 @@ export class StrategyDetailComponent implements OnInit {
     const id = this.route.snapshot.paramMap.get('id');
     setTimeout(() => {
       this.strategy = MOCK_STRATEGIES.find(s => s.id === id) ?? null;
-      if (this.strategy) {
-        this.buildCharts();
-      }
+      if (this.strategy) this.buildCharts();
       this.isLoading = false;
     }, 400);
   }
@@ -42,11 +46,9 @@ export class StrategyDetailComponent implements OnInit {
   private buildCharts() {
     if (!this.strategy) return;
     const p = this.strategy.performance;
-
     const gridColor = 'rgba(255,255,255,0.06)';
     const textColor = '#8B95B0';
 
-    // Monthly returns bar chart
     const colors = p.monthlyReturns.map(m => m.returnPct >= 0 ? 'rgba(34,197,94,0.75)' : 'rgba(239,68,68,0.75)');
     const borderColors = p.monthlyReturns.map(m => m.returnPct >= 0 ? '#22C55E' : '#EF4444');
 
@@ -62,7 +64,6 @@ export class StrategyDetailComponent implements OnInit {
       }]
     };
 
-    // Equity curve line chart
     this.equityChartData = {
       labels: p.equityCurve.map(e => {
         const d = new Date(e.date);
@@ -97,14 +98,8 @@ export class StrategyDetailComponent implements OnInit {
         }
       },
       scales: {
-        x: {
-          grid: { color: gridColor },
-          ticks: { color: textColor, font: { size: 11 } }
-        },
-        y: {
-          grid: { color: gridColor },
-          ticks: { color: textColor, font: { size: 11 } }
-        }
+        x: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 } } },
+        y: { grid: { color: gridColor }, ticks: { color: textColor, font: { size: 11 } } }
       }
     };
 
@@ -117,9 +112,7 @@ export class StrategyDetailComponent implements OnInit {
   }
 
   formatINR(value: number): string {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency', currency: 'INR', maximumFractionDigits: 0
-    }).format(value);
+    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
   }
 
   formatDuration(minutes: number): string {
@@ -129,8 +122,17 @@ export class StrategyDetailComponent implements OnInit {
   }
 
   onDeploy() {
-    // Will open dialog — wired in next step
-    console.log('Deploy clicked');
+    this.showDeployDialog = true;
+  }
+
+  onDeployed(config: DeployConfig) {
+    this.isDeployed = true;
+    this.messageService.add({
+      severity: 'success',
+      summary: 'Strategy Deployed!',
+      detail: `${config.strategy.name} will go live at 9:15 AM IST on the next market day.`,
+      life: 6000
+    });
   }
 
   goBack() {
