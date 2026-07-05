@@ -20,7 +20,7 @@
     </div>
 
     <!-- Admin section — only visible to admins -->
-    @if (authService.isAdmin) {
+    @if (authService.isAdmin$ | async) {
       <div class="menu-section">
         <div class="section-label">Admin</div>
         @for (item of adminMenuItems; track item.route) {

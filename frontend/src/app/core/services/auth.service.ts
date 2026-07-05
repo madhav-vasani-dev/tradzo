@@ -1,8 +1,8 @@
 import { Injectable, inject } from '@angular/core';
 import { Auth, onAuthStateChanged, User } from '@angular/fire/auth';
 import { Firestore, doc, docData, setDoc } from '@angular/fire/firestore';
-import { Observable, BehaviorSubject, from } from 'rxjs';
-import { switchMap, map } from 'rxjs/operators';
+import { Observable, BehaviorSubject, of } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { TradzoUser } from '../../models/user.model';
 
 @Injectable({ providedIn: 'root' })
@@ -12,6 +12,11 @@ export class AuthService {
 
   private _currentUser$ = new BehaviorSubject<TradzoUser | null>(null);
   readonly currentUser$ = this._currentUser$.asObservable();
+
+  /** Reactive — emits true/false whenever user doc changes in Firestore */
+  readonly isAdmin$ = this._currentUser$.pipe(
+    map(u => !!(u?.isAdmin || u?.isSuperUser))
+  );
 
   constructor() {
     onAuthStateChanged(this.auth, async (firebaseUser) => {
