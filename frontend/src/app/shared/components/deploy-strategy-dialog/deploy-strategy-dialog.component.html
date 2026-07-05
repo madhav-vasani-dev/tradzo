@@ -52,43 +52,55 @@
           Select the broker account you want to trade this strategy through.
         </p>
 
-        <div class="broker-list">
-          @for (broker of brokers; track broker.id) {
-            <div
-              class="broker-card"
-              [class.selected]="selectedBroker?.id === broker.id"
-              [class.disabled]="!broker.isConnected"
-              (click)="selectBroker(broker)"
-            >
-              <div class="broker-icon">
-                <i class="pi pi-building"></i>
-              </div>
-              <div class="broker-info">
-                <div class="broker-name">{{ broker.broker | titlecase }}</div>
-                <div class="broker-status">
-                  @if (broker.isConnected) {
-                    <span class="connected"><i class="pi pi-check-circle"></i> Connected</span>
-                  } @else {
-                    <span class="not-connected"><i class="pi pi-exclamation-circle"></i> Not connected</span>
-                  }
-                </div>
-              </div>
-              @if (selectedBroker?.id === broker.id) {
-                <i class="pi pi-check-circle check-icon"></i>
-              }
-            </div>
-          }
-        </div>
+        <!-- Loading brokers -->
+        @if (loadingBrokers) {
+          <div class="broker-loading">
+            <div class="spinner-sm"></div>
+            <span>Loading accounts...</span>
+          </div>
+        }
 
-        <!-- Connect prompt -->
-        <div class="connect-prompt">
-          <i class="pi pi-info-circle"></i>
-          <span>You need to connect a broker account first. Go to
-            <a href="/broker-accounts">Broker Accounts</a> to connect Upstox.
-          </span>
-        </div>
+        <!-- Has connected accounts -->
+        @if (!loadingBrokers && hasConnectedBrokers) {
+          <div class="broker-list">
+            @for (account of brokerAccounts; track account.id) {
+              <div
+                class="broker-card"
+                [class.selected]="selectedBroker?.id === account.id"
+                (click)="selectBroker(account)"
+              >
+                <div class="broker-icon">
+                  <i class="pi pi-building"></i>
+                </div>
+                <div class="broker-info">
+                  <div class="broker-name">{{ account.broker | titlecase }}</div>
+                  <div class="broker-acct-id">{{ account.displayName }}</div>
+                  <div class="broker-status">
+                    <span class="connected"><i class="pi pi-check-circle"></i> Connected</span>
+                  </div>
+                </div>
+                @if (selectedBroker?.id === account.id) {
+                  <i class="pi pi-check-circle check-icon"></i>
+                }
+              </div>
+            }
+          </div>
+        }
+
+        <!-- No connected accounts -->
+        @if (!loadingBrokers && !hasConnectedBrokers) {
+          <div class="no-brokers">
+            <div class="no-brokers-icon"><i class="pi pi-link"></i></div>
+            <p class="no-brokers-text">No broker accounts connected yet.</p>
+            <a href="/broker-accounts" class="no-brokers-link">
+              <i class="pi pi-external-link"></i>
+              Connect a broker account
+            </a>
+          </div>
+        }
       </div>
     }
+
 
     <!-- Step 2: Set Amount -->
     @if (currentStep === 2) {

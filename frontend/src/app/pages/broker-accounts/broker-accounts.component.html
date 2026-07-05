@@ -1,0 +1,178 @@
+<p-toast position="top-right"></p-toast>
+
+<div class="broker-page">
+
+  <!-- ── Page Header ─────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div>
+      <h1 class="page-title">Broker Accounts</h1>
+      <p class="page-subtitle">Connect your trading broker to deploy and run strategies automatically</p>
+    </div>
+    <div class="connection-summary">
+      <div class="cs-count">{{ connectedAccounts.length }}</div>
+      <div class="cs-label">Connected</div>
+    </div>
+  </div>
+
+  <!-- ── How It Works Banner ─────────────────────────────────────────────── -->
+  <div class="how-it-works glass-card">
+    <div class="hiw-title">
+      <i class="pi pi-info-circle"></i>
+      How broker connection works
+    </div>
+    <div class="hiw-steps">
+      <div class="hiw-step">
+        <div class="hiw-step-num">1</div>
+        <div class="hiw-step-text">Click <strong>Connect</strong> — you'll be redirected to your broker's secure login page</div>
+      </div>
+      <div class="hiw-arrow">→</div>
+      <div class="hiw-step">
+        <div class="hiw-step-num">2</div>
+        <div class="hiw-step-text">Authorize Tradzo to place orders on your behalf</div>
+      </div>
+      <div class="hiw-arrow">→</div>
+      <div class="hiw-step">
+        <div class="hiw-step-num">3</div>
+        <div class="hiw-step-text">Your access token is stored <strong>only in our secure backend</strong> — never in your browser</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Loading skeleton ────────────────────────────────────────────────── -->
+  @if (isLoading) {
+    <div class="broker-grid">
+      @for (i of [1, 2]; track i) {
+        <div class="skeleton-broker-card">
+          <div class="sk-top"></div>
+          <div class="sk-body"></div>
+          <div class="sk-footer"></div>
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ── Broker Cards ────────────────────────────────────────────────────── -->
+  @if (!isLoading) {
+    <div class="broker-grid">
+      @for (meta of brokerRegistry; track meta.name) {
+        <div class="broker-card animate-fade-in-up" [class.connected]="isConnected(meta.name)" [class.coming-soon]="meta.comingSoon">
+
+          <!-- Card top: Logo + Name + Status -->
+          <div class="broker-card-top">
+            <div class="broker-logo" [class]="'logo-' + meta.name">
+              <span class="broker-initial">{{ meta.label.charAt(0) }}</span>
+            </div>
+            <div class="broker-identity">
+              <div class="broker-name-row">
+                <span class="broker-label">{{ meta.label }}</span>
+                @if (meta.comingSoon) {
+                  <span class="coming-soon-pill">Coming Soon</span>
+                }
+              </div>
+              <div class="broker-status-row">
+                @if (isConnected(meta.name)) {
+                  <span class="status-dot active"></span>
+                  <span class="status-text connected">Connected</span>
+                } @else {
+                  <span class="status-dot inactive"></span>
+                  <span class="status-text disconnected">Not connected</span>
+                }
+              </div>
+            </div>
+          </div>
+
+          <p class="broker-description">{{ meta.description }}</p>
+
+          <!-- ── Connected account details ────────────────────────────── -->
+          @if (isConnected(meta.name)) {
+            @let account = getAccount(meta.name);
+            <div class="account-details">
+              <div class="account-row">
+                <span class="ad-label">Account ID</span>
+                <span class="ad-value">{{ account?.brokerAccountId || '—' }}</span>
+              </div>
+              <div class="account-row">
+                <span class="ad-label">Account Name</span>
+                <span class="ad-value">{{ account?.displayName || '—' }}</span>
+              </div>
+              <div class="account-row">
+                <span class="ad-label">Connected On</span>
+                <span class="ad-value">{{ formatDate(account?.connectedAt) }}</span>
+              </div>
+              <div class="account-row">
+                <span class="ad-label">Token Status</span>
+                <span class="ad-value expiry">{{ formatExpiry(account?.expiresAt) }}</span>
+              </div>
+            </div>
+
+            <div class="card-footer connected-footer">
+              <div class="security-note">
+                <i class="pi pi-lock"></i>
+                Token secured in backend
+              </div>
+              <button class="disconnect-btn" (click)="disconnectBroker(account!)">
+                <i class="pi pi-link-slash"></i>
+                Disconnect
+              </button>
+            </div>
+          }
+
+          <!-- ── Not connected CTA ─────────────────────────────────────── -->
+          @if (!isConnected(meta.name)) {
+            <div class="feature-list">
+              <div class="feature-item">
+                <i class="pi pi-shield"></i>
+                <span>Secure OAuth 2.0 — no password stored</span>
+              </div>
+              <div class="feature-item">
+                <i class="pi pi-bolt"></i>
+                <span>Automatic order execution at 9:15 AM IST</span>
+              </div>
+              <div class="feature-item">
+                <i class="pi pi-refresh"></i>
+                <span>Daily auto token refresh</span>
+              </div>
+            </div>
+
+            <div class="card-footer">
+              @if (!meta.comingSoon) {
+                <button
+                  class="connect-btn"
+                  (click)="connectBroker(meta)"
+                  [disabled]="connectingBroker !== null"
+                >
+                  @if (connectingBroker === meta.name) {
+                    <span class="spinner"></span> Connecting...
+                  } @else {
+                    <i class="pi pi-external-link"></i> Connect {{ meta.label }}
+                  }
+                </button>
+              } @else {
+                <button class="coming-soon-btn" disabled>
+                  <i class="pi pi-clock"></i> Coming Soon
+                </button>
+              }
+            </div>
+          }
+
+        </div>
+      }
+    </div>
+  }
+
+  <!-- ── Security Note ──────────────────────────────────────────────────── -->
+  <div class="security-card glass-card">
+    <div class="security-icon">
+      <i class="pi pi-shield"></i>
+    </div>
+    <div class="security-body">
+      <div class="security-title">Your account security is our priority</div>
+      <div class="security-text">
+        Tradzo never stores your broker login credentials or access tokens in the browser or Firestore.
+        All tokens are encrypted and stored exclusively in our secure Python backend.
+        Your broker account is used only to place orders on your behalf — no withdrawals, no transfers.
+      </div>
+    </div>
+  </div>
+
+</div>
