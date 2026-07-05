@@ -1,9 +1,12 @@
-import { Component, Input, Output, EventEmitter, OnInit, inject } from '@angular/core';
+import { Component, Input, Output, EventEmitter, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { DialogModule } from 'primeng/dialog';
 import { Auth } from '@angular/fire/auth';
+import { Subscription } from 'rxjs';
 import { Strategy } from '../../../models/strategy.model';
+import { BrokerAccount } from '../../../models/broker-account.model';
+import { BrokerService } from '../../../core/services/broker.service';
 
 export interface DeployConfig {
   strategy: Strategy;
@@ -13,11 +16,6 @@ export interface DeployConfig {
   amount: number;
 }
 
-// Placeholder broker accounts — will come from Firestore once Broker module is built
-const PLACEHOLDER_BROKERS = [
-  { id: 'broker-placeholder-1', broker: 'upstox' as const, displayName: 'Upstox — Connect your account first', isConnected: false },
-];
-
 @Component({
   selector: 'app-deploy-strategy-dialog',
   standalone: true,
@@ -25,26 +23,42 @@ const PLACEHOLDER_BROKERS = [
   templateUrl: './deploy-strategy-dialog.component.html',
   styleUrl: './deploy-strategy-dialog.component.scss'
 })
-export class DeployStrategyDialogComponent implements OnInit {
+export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
   @Input() strategy!: Strategy;
   @Input() visible = false;
   @Output() visibleChange = new EventEmitter<boolean>();
   @Output() deployed = new EventEmitter<DeployConfig>();
 
   private auth = inject(Auth);
+  private brokerService = inject(BrokerService);
 
   currentStep = 1;
   totalSteps = 3;
   isDeploying = false;
 
-  brokers = PLACEHOLDER_BROKERS;
-  selectedBroker: typeof PLACEHOLDER_BROKERS[0] | null = null;
+  brokerAccounts: BrokerAccount[] = [];
+  loadingBrokers = true;
+  selectedBroker: BrokerAccount | null = null;
   amount = 0;
   amountError = '';
 
+  private sub?: Subscription;
+
   ngOnInit() {
     this.reset();
+    const user = this.auth.currentUser;
+    if (user) {
+      this.sub = this.brokerService.getUserBrokerAccounts(user.uid).subscribe((accounts: BrokerAccount[]) => {
+        this.brokerAccounts = accounts.filter((a: BrokerAccount) => a.isConnected);
+
+        this.loadingBrokers = false;
+      });
+    } else {
+      this.loadingBrokers = false;
+    }
   }
+
+  ngOnDestroy() { this.sub?.unsubscribe(); }
 
   reset() {
     this.currentStep = 1;
@@ -54,8 +68,12 @@ export class DeployStrategyDialogComponent implements OnInit {
     this.isDeploying = false;
   }
 
+  get hasConnectedBrokers(): boolean {
+    return this.brokerAccounts.length > 0;
+  }
+
   get canGoNext(): boolean {
-    if (this.currentStep === 1) return !!this.selectedBroker && this.selectedBroker.isConnected;
+    if (this.currentStep === 1) return !!this.selectedBroker;
     if (this.currentStep === 2) return this.amount >= this.strategy.minimumAmount;
     return true;
   }
@@ -87,8 +105,6 @@ export class DeployStrategyDialogComponent implements OnInit {
   async confirm() {
     if (!this.selectedBroker || !this.strategy) return;
     this.isDeploying = true;
-
-    // Simulate deploy delay — will be replaced with real Firestore write
     await new Promise(r => setTimeout(r, 1200));
 
     this.deployed.emit({
@@ -108,8 +124,8 @@ export class DeployStrategyDialogComponent implements OnInit {
     this.visibleChange.emit(false);
   }
 
-  selectBroker(broker: typeof PLACEHOLDER_BROKERS[0]) {
-    this.selectedBroker = broker;
+  selectBroker(account: BrokerAccount) {
+    this.selectedBroker = account;
   }
 
   setQuickAmount(multiplier: number) {

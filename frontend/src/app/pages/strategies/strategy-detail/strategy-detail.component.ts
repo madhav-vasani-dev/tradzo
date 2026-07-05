@@ -12,7 +12,7 @@ import { StatusBadgeComponent } from '../../../shared/components/status-badge/st
 @Component({
   selector: 'app-strategy-detail',
   standalone: true,
-  imports: [CommonModule, ChartModule, ToastModule, DeployStrategyDialogComponent, StatusBadgeComponent],
+  imports: [CommonModule, ChartModule, ToastModule, DeployStrategyDialogComponent],
   templateUrl: './strategy-detail.component.html',
   styleUrl: './strategy-detail.component.scss',
   providers: [MessageService]

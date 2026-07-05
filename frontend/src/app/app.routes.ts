@@ -5,6 +5,12 @@ export const routes: Routes = [
   // Public
   { path: 'auth', loadComponent: () => import('./pages/auth/auth.component').then(m => m.AuthComponent) },
 
+  // Broker OAuth callback — public route, backend redirects here after exchange
+  {
+    path: 'broker/callback',
+    loadComponent: () => import('./pages/broker-accounts/broker-callback/broker-callback.component').then(m => m.BrokerCallbackComponent)
+  },
+
   // Auth-guarded user routes
   {
     path: 'dashboard',
@@ -19,6 +25,11 @@ export const routes: Routes = [
   {
     path: 'strategies/:id',
     loadComponent: () => import('./pages/strategies/strategy-detail/strategy-detail.component').then(m => m.StrategyDetailComponent),
+    canActivate: [authGuard]
+  },
+  {
+    path: 'broker-accounts',
+    loadComponent: () => import('./pages/broker-accounts/broker-accounts.component').then(m => m.BrokerAccountsComponent),
     canActivate: [authGuard]
   },
 
