@@ -19,14 +19,21 @@ export const adminGuard: CanActivateFn = async (route, state) => {
 
       try {
         const userDoc = await getDoc(doc(firestore, `users/${user.uid}`));
+
+        if (!userDoc.exists()) {
+          router.navigate(['/strategies']);
+          return resolve(false);
+        }
+
         const data = userDoc.data() as any;
-        if (data?.isAdmin || data?.isSuperUser) {
+
+        if (!!data?.isAdmin || !!data?.isSuperUser) {
           return resolve(true);
         } else {
           router.navigate(['/strategies']);
           return resolve(false);
         }
-      } catch {
+      } catch (err) {
         router.navigate(['/strategies']);
         return resolve(false);
       }

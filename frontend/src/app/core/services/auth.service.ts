@@ -22,8 +22,13 @@ export class AuthService {
     onAuthStateChanged(this.auth, async (firebaseUser) => {
       if (firebaseUser) {
         const userRef = doc(this.firestore, `users/${firebaseUser.uid}`);
-        docData(userRef).subscribe((data) => {
-          this._currentUser$.next(data as TradzoUser ?? null);
+        docData(userRef).subscribe({
+          next: (data) => {
+            this._currentUser$.next(data as TradzoUser ?? null);
+          },
+          error: () => {
+            this._currentUser$.next(null);
+          }
         });
       } else {
         this._currentUser$.next(null);
