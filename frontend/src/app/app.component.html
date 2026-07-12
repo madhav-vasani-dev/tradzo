@@ -7,6 +7,13 @@
     <app-sidebar class="desktop-sidebar"></app-sidebar>
 
     <div class="main-content">
+      @if (isPaperTradingMode) {
+        <div class="paper-trading-banner animate-slide-down">
+          <i class="pi pi-exclamation-triangle banner-icon"></i>
+          <span class="banner-text"><strong>Simulation Mode Active:</strong> All trades are simulated internally using live Nifty prices. No real capital is at risk.</span>
+        </div>
+      }
+
       <header class="header">
         <div class="header-left">
           <p-button icon="pi pi-bars" (onClick)="toggleSidebar()" class="menu-toggle" [text]="true" severity="secondary"></p-button>

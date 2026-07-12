@@ -1,58 +1,161 @@
-import { Component, OnInit } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
-
-interface ActivityLog {
-  id: string;
-  date: string;
-  time: string;
-  event: string;
-  status: 'success' | 'failed' | 'warning' | 'info';
-  strategiesRan: number;
-  strategiesFailed: number;
-  details: string;
-}
-
-// Phase 1: Mock activity data — Phase 2 will read from Firestore/backend logs
-const MOCK_ACTIVITY: ActivityLog[] = [
-  { id: '1', date: '2026-07-05', time: '09:15:03', event: 'Morning Execution', status: 'success', strategiesRan: 4, strategiesFailed: 0, details: 'All 4 active strategies executed successfully at market open.' },
-  { id: '2', date: '2026-07-04', time: '09:15:01', event: 'Morning Execution', status: 'warning', strategiesRan: 4, strategiesFailed: 1, details: '1 strategy (Iron Condor Pro) failed due to insufficient margin.' },
-  { id: '3', date: '2026-07-03', time: '09:15:08', event: 'Morning Execution', status: 'success', strategiesRan: 3, strategiesFailed: 0, details: 'All strategies executed. Market gapped up 0.4%.' },
-  { id: '4', date: '2026-07-02', time: '09:15:02', event: 'Morning Execution', status: 'failed', strategiesRan: 0, strategiesFailed: 3, details: 'Backend connection to Upstox API timed out. No orders were placed.' },
-  { id: '5', date: '2026-07-01', time: '09:15:00', event: 'Morning Execution', status: 'success', strategiesRan: 3, strategiesFailed: 0, details: 'All strategies executed successfully.' },
-  { id: '6', date: '2026-06-30', time: '14:32:17', event: 'Token Refresh', status: 'success', strategiesRan: 0, strategiesFailed: 0, details: 'Upstox access tokens refreshed for 2 users successfully.' },
-  { id: '7', date: '2026-06-29', time: '09:15:05', event: 'Morning Execution', status: 'success', strategiesRan: 3, strategiesFailed: 0, details: '3 strategies executed.' },
-];
+import { FormsModule } from '@angular/forms';
+import { Subscription } from 'rxjs';
+import { AdminService } from '../../../core/services/admin.service';
+import { AuthService } from '../../../core/services/auth.service';
+import { StrategyService } from '../../../core/services/strategy.service';
 
 @Component({
   selector: 'app-admin-activity',
   standalone: true,
-  imports: [CommonModule],
+  imports: [CommonModule, FormsModule],
   templateUrl: './admin-activity.component.html',
   styleUrl: './admin-activity.component.scss'
 })
-export class AdminActivityComponent implements OnInit {
-  logs = MOCK_ACTIVITY;
-  isLoading = false;
+export class AdminActivityComponent implements OnInit, OnDestroy {
+  private adminService = inject(AdminService);
+  private authService = inject(AuthService);
+  private strategyService = inject(StrategyService);
 
-  get successRate(): string {
-    const executions = this.logs.filter(l => l.event === 'Morning Execution');
-    if (!executions.length) return '—';
-    const success = executions.filter(l => l.status === 'success').length;
-    return `${Math.round((success / executions.length) * 100)}%`;
+  selectedDate: string = '';
+  logs: any[] = [];
+  isLoading = true;
+  paperTradingEnabled = true;
+  isSuperUser = false;
+
+  private subscriptions = new Subscription();
+
+  // Helper stats
+  successRate = '0%';
+  totalRan = 0;
+  totalFailed = 0;
+
+  ngOnInit() {
+    // Set default date to today in Asia/Kolkata (IST)
+    const today = new Date();
+    // Format to YYYY-MM-DD local timezone
+    const offset = today.getTimezoneOffset();
+    const localToday = new Date(today.getTime() - (offset * 60 * 1000));
+    this.selectedDate = localToday.toISOString().split('T')[0];
+
+    // 1. Subscribe to superuser permissions
+    this.subscriptions.add(
+      this.authService.isSuperUser$.subscribe(isSuper => {
+        this.isSuperUser = isSuper;
+      })
+    );
+
+    // 2. Subscribe to global paper trading mode settings
+    this.subscriptions.add(
+      this.strategyService.getTradingMode().subscribe(mode => {
+        if (mode) {
+          this.paperTradingEnabled = !!mode.paperTrading;
+        }
+      })
+    );
+
+    // 3. Load logs for current date
+    this.loadLogs();
   }
 
-  get totalRan(): number { return this.logs.reduce((s, l) => s + l.strategiesRan, 0); }
-  get totalFailed(): number { return this.logs.reduce((s, l) => s + l.strategiesFailed, 0); }
+  ngOnDestroy() {
+    this.subscriptions.unsubscribe();
+  }
 
-  ngOnInit() {}
+  loadLogs() {
+    this.isLoading = true;
 
-  getStatusIcon(status: string): string {
+    // Unsubscribe from previous log subscription if any
+    const existingLogSub = this.subscriptions.add(
+      this.adminService.getActivityLogs(this.selectedDate).subscribe({
+        next: (data) => {
+          this.logs = data;
+          this.calculateStats();
+          this.isLoading = false;
+        },
+        error: (err) => {
+          console.error('Error fetching activity logs:', err);
+          this.isLoading = false;
+        }
+      })
+    );
+  }
+
+  onDateChange() {
+    this.loadLogs();
+  }
+
+  async toggleTradingMode(newValue: boolean) {
+    const currentUser = this.authService.currentUser$;
+    let userUid = 'system';
+    let userName = 'Superuser';
+
+    currentUser.subscribe(u => {
+      if (u) {
+        userUid = u.uid;
+        userName = u.username || u.email;
+      }
+    }).unsubscribe();
+
+    try {
+      this.isLoading = true;
+      await this.adminService.toggleTradingMode(newValue, userUid, userName);
+      this.paperTradingEnabled = newValue;
+    } catch (err) {
+      console.error('Failed to toggle trading mode:', err);
+      // Revert in UI
+      this.paperTradingEnabled = !newValue;
+    } finally {
+      this.isLoading = false;
+    }
+  }
+
+  private calculateStats() {
+    const orderPlacements = this.logs.filter(l => l.type === 'order_placed');
+    const orderFailures = this.logs.filter(l => l.type === 'order_failed' || l.type === 'error');
+
+    this.totalRan = orderPlacements.length + orderFailures.length;
+    this.totalFailed = orderFailures.length;
+
+    if (this.totalRan === 0) {
+      this.successRate = '—';
+    } else {
+      const successful = orderPlacements.length;
+      this.successRate = `${Math.round((successful / this.totalRan) * 100)}%`;
+    }
+  }
+
+  // ── UI Helpers ─────────────────────────────────────────────────────────────
+
+  getStatusIcon(severity: string): string {
     const map: Record<string, string> = {
       success: 'pi-check-circle',
-      failed: 'pi-times-circle',
+      error: 'pi-times-circle',
       warning: 'pi-exclamation-triangle',
       info: 'pi-info-circle'
     };
-    return map[status] ?? 'pi-info-circle';
+    return map[severity] ?? 'pi-info-circle';
+  }
+
+  getSeverityClass(severity: string): string {
+    return `status-${severity.toLowerCase()}`;
+  }
+
+  formatTime(createdAt: any): string {
+    if (!createdAt) return '—';
+    // Firestore Timestamp has toDate()
+    if (createdAt.toDate && typeof createdAt.toDate === 'function') {
+      return createdAt.toDate().toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
+    const d = new Date(createdAt);
+    if (isNaN(d.getTime())) return '—';
+    return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+  }
+
+  formatLogType(type: string): string {
+    if (!type) return '';
+    return type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
   }
 }
+

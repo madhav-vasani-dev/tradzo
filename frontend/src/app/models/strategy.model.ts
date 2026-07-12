@@ -43,6 +43,11 @@ export interface Strategy {
   riskLevel: RiskLevel;
   isVisible: boolean;
   minimumAmount: number;
+  lotSize: number;          // Units per lot (e.g. 65 for Nifty)
+  strategyCode: string;     // Matches backend REGISTRY key (e.g. 'NIFTY_STRADDLE')
+  stopLossPercent: number;  // e.g. 30
+  entryTime: string;        // 'HH:MM'
+  exitTime: string;         // 'HH:MM'
   tags: string[];
   performance: StrategyPerformance;
   createdAt: any;
@@ -50,18 +55,55 @@ export interface Strategy {
   createdByUid: string;
 }
 
+/** Status of a deployed strategy for a user throughout the trading day. */
+export type UserStrategyStatus = 'enabled' | 'ready' | 'trade_active' | 'trade_closed' | 'paused' | 'stopped';
+
 export interface UserStrategy {
   id: string;
   userId: string;
   strategyId: string;
+  strategyCode: string;
   strategyName: string;
   brokerAccountId: string;
   brokerName: 'upstox' | 'jainam';
   deployedAmount: number;
-  status: 'active' | 'paused' | 'stopped';
+  multiplier: number;           // 1 = 1 lot, 2 = 2 lots, etc.
+  status: UserStrategyStatus;   // live state machine status
+  statusUpdatedAt: any;
   deployedAt: any;
-  lastTradedAt: any | null;
-  pausedAt: any | null;
-  stoppedAt: any | null;
   pausedByAdmin: boolean;
+  lastTradedAt?: any | null;
+  pausedAt?: any | null;
+  stoppedAt?: any | null;
+}
+
+/** A single open/closed option leg for a user's deployed strategy. */
+export interface Position {
+  id: string;
+  date: string;             // 'YYYY-MM-DD'
+  userId: string;
+  strategyId: string;
+  strategyCode: string;
+  userStrategyId: string;
+  brokerAccountId: string;
+  broker: string;
+  instrumentKey: string;
+  symbol: string;
+  optionType: 'CE' | 'PE';
+  strike: number;
+  expiry: string;
+  quantity: number;
+  lots: number;
+  entryPrice: number;
+  slPrice: number;
+  entryOrderId: string;
+  slOrderId: string;
+  status: 'open' | 'sl_hit' | 'squared_off' | 'error';
+  exitReason: string | null;
+  exitOrderId: string | null;
+  exitPrice: number | null;
+  exitAt: any | null;
+  pnl: number | null;
+  entryAt: any;
+  isPaper: boolean;
 }

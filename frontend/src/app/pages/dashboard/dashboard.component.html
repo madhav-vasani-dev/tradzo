@@ -1,4 +1,158 @@
-<div class="welcome-box">
-  <h2>Welcome back to Tradzo</h2>
-  <p>Your algorithmic trading strategies are waiting to be deployed.</p>
+<div class="dashboard-page">
+  <!-- Loading State -->
+  @if (isLoading) {
+    <div class="loading-container">
+      <div class="spinner"></div>
+      <p>Loading your dashboard details...</p>
+    </div>
+  } @else {
+    <!-- Stats Cards Overview -->
+    <div class="stats-overview">
+      <div class="stat-card">
+        <div class="stat-icon margin"><i class="pi pi-wallet"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Deployed Margin</span>
+          <span class="stat-value">{{ formatINR(totalCapital) }}</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon lots"><i class="pi pi-ticket"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Total Lot Size</span>
+          <span class="stat-value">{{ totalLots }} Lot(s)</span>
+        </div>
+      </div>
+
+      <div class="stat-card" [class.positive]="runningPnl > 0" [class.negative]="runningPnl < 0">
+        <div class="stat-icon pnl"><i class="pi pi-chart-line"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Today's P&L</span>
+          <span class="stat-value" [class]="getPnlClass(runningPnl)">
+            {{ runningPnl > 0 ? '+' : '' }}{{ formatINR(runningPnl) }}
+          </span>
+        </div>
+      </div>
+    </div>
+
+    <div class="dashboard-grid">
+      <!-- Deployed Strategies Section -->
+      <div class="grid-section deployed-strategies">
+        <div class="section-header">
+          <h3><i class="pi pi-play-circle text-cyan"></i> Active Deployments</h3>
+          <span class="badge count">{{ deployedStrategies.length }} Active</span>
+        </div>
+
+        @if (deployedStrategies.length === 0) {
+          <div class="empty-card">
+            <i class="pi pi-ban empty-icon"></i>
+            <p>You have no active strategy deployments.</p>
+            <a href="/strategies" class="action-btn-primary">Browse Strategies</a>
+          </div>
+        } @else {
+          <div class="strategy-list">
+            @for (dep of deployedStrategies; track dep.id) {
+              <div class="strategy-row-card">
+                <div class="row-header">
+                  <div class="strategy-info">
+                    <h4>{{ dep.strategyName }}</h4>
+                    <span class="broker-tag"><i class="pi pi-building"></i> {{ dep.brokerName | titlecase }}</span>
+                  </div>
+                  <div class="badge status-badge" [class]="getStatusClass(dep.status)">
+                    <span class="pulse-dot" *ngIf="dep.status === 'trade_active' || dep.status === 'ready'"></span>
+                    {{ getStatusLabel(dep.status) }}
+                  </div>
+                </div>
+
+                <div class="row-metrics">
+                  <div class="metric">
+                    <span class="metric-label">Multiplier</span>
+                    <span class="metric-value">{{ dep.multiplier }}x</span>
+                  </div>
+                  <div class="metric">
+                    <span class="metric-label">Deployed Capital</span>
+                    <span class="metric-value">{{ formatINR(dep.deployedAmount) }}</span>
+                  </div>
+                </div>
+
+                <div class="row-actions">
+                  @if (dep.status === 'paused') {
+                    <button class="action-btn resume" (click)="resumeStrategy(dep.id)">
+                      <i class="pi pi-play-circle"></i> Resume
+                    </button>
+                  } @else if (dep.status === 'enabled' || dep.status === 'ready') {
+                    <button class="action-btn pause" (click)="pauseStrategy(dep.id)">
+                      <i class="pi pi-pause-circle"></i> Pause
+                    </button>
+                  }
+                  
+                  <button class="action-btn stop" (click)="stopStrategy(dep.id)">
+                    <i class="pi pi-stop-circle"></i> Stop
+                  </button>
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+
+      <!-- Active Positions Section -->
+      <div class="grid-section active-positions">
+        <div class="section-header">
+          <h3><i class="pi pi-desktop text-gold"></i> Live Option Positions</h3>
+          <span class="badge status-badge live" *ngIf="positions.length > 0">Live</span>
+        </div>
+
+        @if (positions.length === 0) {
+          <div class="empty-card">
+            <i class="pi pi-clock empty-icon"></i>
+            <p>No active trade positions running.</p>
+            <span class="empty-sub">Straddle execution starts at 12:00 PM IST on trading days.</span>
+          </div>
+        } @else {
+          <div class="positions-list">
+            @for (pos of positions; track pos.id) {
+              <div class="position-row-card" [class.paper-trading]="pos.isPaper">
+                <div class="pos-header">
+                  <div class="pos-title">
+                    <h4>{{ pos.symbol }}</h4>
+                    <span class="paper-badge" *ngIf="pos.isPaper">[PAPER]</span>
+                  </div>
+                  <span class="pos-badge" [class]="pos.status">{{ pos.status | uppercase }}</span>
+                </div>
+
+                <div class="pos-details">
+                  <div class="pos-detail-col">
+                    <span class="label">Average Entry</span>
+                    <span class="value">{{ formatINR(pos.entryPrice) }}</span>
+                  </div>
+                  <div class="pos-detail-col">
+                    <span class="label">Stop Loss</span>
+                    <span class="value sl">{{ formatINR(pos.slPrice) }}</span>
+                  </div>
+                  <div class="pos-detail-col" *ngIf="pos.exitPrice">
+                    <span class="label">Exit Price</span>
+                    <span class="value">{{ formatINR(pos.exitPrice) }}</span>
+                  </div>
+                  <div class="pos-detail-col">
+                    <span class="label">Quantity</span>
+                    <span class="value">{{ pos.quantity }} ({{ pos.lots }} Lot)</span>
+                  </div>
+                </div>
+
+                <div class="pos-footer">
+                  <div class="pnl-wrapper">
+                    <span class="pnl-label">PnL</span>
+                    <span class="pnl-value" [class]="getPnlClass(pos.pnl)">
+                      {{ (pos.pnl || 0) > 0 ? '+' : '' }}{{ formatINR(pos.pnl || 0) }}
+                    </span>
+                  </div>
+                </div>
+              </div>
+            }
+          </div>
+        }
+      </div>
+    </div>
+  }
 </div>

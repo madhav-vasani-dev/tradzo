@@ -6,7 +6,10 @@ import {
   doc,
   docData,
   updateDoc,
-  serverTimestamp
+  serverTimestamp,
+  query,
+  where,
+  orderBy
 } from '@angular/fire/firestore';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
@@ -78,4 +81,42 @@ export class AdminService {
       pausedAt: null
     });
   }
+
+  // ── Activity Logs & Trading Mode (Phase 2 updates) ───────────────────────
+
+  /** Get real-time activity logs for a specific date (defaults to today) */
+  getActivityLogs(dateStr?: string): Observable<any[]> {
+    const today = dateStr || new Date().toISOString().split('T')[0];
+    return runInInjectionContext(this.injector, () => {
+      const ref = query(
+        collection(this.firestore, 'activityLogs'),
+        where('date', '==', today),
+        orderBy('createdAt', 'desc')
+      );
+      return collectionData(ref, { idField: 'id' }) as Observable<any[]>;
+    });
+  }
+
+  /** Toggle paper trading mode (superuser only, sends request to FastAPI backend) */
+  async toggleTradingMode(paper: boolean, userId: string, userName: string): Promise<void> {
+    const { BACKEND_BASE_URL } = await import('../config');
+    const response = await fetch(`${BACKEND_BASE_URL}/execution/trading-mode`, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        paperTrading: paper,
+        userId: userId,
+        userName: userName
+      })
+    });
+    if (!response.ok) {
+      let detail = 'Failed to toggle trading mode.';
+      try {
+        const err = await response.json();
+        if (err?.detail) detail = typeof err.detail === 'string' ? err.detail : JSON.stringify(err.detail);
+      } catch { /* ignore */ }
+      throw new Error(detail);
+    }
+  }
 }
+

@@ -1,10 +1,11 @@
-"""APScheduler setup — weekday morning jobs, all in IST.
+"""APScheduler setup — 5 weekday jobs, all in IST.
 
 Jobs (Mon–Fri):
-  08:00  refresh_broker_tokens        — flag lapsed tokens (Upstox has no refresh)
-  08:05  compute_readiness_snapshot   — cache readiness for the admin panel
-  09:15  execute_morning_strategies   — place orders for active deployments
-  09:15  log_market_open              — write a strategy_triggered marker log
+  08:00  reset_daily_statuses    — reset userStrategy.status to "enabled"
+  11:55  pre_entry_check         — validate tokens, set status="ready"
+  12:00  execute_entry           — place straddle orders + SL-M
+  15:29  execute_exit            — cancel SL orders, square off remaining
+  15:31  eod_cleanup             — compute PnL, log day summary
 """
 import asyncio
 import logging
@@ -14,7 +15,6 @@ from apscheduler.triggers.cron import CronTrigger
 
 from config import IST, settings
 from services import execution_service
-from utils import logger as activity
 
 log = logging.getLogger("tradzo.scheduler")
 
@@ -23,18 +23,15 @@ _WEEKDAYS = "mon-fri"
 
 
 def _run_async(coro_fn):
-    """Wrap an async job so APScheduler can schedule it as a sync callable."""
+    """Wrap an async coroutine so APScheduler can schedule it as a sync callable."""
     def _job():
         asyncio.run(coro_fn())
     return _job
 
 
-def _log_market_open():
-    activity.log_activity(
-        type="strategy_triggered",
-        message="Market open — morning execution window started (09:15 IST).",
-        severity="info",
-    )
+def _run_sync(fn):
+    """Wrap a sync function for APScheduler (no-op wrapper for clarity)."""
+    return fn
 
 
 def start_scheduler() -> AsyncIOScheduler | None:
@@ -47,25 +44,44 @@ def start_scheduler() -> AsyncIOScheduler | None:
 
     _scheduler = AsyncIOScheduler(timezone=IST)
 
+    # ── 08:00 — Reset all userStrategy statuses to "enabled" ──────────────
     _scheduler.add_job(
-        execution_service.refresh_broker_tokens,
+        _run_sync(execution_service.reset_daily_statuses),
         CronTrigger(day_of_week=_WEEKDAYS, hour=8, minute=0, timezone=IST),
-        id="refresh_broker_tokens", replace_existing=True,
+        id="reset_daily_statuses",
+        replace_existing=True,
     )
+
+    # ── 11:55 — Pre-entry token validation + set status="ready" ───────────
     _scheduler.add_job(
-        execution_service.compute_readiness,
-        CronTrigger(day_of_week=_WEEKDAYS, hour=8, minute=5, timezone=IST),
-        id="compute_readiness_snapshot", replace_existing=True,
+        _run_sync(execution_service.pre_entry_check),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=11, minute=55, timezone=IST),
+        id="pre_entry_check",
+        replace_existing=True,
     )
+
+    # ── 12:00 — Entry: place SELL + SL-M orders ───────────────────────────
     _scheduler.add_job(
-        _run_async(execution_service.execute_morning_strategies),
-        CronTrigger(day_of_week=_WEEKDAYS, hour=9, minute=15, timezone=IST),
-        id="execute_morning_strategies", replace_existing=True,
+        _run_async(execution_service.execute_entry),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=12, minute=0, timezone=IST),
+        id="execute_entry",
+        replace_existing=True,
     )
+
+    # ── 15:29 — Exit: cancel SL orders, square off remaining positions ─────
     _scheduler.add_job(
-        _log_market_open,
-        CronTrigger(day_of_week=_WEEKDAYS, hour=9, minute=15, timezone=IST),
-        id="log_market_open", replace_existing=True,
+        _run_async(execution_service.execute_exit),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=29, timezone=IST),
+        id="execute_exit",
+        replace_existing=True,
+    )
+
+    # ── 15:31 — EOD: compute PnL, log daily summary ───────────────────────
+    _scheduler.add_job(
+        _run_sync(execution_service.eod_cleanup),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=31, timezone=IST),
+        id="eod_cleanup",
+        replace_existing=True,
     )
 
     _scheduler.start()

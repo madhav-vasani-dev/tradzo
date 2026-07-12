@@ -13,7 +13,9 @@ export interface DeployConfig {
   brokerAccountId: string;
   brokerName: 'upstox' | 'jainam';
   brokerDisplayName: string;
-  amount: number;
+  multiplier: number;
+  deployedAmount: number;
+  strategyCode: string;
 }
 
 @Component({
@@ -39,8 +41,9 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
   brokerAccounts: BrokerAccount[] = [];
   loadingBrokers = true;
   selectedBroker: BrokerAccount | null = null;
-  amount = 0;
-  amountError = '';
+  multiplier = 1;
+
+  readonly MULTIPLIER_OPTIONS = [1, 2, 3, 5, 10];
 
   private sub?: Subscription;
 
@@ -63,8 +66,7 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
   reset() {
     this.currentStep = 1;
     this.selectedBroker = null;
-    this.amount = 0;
-    this.amountError = '';
+    this.multiplier = 1;
     this.isDeploying = false;
   }
 
@@ -72,26 +74,18 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
     return this.brokerAccounts.length > 0;
   }
 
+  get deployedCapital(): number {
+    return this.multiplier * (this.strategy?.minimumAmount || 0);
+  }
+
   get canGoNext(): boolean {
     if (this.currentStep === 1) return !!this.selectedBroker;
-    if (this.currentStep === 2) return this.amount >= this.strategy.minimumAmount;
+    if (this.currentStep === 2) return this.multiplier >= 1;
     return true;
   }
 
-  get amountProgress(): number {
-    if (!this.strategy || this.amount <= 0) return 0;
-    return Math.min((this.amount / this.strategy.minimumAmount) * 100, 100);
-  }
+  validateAmount() { /* no-op — multiplier is always valid */ }
 
-  validateAmount() {
-    if (this.amount <= 0) {
-      this.amountError = 'Please enter an amount';
-    } else if (this.amount < this.strategy.minimumAmount) {
-      this.amountError = `Minimum amount is ₹${this.strategy.minimumAmount.toLocaleString('en-IN')}`;
-    } else {
-      this.amountError = '';
-    }
-  }
 
   next() {
     if (!this.canGoNext) return;
@@ -112,7 +106,9 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
       brokerAccountId: this.selectedBroker.id,
       brokerName: this.selectedBroker.broker,
       brokerDisplayName: this.selectedBroker.displayName,
-      amount: this.amount
+      multiplier: this.multiplier,
+      deployedAmount: this.deployedCapital,
+      strategyCode: this.strategy.strategyCode,
     });
 
     this.isDeploying = false;
@@ -128,9 +124,8 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
     this.selectedBroker = account;
   }
 
-  setQuickAmount(multiplier: number) {
-    this.amount = this.strategy.minimumAmount * multiplier;
-    this.validateAmount();
+  setMultiplier(value: number) {
+    this.multiplier = value;
   }
 
   formatINR(value: number): string {

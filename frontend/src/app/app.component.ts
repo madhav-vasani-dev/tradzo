@@ -1,4 +1,4 @@
-import { Component, inject, OnInit } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy } from '@angular/core';
 import { NavigationEnd, Router, RouterOutlet } from '@angular/router';
 import { CommonModule } from '@angular/common';
 import { ToastModule } from 'primeng/toast';
@@ -7,7 +7,9 @@ import { ButtonModule } from 'primeng/button';
 import { MenuModule } from 'primeng/menu';
 import { MenuItem } from 'primeng/api';
 import { Auth } from '@angular/fire/auth';
+import { Subscription } from 'rxjs';
 import { SidebarComponent } from './pages/sidebar/sidebar.component';
+import { StrategyService } from './core/services/strategy.service';
 
 @Component({
   selector: 'app-root',
@@ -15,16 +17,19 @@ import { SidebarComponent } from './pages/sidebar/sidebar.component';
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
 })
-export class AppComponent implements OnInit {
+export class AppComponent implements OnInit, OnDestroy {
   private router = inject(Router);
   private auth = inject(Auth);
+  private strategyService = inject(StrategyService);
 
   sidebarVisible = false;
   desktopSidebarVisible = true;
   isAuthRoute = false;
   pageTitle = '';
+  isPaperTradingMode = false;
 
   accountMenuItems: MenuItem[] = [];
+  private subscriptions = new Subscription();
 
   ngOnInit(): void {
     this.accountMenuItems = [
@@ -50,6 +55,22 @@ export class AppComponent implements OnInit {
         }
       }
     });
+
+    // Subscribe to global trading mode (paper vs live)
+    this.subscriptions.add(
+      this.strategyService.getTradingMode().subscribe({
+        next: (mode) => {
+          this.isPaperTradingMode = !!mode?.paperTrading;
+        },
+        error: (err) => {
+          console.error('Error fetching trading mode settings:', err);
+        }
+      })
+    );
+  }
+
+  ngOnDestroy(): void {
+    this.subscriptions.unsubscribe();
   }
 
   toggleSidebar() {

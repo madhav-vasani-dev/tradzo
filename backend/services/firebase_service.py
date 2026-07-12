@@ -142,3 +142,109 @@ def add_activity_log(data: dict) -> str:
 def server_timestamp():
     """Firestore server timestamp sentinel."""
     return firestore.SERVER_TIMESTAMP
+
+
+# ── Trading mode (settings/tradingMode) ──────────────────────────────────────
+
+def get_trading_mode() -> dict:
+    """Return the current trading mode settings document.
+
+    Returns {"paperTrading": bool, ...} or {"paperTrading": True} as default.
+    """
+    snap = get_db().collection("settings").document("tradingMode").get()
+    return snap.to_dict() if snap.exists else {"paperTrading": True}
+
+
+def set_trading_mode(paper: bool, updated_by: str, updated_by_name: str) -> None:
+    """Toggle paper trading mode. Only callable by superuser (enforced in router)."""
+    from datetime import datetime
+    import pytz
+    get_db().collection("settings").document("tradingMode").set({
+        "paperTrading": paper,
+        "updatedBy": updated_by,
+        "updatedByName": updated_by_name,
+        "updatedAt": datetime.now(pytz.timezone("Asia/Kolkata")),
+    })
+
+
+def is_paper_trading() -> bool:
+    """Quick boolean check — defaults to True (safe) if document is missing."""
+    return get_trading_mode().get("paperTrading", True)
+
+
+# ── Market data source account ────────────────────────────────────────────────
+
+def get_market_data_account() -> Optional[dict]:
+    """Return the broker account flagged as the market data WebSocket source.
+
+    Admin marks their account with isMarketDataSource=True.
+    """
+    docs = (
+        get_db()
+        .collection("brokerAccounts")
+        .where(filter=FieldFilter("isMarketDataSource", "==", True))
+        .where(filter=FieldFilter("isConnected", "==", True))
+        .limit(1)
+        .get()
+    )
+    if docs:
+        return {**docs[0].to_dict(), "id": docs[0].id}
+    return None
+
+
+# ── userStrategies helpers ────────────────────────────────────────────────────
+
+def list_deployments_by_status(status: str) -> list[dict]:
+    """Return all userStrategy deployments with the given status."""
+    docs = (
+        get_db()
+        .collection("userStrategies")
+        .where(filter=FieldFilter("status", "==", status))
+        .stream()
+    )
+    return [{**d.to_dict(), "id": d.id} for d in docs]
+
+
+def list_deployments_by_strategy(strategy_id: str) -> list[dict]:
+    """Return all deployments (any status) for a given strategy."""
+    docs = (
+        get_db()
+        .collection("userStrategies")
+        .where(filter=FieldFilter("strategyId", "==", strategy_id))
+        .stream()
+    )
+    return [{**d.to_dict(), "id": d.id} for d in docs]
+
+
+def update_user_strategy_status(doc_id: str, status: str) -> None:
+    """Update only the status field of a userStrategy document."""
+    from datetime import datetime
+    import pytz
+    get_db().collection("userStrategies").document(doc_id).update({
+        "status": status,
+        "statusUpdatedAt": datetime.now(pytz.timezone("Asia/Kolkata")),
+    })
+
+
+def reset_all_strategy_statuses_to_enabled() -> int:
+    """Reset all non-paused userStrategies to 'enabled' (called at 08:00 AM).
+
+    Returns the count of documents updated.
+    """
+    docs = get_db().collection("userStrategies").stream()
+    count = 0
+    for d in docs:
+        data = d.to_dict()
+        if not data.get("pausedByAdmin") and data.get("status") != "enabled":
+            update_user_strategy_status(d.id, "enabled")
+            count += 1
+    return count
+
+
+# ── Strategy document helpers ─────────────────────────────────────────────────
+
+def get_strategy_config(strategy_id: str) -> Optional[dict]:
+    """Fetch a strategy configuration document by ID."""
+    snap = get_db().collection("strategies").document(strategy_id).get()
+    return {**snap.to_dict(), "id": snap.id} if snap.exists else None
+

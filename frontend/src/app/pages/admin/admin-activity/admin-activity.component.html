@@ -5,7 +5,7 @@
     <div>
       <div class="admin-badge"><i class="pi pi-shield"></i> Admin Panel</div>
       <h1 class="page-title">Activity Monitor</h1>
-      <p class="page-subtitle">Morning execution logs and system events</p>
+      <p class="page-subtitle">Real-time system events, trades, and logs</p>
     </div>
     <div class="header-stats">
       <div class="stat-pill green">
@@ -14,69 +14,101 @@
       </div>
       <div class="stat-pill">
         <span class="stat-val">{{ totalRan }}</span>
-        <span class="stat-lbl">Total Ran</span>
+        <span class="stat-lbl">Orders Placed</span>
       </div>
       <div class="stat-pill red">
         <span class="stat-val">{{ totalFailed }}</span>
-        <span class="stat-lbl">Failed</span>
+        <span class="stat-lbl">Failed Trades</span>
       </div>
     </div>
   </div>
 
-  <!-- ── How morning execution works ─────────────────────────────────────── -->
-  <div class="info-banner glass-card">
-    <i class="pi pi-clock"></i>
-    <div>
-      <div class="info-title">Automatic Execution Schedule</div>
-      <div class="info-text">The Python backend (APScheduler) fires every weekday at <strong>9:15 AM IST</strong>.
-        It reads all active strategies from Firestore, places orders via connected broker accounts,
-        and writes execution results here.
+  <!-- ── Controls & Filters Row ─────────────────────────────────────────── -->
+  <div class="controls-card glass-card">
+    <!-- Date picker -->
+    <div class="control-group">
+      <label for="date-picker"><i class="pi pi-calendar"></i> Select Date</label>
+      <input
+        type="date"
+        id="date-picker"
+        class="custom-date-input"
+        [(ngModel)]="selectedDate"
+        (ngModelChange)="onDateChange()"
+      />
+    </div>
+
+    <!-- Paper Trading Toggle (Superuser only) -->
+    <div class="control-group toggle-group" *ngIf="isSuperUser">
+      <div class="toggle-info">
+        <span class="toggle-title">
+          <i class="pi pi-exclamation-triangle text-amber"></i> Trading Mode
+        </span>
+        <span class="toggle-desc">Toggle paper trading internally across all user deployments.</span>
       </div>
+      <label class="switch">
+        <input
+          type="checkbox"
+          [ngModel]="paperTradingEnabled"
+          (ngModelChange)="toggleTradingMode($event)"
+        />
+        <span class="slider round"></span>
+      </label>
     </div>
   </div>
 
-  <!-- ── Phase note ──────────────────────────────────────────────────────── -->
-  <div class="phase-banner">
-    <i class="pi pi-info-circle"></i>
-    Showing mock data for Phase 1. Once the Python backend is running, live logs will appear here automatically.
-  </div>
-
-  <!-- ── Activity Timeline ─────────────────────────────────────────────── -->
-  <div class="timeline">
-    @for (log of logs; track log.id) {
-      <div class="timeline-item" [class]="'status-' + log.status">
-        <div class="timeline-dot">
-          <i class="pi" [class]="getStatusIcon(log.status)"></i>
-        </div>
-        <div class="timeline-line"></div>
-        <div class="timeline-card glass-card">
-          <div class="tc-header">
-            <div class="tc-event">{{ log.event }}</div>
-            <div class="tc-time">
-              <i class="pi pi-calendar"></i>
-              {{ log.date }} at {{ log.time }}
+  <!-- ── Loading state ─────────────────────────────────────────────────── -->
+  @if (isLoading) {
+    <div class="loading-container">
+      <div class="spinner"></div>
+      <p>Fetching logs from Firestore...</p>
+    </div>
+  } @else {
+    <!-- ── Timeline Logs ────────────────────────────────────────────────── -->
+    @if (logs.length === 0) {
+      <div class="empty-state glass-card">
+        <i class="pi pi-envelope empty-icon"></i>
+        <h3>No logs recorded</h3>
+        <p>No activity logs or system events found for {{ selectedDate }}.</p>
+      </div>
+    } @else {
+      <div class="timeline">
+        @for (log of logs; track log.id) {
+          <div class="timeline-item" [class]="getSeverityClass(log.severity)">
+            <div class="timeline-dot">
+              <i class="pi" [class]="getStatusIcon(log.severity)"></i>
             </div>
-          </div>
-
-          <div class="tc-details">{{ log.details }}</div>
-
-          @if (log.event === 'Morning Execution') {
-            <div class="tc-stats">
-              <div class="tc-stat green">
-                <i class="pi pi-check-circle"></i>
-                <span>{{ log.strategiesRan }} ran</span>
+            <div class="timeline-line"></div>
+            <div class="timeline-card glass-card" [class.paper-log]="log.isPaper">
+              <div class="tc-header">
+                <div class="tc-event">
+                  {{ formatLogType(log.type) }}
+                  <span class="paper-tag" *ngIf="log.isPaper">[PAPER]</span>
+                </div>
+                <div class="tc-time">
+                  <i class="pi pi-clock"></i>
+                  {{ formatTime(log.createdAt) }}
+                </div>
               </div>
-              @if (log.strategiesFailed > 0) {
-                <div class="tc-stat red">
-                  <i class="pi pi-times-circle"></i>
-                  <span>{{ log.strategiesFailed }} failed</span>
+
+              <div class="tc-details">{{ log.message }}</div>
+
+              <!-- Metadata Section if available -->
+              @if (log.metadata && (log.metadata.symbol || log.metadata.avgStrike || log.metadata.pnl !== undefined)) {
+                <div class="tc-meta">
+                  <span *ngIf="log.metadata.symbol"><strong>Symbol:</strong> {{ log.metadata.symbol }}</span>
+                  <span *ngIf="log.metadata.entryPrice"><strong>Avg Entry:</strong> ₹{{ log.metadata.entryPrice }}</span>
+                  <span *ngIf="log.metadata.exitPrice"><strong>Avg Exit:</strong> ₹{{ log.metadata.exitPrice }}</span>
+                  <span *ngIf="log.metadata.quantity"><strong>Qty:</strong> {{ log.metadata.quantity }}</span>
+                  <span *ngIf="log.metadata.pnl !== undefined" [class]="log.metadata.pnl >= 0 ? 'text-green' : 'text-red'">
+                    <strong>PnL:</strong> ₹{{ log.metadata.pnl }}
+                  </span>
                 </div>
               }
             </div>
-          }
-        </div>
+          </div>
+        }
       </div>
     }
-  </div>
+  }
 
 </div>

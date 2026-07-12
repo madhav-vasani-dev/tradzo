@@ -298,38 +298,35 @@
   }
 }
 
-.error-msg {
+.multiplier-selector-wrapper {
   display: flex;
-  align-items: center;
-  gap: 6px;
-  font-size: 0.78rem;
-  color: $neon-red;
-  font-weight: 500;
-}
-
-.quick-amounts {
-  display: flex;
-  align-items: center;
+  flex-direction: column;
   gap: 0.5rem;
-  flex-wrap: wrap;
+  margin-bottom: 0.5rem;
 
-  .quick-label {
-    font-size: 0.75rem;
-    color: $text-muted;
-    font-weight: 500;
+  .multiplier-label {
+    font-size: 0.8rem;
+    color: $text-secondary;
+    font-weight: 600;
   }
 }
 
-.quick-btn {
-  padding: 5px 14px;
+.multiplier-chips {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+
+.multiplier-chip {
+  padding: 8px 16px;
   border-radius: 8px;
-  font-size: 0.78rem;
+  font-size: 0.85rem;
   font-weight: 600;
   background: rgba(255, 255, 255, 0.05);
   border: 1px solid $border-default;
   color: $text-secondary;
   cursor: pointer;
-  transition: all 0.18s ease;
+  transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
   font-family: inherit;
 
   &:hover {
@@ -337,37 +334,41 @@
     color: $primary-cyan;
     border-color: rgba(0, 194, 232, 0.3);
   }
+
+  &.active {
+    background: $primary-cyan;
+    color: $primary-black;
+    border-color: $primary-cyan;
+    box-shadow: 0 0 12px rgba(0, 194, 232, 0.3);
+  }
 }
 
-.amount-bar-section {
+.capital-preview-card {
+  background: rgba(0, 194, 232, 0.05);
+  border: 1px solid rgba(0, 194, 232, 0.15);
+  border-radius: 12px;
+  padding: 1rem;
+  margin-top: 1rem;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-}
+  gap: 0.25rem;
 
-.amount-bar-bg {
-  height: 6px;
-  background: rgba(255, 255, 255, 0.06);
-  border-radius: 100px;
-  overflow: hidden;
-}
+  .preview-label {
+    font-size: 0.75rem;
+    color: $text-muted;
+    font-weight: 500;
+  }
 
-.amount-bar-fill {
-  height: 100%;
-  background: $neon-red;
-  border-radius: 100px;
-  transition: width 0.3s ease, background 0.3s ease;
+  .preview-value {
+    font-size: 1.4rem;
+    font-weight: 800;
+    color: $primary-cyan;
+  }
 
-  &.valid { background: linear-gradient(90deg, $primary-cyan, $primary-green); }
-}
-
-.amount-bar-labels {
-  display: flex;
-  justify-content: space-between;
-  font-size: 0.7rem;
-  color: $text-muted;
-
-  .valid { color: $primary-green; font-weight: 600; }
+  .preview-subtext {
+    font-size: 0.7rem;
+    color: $text-secondary;
+  }
 }
 
 // ── Confirm card ──────────────────────────────────────────────────────────────

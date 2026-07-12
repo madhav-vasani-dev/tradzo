@@ -36,24 +36,166 @@
   .stat-lbl { font-size: 0.68rem; color: $text-muted; text-transform: uppercase; letter-spacing: 0.07em; margin-top: 2px; font-weight: 600; }
 }
 
-// ── Banners ───────────────────────────────────────────────────────────────────
-.info-banner {
-  display: flex; gap: 1rem; align-items: flex-start; padding: 1.25rem 1.5rem;
-  border-color: rgba(0,194,232,0.15) !important;
-  background: rgba(0,194,232,0.03) !important;
+// ── Controls & Filter Row ───────────────────────────────────────────────────
+.controls-card {
+  background: $card-bg;
+  border: 1px solid $card-border;
+  border-radius: 16px;
+  padding: 1.25rem 1.5rem;
+  display: flex;
+  flex-direction: column;
+  gap: 1.25rem;
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.25);
+  margin-bottom: 2rem;
 
-  i { color: $primary-cyan; font-size: 1.1rem; flex-shrink: 0; margin-top: 2px; }
-
-  .info-title { font-size: 0.88rem; font-weight: 700; color: $text-primary; margin-bottom: 4px; }
-  .info-text { font-size: 0.8rem; color: $text-secondary; line-height: 1.6; strong { color: $text-primary; } }
+  @media (min-width: 600px) {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+  }
 }
 
-.phase-banner {
-  display: flex; align-items: center; gap: 0.6rem;
-  padding: 0.75rem 1.25rem;
-  background: rgba(244,185,66,0.06); border: 1px solid rgba(244,185,66,0.2); border-radius: 10px;
-  font-size: 0.8rem; color: $text-secondary;
-  i { color: $primary-gold; flex-shrink: 0; }
+.control-group {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+
+  label {
+    font-size: 0.72rem;
+    font-weight: 700;
+    color: $text-muted;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    display: flex;
+    align-items: center;
+    gap: 4px;
+    i { font-size: 0.8rem; }
+  }
+
+  &.toggle-group {
+    flex-direction: row;
+    align-items: center;
+    justify-content: space-between;
+    gap: 2rem;
+    flex: 1;
+    max-width: 500px;
+  }
+
+  .toggle-info {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+
+    .toggle-title {
+      font-size: 0.82rem;
+      font-weight: 700;
+      color: $text-primary;
+      display: flex;
+      align-items: center;
+      gap: 4px;
+    }
+
+    .toggle-desc {
+      font-size: 0.72rem;
+      color: $text-muted;
+    }
+  }
+}
+
+.custom-date-input {
+  background: rgba(255, 255, 255, 0.04);
+  border: 1px solid $border-default;
+  border-radius: 8px;
+  padding: 0.5rem 1rem;
+  font-size: 0.88rem;
+  color: $text-primary;
+  font-family: inherit;
+  outline: none;
+  transition: all 0.2s ease;
+
+  &:focus {
+    border-color: rgba(0, 194, 232, 0.4);
+    background: rgba(255, 255, 255, 0.06);
+  }
+}
+
+// ── Switch / Toggle Styles ──────────────────────────────────────────────────
+.switch {
+  position: relative;
+  display: inline-block;
+  width: 48px;
+  height: 24px;
+  flex-shrink: 0;
+
+  input {
+    opacity: 0;
+    width: 0;
+    height: 0;
+  }
+}
+
+.slider {
+  position: absolute;
+  cursor: pointer;
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(255, 255, 255, 0.08);
+  border: 1px solid $border-default;
+  transition: .3s;
+
+  &:before {
+    position: absolute;
+    content: "";
+    height: 16px;
+    width: 16px;
+    left: 3px;
+    bottom: 3px;
+    background-color: $text-secondary;
+    transition: .3s;
+  }
+
+  &.round {
+    border-radius: 24px;
+    &:before { border-radius: 50%; }
+  }
+}
+
+input:checked + .slider {
+  background-color: $primary-gold;
+  border-color: $primary-gold;
+  box-shadow: 0 0 10px rgba(244, 185, 66, 0.2);
+
+  &:before {
+    transform: translateX(24px);
+    background-color: $primary-black;
+  }
+}
+
+// ── Empty State ─────────────────────────────────────────────────────────────
+.empty-state {
+  padding: 4rem 2rem;
+  text-align: center;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.75rem;
+
+  .empty-icon {
+    font-size: 2.2rem;
+    color: $text-muted;
+  }
+
+  h3 {
+    font-size: 1.1rem;
+    font-weight: 700;
+    color: $text-primary;
+    margin: 0;
+  }
+
+  p {
+    font-size: 0.88rem;
+    color: $text-secondary;
+    margin: 0;
+  }
 }
 
 // ── Timeline ──────────────────────────────────────────────────────────────────
@@ -71,11 +213,13 @@
 
   &.status-success .timeline-dot i { color: $primary-green; }
   &.status-failed  .timeline-dot i { color: $neon-red; }
+  &.status-error   .timeline-dot i { color: $neon-red; }
   &.status-warning .timeline-dot i { color: $primary-orange; }
   &.status-info    .timeline-dot i { color: $primary-cyan; }
 
   &.status-success .timeline-dot { background: $soft-green; }
   &.status-failed  .timeline-dot { background: $soft-red; }
+  &.status-error   .timeline-dot { background: $soft-red; }
   &.status-warning .timeline-dot { background: $soft-orange; }
   &.status-info    .timeline-dot { background: $soft-cyan; }
 }
@@ -101,53 +245,70 @@
 }
 
 .timeline-card {
-  padding: 1rem 1.25rem;
+  padding: 1.1rem 1.4rem;
   margin-bottom: 1rem;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+
+  &.paper-log {
+    border-left: 3px solid rgba(244, 185, 66, 0.5);
+  }
 }
 
 .tc-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   gap: 1rem;
   margin-bottom: 0.5rem;
   flex-wrap: wrap;
 }
 
 .tc-event {
-  font-size: 0.9rem;
+  font-size: 0.88rem;
   font-weight: 700;
   color: $text-primary;
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+
+  .paper-tag {
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: $primary-gold;
+    background: $soft-gold;
+    padding: 1px 6px;
+    border-radius: 4px;
+  }
 }
 
 .tc-time {
   display: flex;
   align-items: center;
   gap: 0.4rem;
-  font-size: 0.75rem;
+  font-size: 0.72rem;
   color: $text-muted;
   i { font-size: 0.8rem; }
 }
 
 .tc-details {
-  font-size: 0.82rem;
+  font-size: 0.8rem;
   color: $text-secondary;
   line-height: 1.5;
-  margin-bottom: 0.75rem;
+  margin-bottom: 0.5rem;
 }
 
-.tc-stats {
+.tc-meta {
   display: flex;
-  gap: 1rem;
+  flex-wrap: wrap;
+  gap: 0.5rem 1.25rem;
+  padding: 0.5rem 0.75rem;
+  background: rgba(255, 255, 255, 0.02);
+  border: 1px solid rgba(255, 255, 255, 0.04);
+  border-radius: 8px;
+  font-size: 0.75rem;
+  color: $text-secondary;
+
+  .text-green { color: $primary-green; }
+  .text-red { color: $neon-red; }
 }
 
-.tc-stat {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.78rem;
-  font-weight: 600;
-  i { font-size: 0.8rem; }
-  &.green { color: $primary-green; }
-  &.red   { color: $neon-red; }
-}

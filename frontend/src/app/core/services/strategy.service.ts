@@ -15,7 +15,7 @@ import {
   serverTimestamp
 } from '@angular/fire/firestore';
 import { Observable } from 'rxjs';
-import { Strategy, UserStrategy } from '../../models/strategy.model';
+import { Strategy, UserStrategy, Position } from '../../models/strategy.model';
 
 @Injectable({ providedIn: 'root' })
 export class StrategyService {
@@ -53,25 +53,27 @@ export class StrategyService {
   async deployStrategy(
     userId: string,
     strategyId: string,
+    strategyCode: string,
     strategyName: string,
     brokerAccountId: string,
     brokerName: 'upstox' | 'jainam',
-    deployedAmount: number
+    deployedAmount: number,
+    multiplier: number,
   ): Promise<void> {
     const userStrategyRef = collection(this.firestore, 'userStrategies');
     await addDoc(userStrategyRef, {
       userId,
       strategyId,
+      strategyCode,
       strategyName,
       brokerAccountId,
       brokerName,
       deployedAmount,
-      status: 'active',
+      multiplier,
+      status: 'enabled',
+      statusUpdatedAt: serverTimestamp(),
       deployedAt: serverTimestamp(),
-      lastTradedAt: null,
-      pausedAt: null,
-      stoppedAt: null,
-      pausedByAdmin: false
+      pausedByAdmin: false,
     });
 
     // Update user's deployedStrategyIds array via arrayUnion
@@ -81,6 +83,25 @@ export class StrategyService {
       deployedStrategyIds: arrayUnion(strategyId)
     });
   }
+
+  /** Get real-time paper trading mode from settings/tradingMode */
+  getTradingMode(): Observable<{ paperTrading: boolean; updatedByName?: string }> {
+    const ref = doc(this.firestore, 'settings/tradingMode');
+    return docData(ref) as Observable<{ paperTrading: boolean; updatedByName?: string }>;
+  }
+
+  /** Get all positions for a user on a specific date (defaults to today) */
+  getUserPositions(userId: string, dateStr?: string): Observable<Position[]> {
+    const today = dateStr || new Date().toISOString().split('T')[0];
+    const ref = query(
+      collection(this.firestore, 'positions'),
+      where('userId', '==', userId),
+      where('date', '==', today),
+      orderBy('entryAt', 'asc')
+    );
+    return collectionData(ref, { idField: 'id' }) as Observable<Position[]>;
+  }
+
 
   /** Pause a user's strategy deployment */
   async pauseUserStrategy(userStrategyId: string): Promise<void> {

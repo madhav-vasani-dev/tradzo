@@ -32,7 +32,7 @@
         </div>
         <div class="step-label">
           @if (step === 1) { Select Broker }
-          @if (step === 2) { Set Amount }
+          @if (step === 2) { Set Multiplier }
           @if (step === 3) { Confirm }
         </div>
       </div>
@@ -102,63 +102,54 @@
     }
 
 
-    <!-- Step 2: Set Amount -->
+    <!-- Step 2: Set Multiplier -->
     @if (currentStep === 2) {
       <div class="step-panel animate-fade-in">
         <p class="step-description">
-          Enter the capital you want to deploy for this strategy.
+          Select the lot multiplier to scale your deployment capital.
         </p>
 
         <div class="amount-section">
           <div class="min-amount-info">
-            <span class="min-label">Minimum Required</span>
+            <span class="min-label">Base Margin (1 Lot = {{ strategy.lotSize }} units)</span>
             <span class="min-value">{{ formatINR(strategy.minimumAmount) }}</span>
           </div>
 
-          <div class="amount-input-wrapper" [class.error]="amountError">
-            <span class="currency-symbol">₹</span>
+          <div class="multiplier-selector-wrapper">
+            <span class="multiplier-label">Lot Multiplier:</span>
+            <div class="multiplier-chips">
+              @for (opt of MULTIPLIER_OPTIONS; track opt) {
+                <button
+                  type="button"
+                  class="multiplier-chip"
+                  [class.active]="multiplier === opt"
+                  (click)="setMultiplier(opt)"
+                >
+                  {{ opt }}x
+                </button>
+              }
+            </div>
+          </div>
+
+          <div class="amount-input-wrapper">
+            <span class="currency-symbol">Custom Lot Size</span>
             <input
               type="number"
               class="amount-input"
-              [(ngModel)]="amount"
+              [(ngModel)]="multiplier"
               (ngModelChange)="validateAmount()"
-              [placeholder]="strategy.minimumAmount.toString()"
-              min="0"
-              step="10000"
+              placeholder="1"
+              min="1"
+              step="1"
             />
           </div>
 
-          @if (amountError) {
-            <div class="error-msg"><i class="pi pi-exclamation-circle"></i> {{ amountError }}</div>
-          }
-
-          <!-- Quick amount buttons -->
-          <div class="quick-amounts">
-            <span class="quick-label">Quick select:</span>
-            <button class="quick-btn" (click)="setQuickAmount(1)">Min</button>
-            <button class="quick-btn" (click)="setQuickAmount(2)">2×</button>
-            <button class="quick-btn" (click)="setQuickAmount(5)">5×</button>
-            <button class="quick-btn" (click)="setQuickAmount(10)">10×</button>
+          <!-- Total Capital preview -->
+          <div class="capital-preview-card">
+            <div class="preview-label">Estimated Total Margin Required:</div>
+            <div class="preview-value">{{ formatINR(deployedCapital) }}</div>
+            <div class="preview-subtext">Lots: {{ multiplier }} | Total Option Units: {{ multiplier * strategy.lotSize }}</div>
           </div>
-
-          <!-- Progress bar showing how much above minimum -->
-          @if (amount > 0) {
-            <div class="amount-bar-section">
-              <div class="amount-bar-bg">
-                <div
-                  class="amount-bar-fill"
-                  [class.valid]="amount >= strategy.minimumAmount"
-                  [style.width.%]="amountProgress"
-                ></div>
-              </div>
-              <div class="amount-bar-labels">
-                <span>₹0</span>
-                <span [class.valid]="amount >= strategy.minimumAmount">
-                  {{ formatINR(strategy.minimumAmount) }} min
-                </span>
-              </div>
-            </div>
-          }
         </div>
       </div>
     }
@@ -190,17 +181,21 @@
           <div class="divider-thin"></div>
           <div class="confirm-row">
             <span class="confirm-label">Broker</span>
-            <span class="confirm-value">{{ selectedBroker?.broker | titlecase }}</span>
+            <span class="confirm-value">{{ selectedBroker?.broker | titlecase }} ({{ selectedBroker?.displayName }})</span>
+          </div>
+          <div class="confirm-row">
+            <span class="confirm-label">Lot Multiplier</span>
+            <span class="confirm-value">{{ multiplier }}x ({{ multiplier * strategy.lotSize }} units)</span>
           </div>
           <div class="confirm-row highlight">
-            <span class="confirm-label">Deployment Amount</span>
-            <span class="confirm-value amount-display">{{ formatINR(amount) }}</span>
+            <span class="confirm-label">Total Capital Deployed</span>
+            <span class="confirm-value amount-display">{{ formatINR(deployedCapital) }}</span>
           </div>
         </div>
 
         <div class="confirm-notice">
           <i class="pi pi-shield"></i>
-          <span>Your capital will be deployed starting from the next trading session (9:15 AM IST on the next market day).</span>
+          <span>Execution starts automatically at {{ strategy.entryTime }} IST on every trading session.</span>
         </div>
       </div>
     }

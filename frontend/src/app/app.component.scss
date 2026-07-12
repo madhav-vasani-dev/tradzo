@@ -96,3 +96,50 @@
     overflow: hidden;
   }
 }
+
+// ── Paper Trading Banner ──────────────────────────────────────────────────────
+.paper-trading-banner {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  padding: 0.65rem 1.25rem;
+  background: rgba(244, 185, 66, 0.08);
+  border-bottom: 1.5px solid rgba(244, 185, 66, 0.25);
+  box-shadow: 0 4px 20px rgba(0, 0, 0, 0.15);
+  flex-shrink: 0;
+  z-index: 11;
+
+  .banner-icon {
+    color: $primary-gold;
+    font-size: 1.05rem;
+    filter: drop-shadow(0 0 6px rgba(244, 185, 66, 0.4));
+    animation: pulse 2s infinite ease-in-out;
+  }
+
+  .banner-text {
+    font-size: 0.8rem;
+    color: $text-secondary;
+    letter-spacing: 0.01em;
+
+    strong {
+      color: $text-primary;
+      font-weight: 700;
+    }
+  }
+}
+
+// ── Animations ───────────────────────────────────────────────────────────────
+@keyframes pulse {
+  0%, 100% { transform: scale(1); opacity: 1; }
+  50% { transform: scale(1.15); opacity: 0.8; }
+}
+
+.animate-slide-down {
+  animation: slideDown 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes slideDown {
+  from { transform: translateY(-100%); }
+  to { transform: translateY(0); }
+}
+

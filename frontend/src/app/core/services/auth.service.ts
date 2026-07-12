@@ -19,6 +19,10 @@ export class AuthService {
     map(u => !!(u?.isAdmin || u?.isSuperUser))
   );
 
+  readonly isSuperUser$ = this._currentUser$.pipe(
+    map(u => !!u?.isSuperUser)
+  );
+
   constructor() {
     onAuthStateChanged(this.auth, async (firebaseUser) => {
       if (firebaseUser) {
