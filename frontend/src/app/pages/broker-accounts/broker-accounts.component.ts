@@ -8,11 +8,12 @@ import { Subscription } from 'rxjs';
 import { BrokerService } from '../../core/services/broker.service';
 import { AuthService } from '../../core/services/auth.service';
 import { BrokerAccount, BrokerMeta, BROKER_REGISTRY } from '../../models/broker-account.model';
+import { ConnectBrokerDialogComponent } from '../../shared/components/connect-broker-dialog/connect-broker-dialog.component';
 
 @Component({
   selector: 'app-broker-accounts',
   standalone: true,
-  imports: [CommonModule, ToastModule],
+  imports: [CommonModule, ToastModule, ConnectBrokerDialogComponent],
   templateUrl: './broker-accounts.component.html',
   styleUrl: './broker-accounts.component.scss',
   providers: [MessageService]
@@ -27,57 +28,113 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
   brokerRegistry = BROKER_REGISTRY;
   connectedAccounts: BrokerAccount[] = [];
   isLoading = true;
-  connectingBroker: string | null = null;
+
+  // Connect-broker dialog state
+  dialogVisible = false;
+  dialogMeta: BrokerMeta | null = null;
 
   private sub?: Subscription;
 
   ngOnInit() {
+    this.loadAccounts();
+  }
+
+  private loadAccounts() {
     const user = this.auth.currentUser;
     if (!user) { this.isLoading = false; return; }
 
+    this.sub?.unsubscribe();
+    console.log('LOAD ACCOUNTS')
     this.sub = this.brokerService.getUserBrokerAccounts(user.uid).subscribe({
       next: (accounts) => {
+        console.log('ACCOUTNS LOADED', accounts)
         this.connectedAccounts = accounts;
         this.isLoading = false;
       },
-      error: () => { this.isLoading = false; }
+      error: (err) => {
+        // Almost always a Firestore rules "permission-denied" — log the real code.
+        console.error('[BrokerAccounts] Failed to load broker accounts:', err?.code, err?.message, err);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Could not load accounts',
+          detail: err?.code === 'permission-denied'
+            ? 'Firestore rules are blocking access to your broker accounts.'
+            : (err?.message || 'Failed to load broker accounts.'),
+          life: 6000
+        });
+        this.isLoading = false;
+      }
     });
   }
 
   ngOnDestroy() { this.sub?.unsubscribe(); }
 
-  /** Check if a broker is already connected */
+  /** The account doc for a broker, whether connected or disconnected. */
   getAccount(broker: string): BrokerAccount | undefined {
-    return this.connectedAccounts.find(a => a.broker === broker && a.isConnected);
+    return this.connectedAccounts.find(a => a.broker === broker);
   }
 
   isConnected(broker: string): boolean {
+    return !!this.getAccount(broker)?.isConnected;
+  }
+
+  /** True when an account exists (so its API keys are saved for reconnect). */
+  hasSavedAccount(broker: string): boolean {
     return !!this.getAccount(broker);
   }
 
-  async connectBroker(meta: BrokerMeta) {
+  /** Open the credential dialog for a broker (bring-your-own-key). */
+  connectBroker(meta: BrokerMeta) {
     if (meta.comingSoon) return;
-    const user = this.auth.currentUser;
-    if (!user) {
+    if (!this.auth.currentUser) {
       this.messageService.add({ severity: 'warn', summary: 'Not logged in', detail: 'Please log in first.' });
       return;
     }
+    this.dialogMeta = meta;
+    this.dialogVisible = true;
+  }
 
-    this.connectingBroker = meta.name;
+  reconnectingId: string | null = null;
 
+  /** Reconnect an existing account using its stored keys (no re-entering). */
+  async reconnectBroker(account: BrokerAccount) {
+    this.reconnectingId = account.id;
     try {
-      const authUrl = await this.brokerService.getUpstoxAuthUrl(user.uid);
-      // Redirect user to Upstox OAuth page
-      window.location.href = authUrl;
-    } catch (err) {
-      this.connectingBroker = null;
+      const res = await this.brokerService.reconnectBroker(account.id);
+      if (res.auth_url) {
+        // Upstox: hand off to the broker login page.
+        window.location.href = res.auth_url;
+        return;
+      }
+      // Jainam: reconnected synchronously.
+      this.messageService.add({
+        severity: 'success',
+        summary: 'Reconnected',
+        detail: `${account.displayName} reconnected successfully.`,
+        life: 4000
+      });
+      this.loadAccounts();
+    } catch (err: any) {
       this.messageService.add({
         severity: 'error',
-        summary: 'Connection Failed',
-        detail: 'Could not reach the trading server. Make sure the backend is running.',
+        summary: 'Reconnect Failed',
+        detail: err?.message || 'Could not reconnect. Please try again.',
         life: 6000
       });
+    } finally {
+      this.reconnectingId = null;
     }
+  }
+
+  /** Fired when a synchronous (session) broker connects successfully. */
+  onBrokerConnected() {
+    this.messageService.add({
+      severity: 'success',
+      summary: 'Broker Connected',
+      detail: `${this.dialogMeta?.label} account connected successfully.`,
+      life: 4000
+    });
+    this.loadAccounts();
   }
 
   async disconnectBroker(account: BrokerAccount) {
@@ -86,8 +143,8 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
       this.messageService.add({
         severity: 'success',
         summary: 'Disconnected',
-        detail: `${account.broker} account disconnected successfully.`,
-        life: 4000
+        detail: `${account.broker} disconnected. Your API keys are saved — reconnect anytime.`,
+        life: 5000
       });
     } catch {
       this.messageService.add({
@@ -96,6 +153,31 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
         detail: 'Could not disconnect the account. Please try again.',
         life: 4000
       });
+    }
+  }
+
+  removingId: string | null = null;
+
+  /** Fully forget an account, including its stored API keys. */
+  async removeBroker(account: BrokerAccount) {
+    this.removingId = account.id;
+    try {
+      await this.brokerService.removeBroker(account.id);
+      this.messageService.add({
+        severity: 'info',
+        summary: 'Account removed',
+        detail: `${account.displayName} removed. You'll need to re-enter your API keys to connect again.`,
+        life: 5000
+      });
+    } catch (err: any) {
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Error',
+        detail: err?.message || 'Could not remove the account.',
+        life: 4000
+      });
+    } finally {
+      this.removingId = null;
     }
   }
 

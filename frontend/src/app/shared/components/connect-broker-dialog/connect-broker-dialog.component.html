@@ -1,0 +1,116 @@
+<p-dialog
+  [visible]="visible"
+  (visibleChange)="visibleChange.emit($event)"
+  [modal]="true"
+  [draggable]="false"
+  [resizable]="false"
+  [dismissableMask]="true"
+  (onShow)="onShow()"
+  styleClass="connect-broker-dialog"
+  [style]="{ width: '30rem', maxWidth: '95vw' }"
+>
+  <ng-template pTemplate="header">
+    <div class="cbd-header">
+      <div class="cbd-logo" [class]="'logo-' + meta?.name">
+        <span>{{ meta?.label?.charAt(0) }}</span>
+      </div>
+      <div>
+        <div class="cbd-title">Connect {{ meta?.label }}</div>
+        <div class="cbd-subtitle">Enter your own API credentials</div>
+      </div>
+    </div>
+  </ng-template>
+
+  @if (meta) {
+    <div class="cbd-body">
+      <!-- Where to get the keys -->
+      @if (meta.helpText) {
+        <div class="cbd-help">
+          <i class="pi pi-info-circle"></i>
+          <span>{{ meta.helpText }}</span>
+        </div>
+      }
+
+      <!-- URLs to register in the broker's developer app (copyable) -->
+      @if (meta.setupUrls?.length) {
+        <div class="cbd-urls">
+          @for (u of meta.setupUrls; track u.path) {
+            <div class="cbd-url">
+              <div class="cbd-url-label">{{ u.label }}</div>
+              <div class="cbd-url-row">
+                <input class="cbd-url-input" [value]="fullUrl(u.path)" readonly (click)="$any($event.target).select()" />
+                <button type="button" class="cbd-copy" (click)="copyUrl(u.path)"
+                        [class.copied]="copiedPath === u.path"
+                        [attr.aria-label]="'Copy ' + u.label">
+                  @if (copiedPath === u.path) {
+                    <i class="pi pi-check"></i> Copied
+                  } @else {
+                    <i class="pi pi-copy"></i> Copy
+                  }
+                </button>
+              </div>
+              @if (u.hint) { <div class="cbd-url-hint">{{ u.hint }}</div> }
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Credential inputs -->
+      <form (ngSubmit)="submit()">
+        @for (field of meta.credentialFields; track field.key) {
+          <div class="cbd-field">
+            <label [for]="'f_' + field.key">
+              {{ field.label }}
+              @if (field.required === false) { <span class="cbd-optional">(optional)</span> }
+            </label>
+
+            <div class="cbd-input-wrap">
+              <input
+                [id]="'f_' + field.key"
+                class="cbd-input"
+                [type]="field.secret && !revealed[field.key] ? 'password' : 'text'"
+                [(ngModel)]="values[field.key]"
+                [name]="field.key"
+                autocomplete="off"
+                spellcheck="false"
+                [placeholder]="'Enter ' + field.label"
+              />
+              @if (field.secret) {
+                <button type="button" class="cbd-reveal" (click)="toggleReveal(field.key)"
+                        [attr.aria-label]="revealed[field.key] ? 'Hide' : 'Show'">
+                  <i class="pi" [class.pi-eye]="!revealed[field.key]" [class.pi-eye-slash]="revealed[field.key]"></i>
+                </button>
+              }
+            </div>
+            @if (field.hint) { <div class="cbd-hint">{{ field.hint }}</div> }
+          </div>
+        }
+
+        @if (errorMessage) {
+          <div class="cbd-error">
+            <i class="pi pi-exclamation-triangle"></i>
+            <span>{{ errorMessage }}</span>
+          </div>
+        }
+
+        <div class="cbd-security">
+          <i class="pi pi-lock"></i>
+          Your keys are sent to our secure backend, encrypted at rest, and never stored in your browser.
+        </div>
+
+        <div class="cbd-actions">
+          <button type="button" class="cbd-btn cancel" (click)="close()" [disabled]="submitting">Cancel</button>
+          <button type="submit" class="cbd-btn connect" [disabled]="!isValid() || submitting">
+            @if (submitting) {
+              <span class="spinner"></span>
+              {{ meta.authType === 'oauth' ? 'Redirecting…' : 'Connecting…' }}
+            } @else {
+              <i class="pi" [class.pi-external-link]="meta.authType === 'oauth'" [class.pi-check]="meta.authType === 'session'"></i>
+              {{ meta.authType === 'oauth' ? 'Continue to ' + meta.label : 'Connect' }}
+            }
+          </button>
+        </div>
+      </form>
+    </div>
+  }
+</p-dialog>

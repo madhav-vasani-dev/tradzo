@@ -23,17 +23,17 @@
     <div class="hiw-steps">
       <div class="hiw-step">
         <div class="hiw-step-num">1</div>
-        <div class="hiw-step-text">Click <strong>Connect</strong> — you'll be redirected to your broker's secure login page</div>
+        <div class="hiw-step-text">Click <strong>Connect</strong> and enter your <strong>own broker API key &amp; secret</strong></div>
       </div>
       <div class="hiw-arrow">→</div>
       <div class="hiw-step">
         <div class="hiw-step-num">2</div>
-        <div class="hiw-step-text">Authorize Tradzo to place orders on your behalf</div>
+        <div class="hiw-step-text">Upstox sends you to its login page to authorize; Jainam connects instantly</div>
       </div>
       <div class="hiw-arrow">→</div>
       <div class="hiw-step">
         <div class="hiw-step-num">3</div>
-        <div class="hiw-step-text">Your access token is stored <strong>only in our secure backend</strong> — never in your browser</div>
+        <div class="hiw-step-text">Your keys &amp; tokens are stored <strong>only in our secure backend</strong> — never in your browser</div>
       </div>
     </div>
   </div>
@@ -105,11 +105,26 @@
               </div>
             </div>
 
-            <div class="card-footer connected-footer">
-              <div class="security-note">
-                <i class="pi pi-lock"></i>
-                Token secured in backend
+            <!-- Re-auth needed banner (token lapsed) -->
+            @if (account?.needsReauth) {
+              <div class="reauth-banner">
+                <i class="pi pi-exclamation-triangle"></i>
+                <span>Your session has expired. Reconnect to resume trading — your saved API keys are reused, no need to re-enter them.</span>
               </div>
+            }
+
+            <div class="card-footer connected-footer">
+              <button
+                class="reconnect-btn"
+                (click)="reconnectBroker(account!)"
+                [disabled]="reconnectingId === account?.id"
+              >
+                @if (reconnectingId === account?.id) {
+                  <span class="spinner"></span> Reconnecting…
+                } @else {
+                  <i class="pi pi-refresh"></i> Reconnect
+                }
+              </button>
               <button class="disconnect-btn" (click)="disconnectBroker(account!)">
                 <i class="pi pi-link-slash"></i>
                 Disconnect
@@ -117,42 +132,65 @@
             </div>
           }
 
-          <!-- ── Not connected CTA ─────────────────────────────────────── -->
+          <!-- ── Not connected ─────────────────────────────────────────── -->
           @if (!isConnected(meta.name)) {
-            <div class="feature-list">
-              <div class="feature-item">
-                <i class="pi pi-shield"></i>
-                <span>Secure OAuth 2.0 — no password stored</span>
-              </div>
-              <div class="feature-item">
-                <i class="pi pi-bolt"></i>
-                <span>Automatic order execution at 9:15 AM IST</span>
-              </div>
-              <div class="feature-item">
-                <i class="pi pi-refresh"></i>
-                <span>Daily auto token refresh</span>
-              </div>
-            </div>
+            @let saved = getAccount(meta.name);
 
-            <div class="card-footer">
-              @if (!meta.comingSoon) {
+            @if (hasSavedAccount(meta.name)) {
+              <!-- Disconnected, but API keys are saved → one-click reconnect -->
+              <div class="saved-note">
+                <i class="pi pi-check-circle"></i>
+                <span>Your API keys are saved. Reconnect without re-entering them.</span>
+              </div>
+
+              <div class="card-footer disconnected-footer">
                 <button
                   class="connect-btn"
-                  (click)="connectBroker(meta)"
-                  [disabled]="connectingBroker !== null"
+                  (click)="reconnectBroker(saved!)"
+                  [disabled]="reconnectingId === saved?.id"
                 >
-                  @if (connectingBroker === meta.name) {
-                    <span class="spinner"></span> Connecting...
+                  @if (reconnectingId === saved?.id) {
+                    <span class="spinner"></span> Reconnecting…
                   } @else {
-                    <i class="pi pi-external-link"></i> Connect {{ meta.label }}
+                    <i class="pi pi-refresh"></i> Reconnect {{ meta.label }}
                   }
                 </button>
-              } @else {
-                <button class="coming-soon-btn" disabled>
-                  <i class="pi pi-clock"></i> Coming Soon
-                </button>
-              }
-            </div>
+                <div class="secondary-actions">
+                  <button class="link-btn" (click)="connectBroker(meta)">Use different keys</button>
+                  <button class="link-btn danger" (click)="removeBroker(saved!)" [disabled]="removingId === saved?.id">
+                    {{ removingId === saved?.id ? 'Removing…' : 'Remove account' }}
+                  </button>
+                </div>
+              </div>
+            } @else {
+              <!-- First-time connect -->
+              <div class="feature-list">
+                <div class="feature-item">
+                  <i class="pi pi-key"></i>
+                  <span>Uses your own broker API keys — you stay in control</span>
+                </div>
+                <div class="feature-item">
+                  <i class="pi pi-bolt"></i>
+                  <span>Automatic order execution at 9:15 AM IST</span>
+                </div>
+                <div class="feature-item">
+                  <i class="pi pi-lock"></i>
+                  <span>Keys encrypted in our backend — never in your browser</span>
+                </div>
+              </div>
+
+              <div class="card-footer">
+                @if (!meta.comingSoon) {
+                  <button class="connect-btn" (click)="connectBroker(meta)">
+                    <i class="pi pi-link"></i> Connect {{ meta.label }}
+                  </button>
+                } @else {
+                  <button class="coming-soon-btn" disabled>
+                    <i class="pi pi-clock"></i> Coming Soon
+                  </button>
+                }
+              </div>
+            }
           }
 
         </div>
@@ -169,10 +207,17 @@
       <div class="security-title">Your account security is our priority</div>
       <div class="security-text">
         Tradzo never stores your broker login credentials or access tokens in the browser or Firestore.
-        All tokens are encrypted and stored exclusively in our secure Python backend.
+        All keys and tokens are encrypted and stored exclusively in our secure Python backend.
         Your broker account is used only to place orders on your behalf — no withdrawals, no transfers.
       </div>
     </div>
   </div>
+
+  <!-- ── Connect Broker Dialog (bring-your-own-key) ──────────────────────── -->
+  <app-connect-broker-dialog
+    [(visible)]="dialogVisible"
+    [meta]="dialogMeta"
+    (connected)="onBrokerConnected()"
+  ></app-connect-broker-dialog>
 
 </div>

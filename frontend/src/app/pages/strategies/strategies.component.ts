@@ -38,11 +38,9 @@ export class StrategiesComponent implements OnInit {
   riskLevels: FilterRisk[] = ['All', 'Low', 'Medium', 'High'];
 
   ngOnInit() {
-    // Use mock data for Phase 1 — replace with Firestore query in production
-    setTimeout(() => {
-      this.strategies = MOCK_STRATEGIES;
-      this.isLoading = false;
-    }, 600);
+    // Use mock data for Phase 1 — replace with Firestore query in production.
+    this.strategies = MOCK_STRATEGIES;
+    this.isLoading = false;
   }
 
   get filteredStrategies(): Strategy[] {

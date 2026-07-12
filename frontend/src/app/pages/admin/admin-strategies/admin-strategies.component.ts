@@ -25,11 +25,9 @@ export class AdminStrategiesComponent implements OnInit {
   togglingId: string | null = null;
 
   ngOnInit() {
-    // Phase 1: use mock strategies — Phase 2 will load from Firestore
-    setTimeout(() => {
-      this.strategies = [...MOCK_STRATEGIES];
-      this.isLoading = false;
-    }, 400);
+    // Phase 1: use mock strategies — Phase 2 will load from Firestore.
+    this.strategies = [...MOCK_STRATEGIES];
+    this.isLoading = false;
   }
 
   get filteredStrategies(): Strategy[] {
