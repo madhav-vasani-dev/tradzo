@@ -17,6 +17,8 @@ import {
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { Strategy, UserStrategy, Position } from '../../models/strategy.model';
+import { BACKEND_BASE_URL } from '../config';
+
 
 @Injectable({ providedIn: 'root' })
 export class StrategyService {
@@ -141,6 +143,28 @@ export class StrategyService {
     const ref = doc(this.firestore, `userStrategies/${userStrategyId}`);
     await updateDoc(ref, { status: 'enabled', pausedAt: null });
   }
+
+  /** Stop a user's strategy deployment for today only */
+  async disableStrategyForToday(userStrategyId: string): Promise<void> {
+    const ref = doc(this.firestore, `userStrategies/${userStrategyId}`);
+    await updateDoc(ref, { status: 'disabled_today' });
+  }
+
+  /** Square off positions and stop strategy for today */
+  async squareOffUserStrategy(userStrategyId: string): Promise<any> {
+    const response = await fetch(`${BACKEND_BASE_URL}/execution/square-off/${userStrategyId}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json'
+      }
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data?.detail || 'Failed to square off strategy.');
+    }
+    return response.json();
+  }
+
 
   // ── Admin ─────────────────────────────────────────────────────────────────
 

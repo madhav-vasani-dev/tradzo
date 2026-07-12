@@ -551,3 +551,73 @@
   }
 }
 
+// ── Status Badges ─────────────────────────────────────────────────────────────
+.badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  font-size: 0.75rem;
+  font-weight: 700;
+  padding: 0.3rem 0.65rem;
+  border-radius: 6px;
+
+  &.status-enabled {
+    background: rgba(0, 194, 232, 0.05);
+    color: $primary-cyan;
+    border: 1px solid rgba(0, 194, 232, 0.15);
+  }
+
+  &.status-ready {
+    background: rgba(34, 197, 94, 0.05);
+    color: $primary-green;
+    border: 1px solid rgba(34, 197, 94, 0.15);
+  }
+
+  &.status-trade_active {
+    background: rgba(0, 194, 232, 0.1);
+    color: $primary-cyan;
+    border: 1px solid rgba(0, 194, 232, 0.3);
+    box-shadow: 0 0 10px rgba(0, 194, 232, 0.1);
+  }
+
+  &.status-trade_closed {
+    background: rgba(255, 255, 255, 0.04);
+    color: $text-muted;
+    border: 1px solid $border-default;
+  }
+
+  &.status-paused {
+    background: rgba(245, 158, 11, 0.05);
+    color: $risk-medium;
+    border: 1px solid rgba(245, 158, 11, 0.15);
+  }
+
+  &.status-disabled_today {
+    background: rgba(239, 68, 68, 0.05);
+    color: $neon-red;
+    border: 1px solid rgba(239, 68, 68, 0.15);
+  }
+
+  &.status-stopped {
+    background: rgba(239, 68, 68, 0.05);
+    color: $neon-red;
+    border: 1px solid rgba(239, 68, 68, 0.15);
+  }
+}
+
+.pulse-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  display: inline-block;
+  background: currentColor;
+  animation: pulseDot 1.6s infinite ease-in-out;
+}
+
+@keyframes pulseDot {
+  0% { transform: scale(0.9); opacity: 0.6; }
+  50% { transform: scale(1.3); opacity: 1; box-shadow: 0 0 6px currentColor; }
+  100% { transform: scale(0.9); opacity: 0.6; }
+}
+
+

@@ -4,10 +4,11 @@ import { FormsModule } from '@angular/forms';
 import { Auth, user } from '@angular/fire/auth';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
+import { DialogModule } from 'primeng/dialog';
 import { Subscription } from 'rxjs';
 import { StrategyCardComponent } from '../../shared/components/strategy-card/strategy-card.component';
 import { DeployStrategyDialogComponent, DeployConfig } from '../../shared/components/deploy-strategy-dialog/deploy-strategy-dialog.component';
-import { Strategy, StrategyCategory, RiskLevel } from '../../models/strategy.model';
+import { Strategy, StrategyCategory, RiskLevel, UserStrategy } from '../../models/strategy.model';
 import { StrategyService } from '../../core/services/strategy.service';
 
 type FilterCategory = StrategyCategory | 'All';
@@ -16,7 +17,7 @@ type FilterRisk = RiskLevel | 'All';
 @Component({
   selector: 'app-strategies',
   standalone: true,
-  imports: [CommonModule, FormsModule, StrategyCardComponent, DeployStrategyDialogComponent, ToastModule],
+  imports: [CommonModule, FormsModule, StrategyCardComponent, DeployStrategyDialogComponent, ToastModule, DialogModule],
   templateUrl: './strategies.component.html',
   styleUrl: './strategies.component.scss',
   providers: [MessageService]
@@ -32,14 +33,24 @@ export class StrategiesComponent implements OnInit, OnDestroy {
 
   strategies: Strategy[] = [];
   deployedIds: Set<string> = new Set();
+  userDeployments: UserStrategy[] = [];
   isLoading = true;
   showDeployDialog = false;
   deployTarget: Strategy | null = null;
+
+
+  // Confirmation dialog properties
+  showConfirm = false;
+  confirmTitle = '';
+  confirmMsg = '';
+  confirmBtnText = 'Confirm';
+  private actionToExecute: (() => Promise<void>) | null = null;
 
   categories: FilterCategory[] = ['All', 'Options', 'Futures', 'Equity', 'Index'];
   riskLevels: FilterRisk[] = ['All', 'Low', 'Medium', 'High'];
 
   private subscriptions = new Subscription();
+
 
   ngOnInit() {
     // 1. Fetch available strategies from Firestore
@@ -67,7 +78,7 @@ export class StrategiesComponent implements OnInit, OnDestroy {
         if (u) {
           this.subscriptions.add(
             this.strategyService.getUserStrategies(u.uid).subscribe((userStrats) => {
-              // Only active/enabled/ready/trade_active count as currently deployed/active cards
+              this.userDeployments = userStrats;
               this.deployedIds = new Set(
                 userStrats
                   .filter(us => us.status !== 'stopped')
@@ -76,10 +87,12 @@ export class StrategiesComponent implements OnInit, OnDestroy {
             })
           );
         } else {
+          this.userDeployments = [];
           this.deployedIds.clear();
         }
       })
     );
+
   }
 
   ngOnDestroy() {
@@ -100,6 +113,11 @@ export class StrategiesComponent implements OnInit, OnDestroy {
   setCategory(cat: FilterCategory) { this.selectedCategory = cat; }
   setRisk(risk: FilterRisk) { this.selectedRisk = risk; }
   isDeployed(id: string): boolean { return this.deployedIds.has(id); }
+  
+  getStrategyDeployment(strategyId: string): UserStrategy | undefined {
+    return this.userDeployments.find(d => d.strategyId === strategyId && d.status !== 'stopped');
+  }
+
 
   onDeployClicked(strategy: Strategy) {
     this.deployTarget = strategy;
@@ -147,4 +165,57 @@ export class StrategiesComponent implements OnInit, OnDestroy {
       this.isLoading = false;
     }
   }
+
+  onToggleClicked(event: { strategy: Strategy; action: 'enable' | 'disable' }) {
+    const strategy = event.strategy;
+    const action = event.action;
+
+    if (action === 'disable') {
+      this.confirmTitle = 'Disable Strategy';
+      this.confirmMsg = `Are you sure you want to disable ${strategy.name}? It will not execute orders for any future days until you enable it again.`;
+      this.confirmBtnText = 'Disable';
+      this.actionToExecute = async () => {
+        const found = this.userDeployments.find(us => us.strategyId === strategy.id && us.status !== 'stopped');
+        if (found) {
+          await this.strategyService.pauseUserStrategy(found.id);
+          this.messageService.add({
+            severity: 'success',
+            summary: 'Strategy Disabled',
+            detail: `${strategy.name} has been disabled.`
+          });
+        }
+      };
+    } else {
+      this.confirmTitle = 'Enable Strategy';
+      this.confirmMsg = `Are you sure you want to enable ${strategy.name}? It will start executing orders automatically on future trading days.`;
+      this.confirmBtnText = 'Enable';
+      this.actionToExecute = async () => {
+        const found = this.userDeployments.find(us => us.strategyId === strategy.id && us.status !== 'stopped');
+        if (found) {
+          await this.strategyService.resumeUserStrategy(found.id);
+          this.messageService.add({
+            severity: 'success',
+            summary: 'Strategy Enabled',
+            detail: `${strategy.name} is now enabled.`
+          });
+        }
+      };
+    }
+    this.showConfirm = true;
+  }
+
+
+  async executeAction() {
+    if (this.actionToExecute) {
+      try {
+        await this.actionToExecute();
+      } catch (err) {
+        console.error('Failed to execute action:', err);
+      } finally {
+        this.actionToExecute = null;
+        this.showConfirm = false;
+      }
+    }
+  }
 }
+

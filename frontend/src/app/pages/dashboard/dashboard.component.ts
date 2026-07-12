@@ -1,6 +1,7 @@
 import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
+import { DialogModule } from 'primeng/dialog';
 import { Auth, user } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { StrategyService } from '../../core/services/strategy.service';
@@ -9,7 +10,7 @@ import { UserStrategy, Position } from '../../models/strategy.model';
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule],
+  imports: [CommonModule, FormsModule, DialogModule],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss'
 })
@@ -24,6 +25,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
   totalCapital = 0;
   totalLots = 0;
   runningPnl = 0;
+
+  // Dialog confirmation state
+  showConfirm = false;
+  confirmTitle = '';
+  confirmMsg = '';
+  confirmBtnText = 'Confirm';
+  private actionToExecute: (() => Promise<void>) | null = null;
 
   private subscriptions = new Subscription();
 
@@ -96,31 +104,40 @@ export class DashboardComponent implements OnInit, OnDestroy {
 
   // ── Strategy Actions ───────────────────────────────────────────────────────
 
-  async pauseStrategy(id: string) {
-    try {
+  pauseStrategy(id: string) {
+    this.confirmTitle = 'Disable Strategy';
+    this.confirmMsg = 'Are you sure you want to disable this strategy? It will not execute orders for any future days until you enable it again.';
+    this.confirmBtnText = 'Disable';
+    this.actionToExecute = async () => {
       await this.strategyService.pauseUserStrategy(id);
-    } catch (err) {
-      console.error('Failed to pause strategy:', err);
-    }
+    };
+    this.showConfirm = true;
   }
 
-  async resumeStrategy(id: string) {
-    try {
+  resumeStrategy(id: string) {
+    this.confirmTitle = 'Enable Strategy';
+    this.confirmMsg = 'Are you sure you want to enable this strategy? It will start executing orders automatically on future trading days.';
+    this.confirmBtnText = 'Enable';
+    this.actionToExecute = async () => {
       await this.strategyService.resumeUserStrategy(id);
-    } catch (err) {
-      console.error('Failed to resume strategy:', err);
-    }
+    };
+    this.showConfirm = true;
   }
 
-  async stopStrategy(id: string) {
-    if (confirm('Are you sure you want to stop this deployment? Open trades will be squared off, and no further orders will be taken.')) {
+
+  async executeAction() {
+    if (this.actionToExecute) {
       try {
-        await this.strategyService.stopUserStrategy(id);
+        await this.actionToExecute();
       } catch (err) {
-        console.error('Failed to stop strategy:', err);
+        console.error('Failed to execute action:', err);
+      } finally {
+        this.actionToExecute = null;
+        this.showConfirm = false;
       }
     }
   }
+
 
   // ── UI Helpers ─────────────────────────────────────────────────────────────
 

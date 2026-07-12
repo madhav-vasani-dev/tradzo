@@ -16,18 +16,40 @@ import { MOCK_STRATEGIES } from '../../strategies/strategies.mock';
   styleUrl: './admin-strategies.component.scss',
   providers: [MessageService]
 })
-export class AdminStrategiesComponent implements OnInit {
+export class AdminStrategiesComponent implements OnInit, OnDestroy {
   private messageService = inject(MessageService);
+  private strategyService = inject(StrategyService);
 
   strategies: Strategy[] = [];
   isLoading = true;
   searchQuery = '';
   togglingId: string | null = null;
 
+  private sub = new Subscription();
+
   ngOnInit() {
-    // Phase 1: use mock strategies — Phase 2 will load from Firestore.
-    this.strategies = [...MOCK_STRATEGIES];
-    this.isLoading = false;
+    this.isLoading = true;
+    this.sub.add(
+      this.strategyService.getAllStrategies().subscribe({
+        next: (data) => {
+          this.strategies = data;
+          this.isLoading = false;
+        },
+        error: (err) => {
+          console.error('Error fetching strategies:', err);
+          this.isLoading = false;
+          this.messageService.add({
+            severity: 'error',
+            summary: 'Error',
+            detail: 'Failed to fetch strategies from database.'
+          });
+        }
+      })
+    );
+  }
+
+  ngOnDestroy() {
+    this.sub.unsubscribe();
   }
 
   get filteredStrategies(): Strategy[] {
@@ -43,22 +65,30 @@ export class AdminStrategiesComponent implements OnInit {
 
   async toggleVisibility(strategy: Strategy) {
     this.togglingId = strategy.id;
-    // Optimistic toggle
-    strategy.isVisible = !strategy.isVisible;
+    const newVisibility = !strategy.isVisible;
 
-    // In Phase 2 this will call StrategyService.updateStrategy()
-    await new Promise(r => setTimeout(r, 600));
-
-    this.messageService.add({
-      severity: 'success',
-      summary: strategy.isVisible ? 'Strategy visible' : 'Strategy hidden',
-      detail: `${strategy.name} is now ${strategy.isVisible ? 'visible to' : 'hidden from'} users.`,
-      life: 3000
-    });
-    this.togglingId = null;
+    try {
+      await this.strategyService.toggleVisibility(strategy.id, newVisibility);
+      this.messageService.add({
+        severity: 'success',
+        summary: newVisibility ? 'Strategy visible' : 'Strategy hidden',
+        detail: `${strategy.name} is now ${newVisibility ? 'visible to' : 'hidden from'} users.`,
+        life: 3000
+      });
+    } catch (err: any) {
+      console.error('Error toggling strategy visibility:', err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Toggle Failed',
+        detail: 'Failed to update visibility in Firestore.'
+      });
+    } finally {
+      this.togglingId = null;
+    }
   }
 
   formatINR(value: number): string {
     return `₹${value.toLocaleString('en-IN')}`;
   }
 }
+

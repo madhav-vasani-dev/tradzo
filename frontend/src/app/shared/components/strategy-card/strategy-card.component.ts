@@ -1,7 +1,7 @@
 import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
-import { Strategy } from '../../../models/strategy.model';
+import { Strategy, UserStrategy } from '../../../models/strategy.model';
 
 @Component({
   selector: 'app-strategy-card',
@@ -12,9 +12,10 @@ import { Strategy } from '../../../models/strategy.model';
 })
 export class StrategyCardComponent {
   @Input() strategy!: Strategy;
-  @Input() isDeployed = false;
+  @Input() deployment: UserStrategy | undefined;
   @Input() animDelay = 1;
   @Output() deployClicked = new EventEmitter<Strategy>();
+  @Output() toggleClicked = new EventEmitter<{ strategy: Strategy; action: 'enable' | 'disable' }>();
 
   getRiskClass(): string {
     return this.strategy.riskLevel.toLowerCase();
@@ -24,9 +25,11 @@ export class StrategyCardComponent {
     return `${value >= 0 ? '+' : ''}${value.toFixed(1)}%`;
   }
 
+
   formatINR(value: number): string {
     return new Intl.NumberFormat('en-IN', {
       style: 'currency', currency: 'INR', maximumFractionDigits: 0
     }).format(value);
   }
+
 }

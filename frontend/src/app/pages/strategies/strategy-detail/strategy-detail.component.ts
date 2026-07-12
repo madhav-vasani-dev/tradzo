@@ -1,32 +1,44 @@
-import { Component, OnInit, inject } from '@angular/core';
+import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { ActivatedRoute, Router } from '@angular/router';
 import { ChartModule } from 'primeng/chart';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
-import { Strategy } from '../../../models/strategy.model';
-import { MOCK_STRATEGIES } from '../strategies.mock';
+import { DialogModule } from 'primeng/dialog';
+import { Auth, user } from '@angular/fire/auth';
+import { Subscription } from 'rxjs';
+import { Strategy, UserStrategy } from '../../../models/strategy.model';
+import { StrategyService } from '../../../core/services/strategy.service';
 import { DeployStrategyDialogComponent, DeployConfig } from '../../../shared/components/deploy-strategy-dialog/deploy-strategy-dialog.component';
-import { StatusBadgeComponent } from '../../../shared/components/status-badge/status-badge.component';
 
 @Component({
   selector: 'app-strategy-detail',
   standalone: true,
-  imports: [CommonModule, ChartModule, ToastModule, DeployStrategyDialogComponent],
+  imports: [CommonModule, ChartModule, ToastModule, DialogModule, DeployStrategyDialogComponent],
   templateUrl: './strategy-detail.component.html',
   styleUrl: './strategy-detail.component.scss',
   providers: [MessageService]
 })
-export class StrategyDetailComponent implements OnInit {
+export class StrategyDetailComponent implements OnInit, OnDestroy {
   private route = inject(ActivatedRoute);
   private router = inject(Router);
+  private auth = inject(Auth);
+  private strategyService = inject(StrategyService);
   private messageService = inject(MessageService);
 
   strategy: Strategy | null = null;
   isDeployed = false;
+  deployedUserStrategy: UserStrategy | null = null;
   isLoading = true;
   showDeployDialog = false;
   Math = Math;
+
+  // Dialog confirmation state
+  showConfirm = false;
+  confirmTitle = '';
+  confirmMsg = '';
+  confirmBtnText = 'Confirm';
+  private actionToExecute: (() => Promise<void>) | null = null;
 
   // Chart data
   monthlyChartData: any = {};
@@ -34,12 +46,55 @@ export class StrategyDetailComponent implements OnInit {
   monthlyChartOptions: any = {};
   equityChartOptions: any = {};
 
+  private sub = new Subscription();
+
   ngOnInit() {
     const id = this.route.snapshot.paramMap.get('id');
-    this.strategy = MOCK_STRATEGIES.find(s => s.id === id) ?? null;
-    if (this.strategy) this.buildCharts();
-    this.isLoading = false;
+    if (id) {
+      // 1. Fetch strategy config
+      this.sub.add(
+        this.strategyService.getStrategy(id).subscribe({
+          next: (strat) => {
+            this.strategy = strat;
+            if (this.strategy) {
+              this.buildCharts();
+            }
+            this.isLoading = false;
+          },
+          error: (err) => {
+            console.error('Error loading strategy:', err);
+            this.isLoading = false;
+          }
+        })
+      );
+
+      // 2. Fetch user strategy deployment state
+      this.sub.add(
+        user(this.auth).subscribe((u) => {
+          if (u) {
+            this.sub.add(
+              this.strategyService.getUserStrategies(u.uid).subscribe((userStrats) => {
+                const found = userStrats.find(us => us.strategyId === id && us.status !== 'stopped');
+                this.deployedUserStrategy = found ?? null;
+                this.isDeployed = !!found;
+              })
+            );
+          } else {
+            this.deployedUserStrategy = null;
+            this.isDeployed = false;
+          }
+        })
+      );
+    } else {
+      this.isLoading = false;
+    }
   }
+
+  ngOnDestroy() {
+    this.sub.unsubscribe();
+  }
+
+
 
   private buildCharts() {
     if (!this.strategy) return;
@@ -131,6 +186,95 @@ export class StrategyDetailComponent implements OnInit {
       detail: `${config.strategy.name} will go live at 9:15 AM IST on the next market day.`,
       life: 6000
     });
+  }
+
+  pauseStrategy() {
+    this.confirmTitle = 'Disable Strategy';
+    this.confirmMsg = 'Are you sure you want to disable this strategy? It will not execute orders for any future days until you enable it again.';
+    this.confirmBtnText = 'Disable';
+    this.actionToExecute = async () => {
+      if (this.deployedUserStrategy) {
+        await this.strategyService.pauseUserStrategy(this.deployedUserStrategy.id);
+      }
+    };
+    this.showConfirm = true;
+  }
+
+  resumeStrategy() {
+    this.confirmTitle = 'Activate Strategy';
+    this.confirmMsg = 'Are you sure you want to activate this strategy? It will start executing orders automatically on future trading days.';
+    this.confirmBtnText = 'Activate';
+    this.actionToExecute = async () => {
+      if (this.deployedUserStrategy) {
+        await this.strategyService.resumeUserStrategy(this.deployedUserStrategy.id);
+      }
+    };
+    this.showConfirm = true;
+  }
+
+  stopTodayOnly() {
+    this.confirmTitle = 'Stop Algo for Today';
+    this.confirmMsg = 'Are you sure you want to stop the algorithm for today only? No entry orders will be taken today. It will resume automatically tomorrow.';
+    this.confirmBtnText = 'Stop for Today';
+    this.actionToExecute = async () => {
+      if (this.deployedUserStrategy) {
+        await this.strategyService.disableStrategyForToday(this.deployedUserStrategy.id);
+      }
+    };
+    this.showConfirm = true;
+  }
+
+  squareOffToday() {
+    this.confirmTitle = 'Square Off & Stop Today';
+    this.confirmMsg = 'Are you sure you want to square off all running option positions immediately and stop execution for today?';
+    this.confirmBtnText = 'Square Off & Stop';
+    this.actionToExecute = async () => {
+      if (this.deployedUserStrategy) {
+        await this.strategyService.squareOffUserStrategy(this.deployedUserStrategy.id);
+      }
+    };
+    this.showConfirm = true;
+  }
+
+
+  async executeAction() {
+    if (this.actionToExecute) {
+      try {
+        await this.actionToExecute();
+        this.messageService.add({
+          severity: 'success',
+          summary: 'Action Executed',
+          detail: 'Strategy deployment status updated successfully.'
+        });
+      } catch (err: any) {
+        console.error('Failed to execute action:', err);
+        this.messageService.add({
+          severity: 'error',
+          summary: 'Action Failed',
+          detail: err.message || 'An error occurred.'
+        });
+      } finally {
+        this.actionToExecute = null;
+        this.showConfirm = false;
+      }
+    }
+  }
+
+  getStatusLabel(status: string): string {
+    const labels: Record<string, string> = {
+      enabled: 'Enabled',
+      ready: 'Ready for Entry',
+      trade_active: 'Trade Active',
+      trade_closed: 'Trade Closed',
+      paused: 'Paused',
+      disabled_today: 'Stopped for Today',
+      stopped: 'Stopped'
+    };
+    return labels[status] || status.toUpperCase();
+  }
+
+  getStatusClass(status: string): string {
+    return `status-${status.toLowerCase()}`;
   }
 
   goBack() {

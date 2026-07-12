@@ -499,6 +499,88 @@ def eod_cleanup() -> dict:
     return {"positions": len(positions), "users": len(user_pnl), "totalPnl": round(total_pnl, 2)}
 
 
+async def square_off_single_deployment(user_strategy_id: str) -> dict:
+    """Square off open positions for a single userStrategy deployment immediately."""
+    today = _today()
+    paper = firebase_service.is_paper_trading()
+    all_positions = position_service.get_open_positions_for_user_strategy(user_strategy_id, today)
+    open_positions = [p for p in all_positions if p.get("status") == "open"]
+    accounts = _accounts_by_id()
+
+    if not open_positions:
+        # If no positions are open, just disable the strategy for today
+        firebase_service.update_user_strategy_status(user_strategy_id, "disabled_today")
+        return {"closed": 0, "status": "disabled_today"}
+
+    closed = 0
+    for pos in open_positions:
+        account = accounts.get(pos.get("brokerAccountId", ""))
+        access_token = _get_token(account) if not paper else "paper_token"
+
+        # 1. Cancel SL-M order
+        sl_order_id = pos.get("slOrderId", "")
+        if sl_order_id:
+            try:
+                await order_service.cancel_order(
+                    access_token=access_token,
+                    order_id=sl_order_id,
+                    paper=paper,
+                )
+            except Exception as e:
+                log.warning("Could not cancel SL order %s: %s", sl_order_id, e)
+
+        # 2. Get current LTP
+        current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+
+        # 3. Place BUY MARKET to close
+        tag = f"SQ_MAN_{pos['id'][:6].upper()}"
+        buy_result = await order_service.place_buy_market(
+            access_token=access_token,
+            instrument_key=pos["instrumentKey"],
+            quantity=pos["quantity"],
+            tag=tag,
+            paper=paper,
+            ltp=current_ltp,
+        )
+        exit_price = buy_result["fill_price"] or current_ltp
+
+        # 4. Calculate PnL
+        pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+
+        position_service.update_position(pos["id"], {
+            "status": "squared_off",
+            "exitReason": "manual_exit",
+            "exitOrderId": buy_result["order_id"],
+            "exitPrice": exit_price,
+            "exitAt": _now_ist(),
+            "pnl": round(pnl, 2),
+        })
+
+        _log(
+            "square_off",
+            f"[MANUAL EXIT] {pos['symbol']} | "
+            f"BUY {pos['quantity']}@₹{exit_price:.1f} | PnL {pnl:+.2f}",
+            severity="success" if pnl >= 0 else "warning",
+            date_str=today,
+            user_id=pos.get("userId"),
+            strategy_id=pos.get("strategyId"),
+            position_id=pos["id"],
+            paper=paper,
+            metadata={
+                "symbol": pos["symbol"],
+                "entryPrice": pos["entryPrice"],
+                "exitPrice": exit_price,
+                "quantity": pos["quantity"],
+                "pnl": round(pnl, 2),
+            },
+        )
+        closed += 1
+
+    # Set status to disabled_today so that EOD job does not process it again and it does not re-enter today
+    firebase_service.update_user_strategy_status(user_strategy_id, "disabled_today")
+    return {"closed": closed, "status": "disabled_today"}
+
+
 # ── Legacy stubs (kept for backward compat / readiness endpoint) ──────────────
 
 def get_cached_readiness() -> dict:

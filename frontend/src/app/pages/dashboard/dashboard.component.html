@@ -85,11 +85,8 @@
                       <i class="pi pi-pause-circle"></i> Pause
                     </button>
                   }
-                  
-                  <button class="action-btn stop" (click)="stopStrategy(dep.id)">
-                    <i class="pi pi-stop-circle"></i> Stop
-                  </button>
                 </div>
+
               </div>
             }
           </div>
@@ -155,4 +152,18 @@
       </div>
     </div>
   }
+
+  <!-- Confirmation Dialog -->
+  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px' }" styleClass="custom-confirm-dialog">
+    <div class="confirm-content" style="padding: 1rem 0; color: #8B95B0; font-size: 0.9rem; line-height: 1.5;">
+      {{ confirmMsg }}
+    </div>
+    <ng-template pTemplate="footer">
+      <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
+        <button class="btn-secondary" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #F0F4FF; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600; cursor: pointer;" (click)="showConfirm = false">Cancel</button>
+        <button class="btn-primary" style="background: linear-gradient(135deg, #00C2E8, #00E5FF); border: none; color: #0D1526; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 700; cursor: pointer;" (click)="executeAction()">{{ confirmBtnText }}</button>
+      </div>
+    </ng-template>
+  </p-dialog>
 </div>
+

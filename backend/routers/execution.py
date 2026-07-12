@@ -75,6 +75,14 @@ def run_eod_cleanup():
     return {"status": "cleaned_up", **summary}
 
 
+@router.post("/square-off/{user_strategy_id}")
+async def square_off_user_strategy(user_strategy_id: str):
+    """Manually square off all open positions for a specific deployment and disable it for today."""
+    _require_firestore()
+    summary = await execution_service.square_off_single_deployment(user_strategy_id)
+    return {"status": "success", **summary}
+
+
 @router.get("/trading-mode")
 def get_trading_mode():
     """Get the current global trading mode (paper vs live)."""
