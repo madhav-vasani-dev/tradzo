@@ -1,0 +1,298 @@
+@use '../../../../theme/theme-variables' as *;
+
+// ── PrimeNG panel override (renders outside component scope) ──────────────────
+::ng-deep .connect-broker-dialog {
+  .p-dialog {
+    border-radius: 18px !important;
+    border: 1px solid $card-border !important;
+    background: $secondary-black !important;
+    box-shadow: 0 32px 80px rgba(0, 0, 0, 0.7) !important;
+    overflow: hidden;
+  }
+
+  .p-dialog-header {
+    background: $secondary-black !important;
+    padding: 1.4rem 1.6rem 1rem !important;
+    border-bottom: 1px solid $border-default !important;
+    color: $text-primary !important;
+  }
+
+  .p-dialog-content {
+    background: $secondary-black !important;
+    padding: 1.25rem 1.6rem 1.6rem !important;
+    color: $text-primary !important;
+  }
+
+  .p-dialog-header-icon {
+    color: $text-secondary !important;
+    transition: color 0.15s ease, background 0.15s ease;
+
+    &:hover {
+      color: $text-primary !important;
+      background: rgba(255, 255, 255, 0.07) !important;
+    }
+  }
+}
+
+// ── Header ────────────────────────────────────────────────────────────────────
+.cbd-header {
+  display: flex;
+  align-items: center;
+  gap: 0.85rem;
+}
+
+.cbd-logo {
+  width: 42px;
+  height: 42px;
+  border-radius: 10px;
+  display: grid;
+  place-items: center;
+  font-weight: 700;
+  font-size: 1.1rem;
+  color: #fff;
+  background: linear-gradient(135deg, $primary-cyan, #0086a3);
+
+  &.logo-jainam { background: linear-gradient(135deg, $primary-gold, #c98a1a); }
+}
+
+.cbd-title {
+  font-size: 1.1rem;
+  font-weight: 700;
+  color: $text-primary;
+}
+
+.cbd-subtitle {
+  font-size: 0.8rem;
+  color: $text-secondary;
+  margin-top: 2px;
+}
+
+.cbd-body {
+  display: flex;
+  flex-direction: column;
+  gap: 1rem;
+}
+
+// ── Help note ─────────────────────────────────────────────────────────────────
+.cbd-help {
+  display: flex;
+  gap: 0.6rem;
+  padding: 0.75rem 0.85rem;
+  font-size: 0.8rem;
+  line-height: 1.45;
+  color: $text-secondary;
+  background: $card-bg;
+  border: 1px solid $border-default;
+  border-radius: 10px;
+
+  i { color: $primary-cyan; margin-top: 1px; }
+}
+
+// ── Setup URLs (copyable) ─────────────────────────────────────────────────────
+.cbd-urls {
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+
+.cbd-url-label {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: $text-primary;
+  margin-bottom: 0.3rem;
+}
+
+.cbd-url-row {
+  display: flex;
+  align-items: stretch;
+  gap: 0.4rem;
+}
+
+.cbd-url-input {
+  flex: 1;
+  min-width: 0;
+  padding: 0.6rem 0.7rem;
+  font-size: 0.82rem;
+  font-family: 'Menlo', 'Consolas', monospace;
+  color: $text-primary;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid $border-default;
+  border-radius: 8px;
+  outline: none;
+  cursor: text;
+  text-overflow: ellipsis;
+}
+
+.cbd-copy {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  flex-shrink: 0;
+  padding: 0.6rem 0.8rem;
+  font-size: 0.78rem;
+  font-weight: 600;
+  font-family: inherit;
+  color: $primary-cyan;
+  background: $soft-cyan;
+  border: 1px solid rgba(0, 194, 232, 0.25);
+  border-radius: 8px;
+  cursor: pointer;
+  transition: all 0.15s ease;
+
+  &:hover { background: rgba(0, 194, 232, 0.2); }
+  &.copied { color: $primary-green; background: $soft-green; border-color: rgba(34, 197, 94, 0.3); }
+}
+
+.cbd-url-hint {
+  margin-top: 0.3rem;
+  font-size: 0.72rem;
+  line-height: 1.4;
+  color: $text-muted;
+}
+
+// ── Fields ────────────────────────────────────────────────────────────────────
+.cbd-field {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  margin-bottom: 0.85rem;
+
+  label {
+    font-size: 0.82rem;
+    font-weight: 600;
+    color: $text-primary;
+  }
+}
+
+.cbd-optional {
+  color: $text-muted;
+  font-weight: 400;
+  font-size: 0.75rem;
+}
+
+.cbd-input-wrap {
+  position: relative;
+  display: flex;
+  align-items: center;
+}
+
+.cbd-input {
+  width: 100%;
+  padding: 0.7rem 2.4rem 0.7rem 0.85rem;
+  font-size: 0.9rem;
+  font-family: inherit;
+  color: $text-primary;
+  background: rgba(0, 0, 0, 0.28);
+  border: 1px solid $border-default;
+  border-radius: 9px;
+  outline: none;
+  transition: border-color 0.15s ease, box-shadow 0.15s ease;
+
+  &::placeholder { color: $text-muted; }
+
+  &:focus {
+    border-color: $primary-cyan;
+    box-shadow: 0 0 0 3px $soft-cyan;
+  }
+}
+
+.cbd-reveal {
+  position: absolute;
+  right: 0.5rem;
+  background: none;
+  border: none;
+  color: $text-secondary;
+  cursor: pointer;
+  padding: 0.3rem;
+  display: grid;
+  place-items: center;
+
+  &:hover { color: $text-primary; }
+}
+
+.cbd-hint {
+  font-size: 0.72rem;
+  color: $text-muted;
+}
+
+// ── Error ─────────────────────────────────────────────────────────────────────
+.cbd-error {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.65rem 0.8rem;
+  font-size: 0.8rem;
+  color: #fecaca;
+  background: $soft-red;
+  border: 1px solid rgba(239, 68, 68, 0.35);
+  border-radius: 9px;
+}
+
+// ── Security note ─────────────────────────────────────────────────────────────
+.cbd-security {
+  display: flex;
+  align-items: flex-start;
+  gap: 0.5rem;
+  font-size: 0.74rem;
+  line-height: 1.4;
+  color: $text-secondary;
+
+  i { color: $primary-green; margin-top: 1px; }
+}
+
+// ── Actions ───────────────────────────────────────────────────────────────────
+.cbd-actions {
+  display: flex;
+  gap: 0.7rem;
+  margin-top: 0.6rem;
+}
+
+.cbd-btn {
+  flex: 1;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 0.5rem;
+  padding: 0.72rem 1rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+  font-family: inherit;
+  border-radius: 9px;
+  border: 1px solid transparent;
+  cursor: pointer;
+  transition: opacity 0.15s ease, transform 0.1s ease, background 0.15s ease;
+
+  &:disabled { opacity: 0.5; cursor: not-allowed; }
+
+  &.cancel {
+    color: $text-secondary;
+    background: transparent;
+    border-color: $border-default;
+
+    &:not(:disabled):hover {
+      color: $text-primary;
+      border-color: $border-hover;
+    }
+  }
+
+  &.connect {
+    color: $primary-black;
+    background: linear-gradient(135deg, $primary-cyan, $bright-cyan);
+
+    &:not(:disabled):hover {
+      transform: translateY(-1px);
+      box-shadow: $shadow-glow-cyan;
+    }
+  }
+}
+
+.spinner {
+  width: 14px;
+  height: 14px;
+  border: 2px solid rgba(8, 14, 28, 0.35);
+  border-top-color: $primary-black;
+  border-radius: 50%;
+  animation: cbd-spin 0.7s linear infinite;
+}
+
+@keyframes cbd-spin { to { transform: rotate(360deg); } }

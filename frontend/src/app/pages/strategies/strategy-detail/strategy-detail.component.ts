@@ -36,11 +36,9 @@ export class StrategyDetailComponent implements OnInit {
 
   ngOnInit() {
     const id = this.route.snapshot.paramMap.get('id');
-    setTimeout(() => {
-      this.strategy = MOCK_STRATEGIES.find(s => s.id === id) ?? null;
-      if (this.strategy) this.buildCharts();
-      this.isLoading = false;
-    }, 400);
+    this.strategy = MOCK_STRATEGIES.find(s => s.id === id) ?? null;
+    if (this.strategy) this.buildCharts();
+    this.isLoading = false;
   }
 
   private buildCharts() {

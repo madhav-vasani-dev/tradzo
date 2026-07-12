@@ -1,0 +1,75 @@
+rules_version = '2';
+
+// Tradzo Firestore security rules.
+//
+// The Python backend uses the Firebase Admin SDK, which BYPASSES these rules —
+// so backend writes (broker accounts, activity logs, order updates) always work.
+// These rules govern the Angular client (the browser), which must be restricted.
+//
+// Publish: Firebase Console > Firestore Database > Rules > paste > Publish.
+// (Or `firebase deploy --only firestore:rules` with the Firebase CLI.)
+
+service cloud.firestore {
+  match /databases/{database}/documents {
+
+    function isSignedIn() {
+      return request.auth != null;
+    }
+
+    function userData() {
+      return get(/databases/$(database)/documents/users/$(request.auth.uid)).data;
+    }
+
+    function isAdmin() {
+      return isSignedIn()
+        && exists(/databases/$(database)/documents/users/$(request.auth.uid))
+        && (userData().isAdmin == true || userData().isSuperUser == true);
+    }
+
+    // ── users ────────────────────────────────────────────────────────────────
+    // A user reads/creates/updates their own doc; admins read & update any user
+    // (needed for the admin Users list and the grant/revoke-admin toggle).
+    match /users/{uid} {
+      allow read:   if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow create: if isSignedIn() && request.auth.uid == uid;
+      allow update: if isSignedIn() && (request.auth.uid == uid || isAdmin());
+      allow delete: if isAdmin();
+    }
+
+    // ── brokerAccounts ────────────────────────────────────────────────────────
+    // Metadata only (no tokens/keys — those live in the backend). Owner or admin.
+    match /brokerAccounts/{id} {
+      allow read:         if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create:       if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // ── userStrategies (deployments) ──────────────────────────────────────────
+    match /userStrategies/{id} {
+      allow read:         if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow create:       if isSignedIn() && request.resource.data.userId == request.auth.uid;
+      allow update, delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+    }
+
+    // ── strategies ────────────────────────────────────────────────────────────
+    // Any signed-in user can browse; only admins create/edit/delete.
+    match /strategies/{id} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── activityLogs ──────────────────────────────────────────────────────────
+    // Written by the backend (Admin SDK) only; admins read in the Activity Monitor.
+    match /activityLogs/{id} {
+      allow read:  if isAdmin();
+      allow write: if false;
+    }
+
+    // ── brokerCredentials ─────────────────────────────────────────────────────
+    // Fernet-encrypted broker API keys/secrets. The browser must NEVER touch
+    // this — only the backend Admin SDK (which bypasses rules) reads/writes it.
+    match /brokerCredentials/{id} {
+      allow read, write: if false;
+    }
+  }
+}

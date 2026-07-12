@@ -59,8 +59,10 @@ export class BrokerCallbackComponent implements OnInit {
   private parseError(code: string): string {
     const map: Record<string, string> = {
       'access_denied': 'You denied access to your broker account.',
-      'token_exchange_failed': 'Could not exchange the authorization code. Please try again.',
-      'invalid_state': 'Security validation failed. Please try connecting again.',
+      'token_exchange_failed': 'The broker rejected the request. Check that your API key/secret are correct and that your app\'s Redirect URI is exactly http://localhost:8000/broker/upstox/callback.',
+      'invalid_state': 'Security validation failed (the request expired or was already used). Please start the connection again.',
+      'backend_not_configured': 'The server can\'t save your account yet — Firebase isn\'t configured on the backend. Add the service-account key and try again.',
+      'account_save_failed': 'Connected to the broker, but saving the account failed. Please try again.',
     };
     return map[code] ?? 'An unexpected error occurred. Please try again.';
   }

@@ -7,9 +7,9 @@ import Aura from '@primeuix/themes/aura';
 import { MessageService } from 'primeng/api';
 import { routes } from './app.routes';
 
-import { provideFirebaseApp, initializeApp } from '@angular/fire/app';
+import { provideFirebaseApp, initializeApp, getApp } from '@angular/fire/app';
 import { provideAuth, getAuth } from '@angular/fire/auth';
-import { provideFirestore, getFirestore } from '@angular/fire/firestore';
+import { provideFirestore, initializeFirestore } from '@angular/fire/firestore';
 
 
 const firebaseConfig = {
@@ -41,6 +41,11 @@ export const appConfig: ApplicationConfig = {
     MessageService,
     provideFirebaseApp(() => initializeApp(firebaseConfig)),
     provideAuth(() => getAuth()),
-    provideFirestore(() => getFirestore())
+    // Auto-detect long polling: avoids the ~10-15s stall when a network/proxy
+    // blocks Firestore's WebChannel streaming connection (common cause of slow
+    // first queries, e.g. on the Broker Accounts page).
+    provideFirestore(() => initializeFirestore(getApp(), {
+      experimentalAutoDetectLongPolling: true,
+    }))
   ]
 };
