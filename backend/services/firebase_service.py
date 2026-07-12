@@ -28,10 +28,29 @@ def init_firebase() -> None:
         return
 
     cred_path = settings.firebase_credentials_path
+
+    # Support for production deployments (e.g. Fly.io) where the service-account
+    # JSON is stored as an environment variable instead of a file.
+    firebase_credentials_json = os.environ.get("FIREBASE_CREDENTIALS_JSON", "")
+    if firebase_credentials_json:
+        import json
+        try:
+            cred_dict = json.loads(firebase_credentials_json)
+            cred = credentials.Certificate(cred_dict)
+            firebase_admin.initialize_app(cred)
+            _db = firestore.client()
+            logger.info("Firebase Admin SDK initialised from FIREBASE_CREDENTIALS_JSON env var.")
+            return
+        except Exception as exc:  # noqa: BLE001
+            _init_error = f"Failed to initialise Firebase from FIREBASE_CREDENTIALS_JSON: {exc}"
+            logger.error(_init_error)
+            return
+
     if not cred_path or not os.path.exists(cred_path):
         _init_error = (
             f"Firebase credentials not found at '{cred_path}'. "
-            "Set FIREBASE_CREDENTIALS_PATH in .env to the service-account JSON. "
+            "Set FIREBASE_CREDENTIALS_PATH in .env to the service-account JSON, "
+            "or set FIREBASE_CREDENTIALS_JSON to the raw JSON string. "
             "The API will run but Firestore operations will fail."
         )
         logger.warning(_init_error)
@@ -41,10 +60,11 @@ def init_firebase() -> None:
         cred = credentials.Certificate(cred_path)
         firebase_admin.initialize_app(cred)
         _db = firestore.client()
-        logger.info("Firebase Admin SDK initialised.")
+        logger.info("Firebase Admin SDK initialised from file.")
     except Exception as exc:  # noqa: BLE001 — startup must never crash here
         _init_error = f"Failed to initialise Firebase Admin SDK: {exc}"
         logger.error(_init_error)
+
 
 
 def get_db():

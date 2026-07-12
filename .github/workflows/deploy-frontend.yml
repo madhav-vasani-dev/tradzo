@@ -1,0 +1,50 @@
+name: Deploy Frontend to GitHub Pages
+
+on:
+  push:
+    branches:
+      - dev      # Triggers on every push to dev
+    paths:
+      - 'frontend/**'   # Only when frontend files change
+
+  workflow_dispatch:    # Allow manual trigger from GitHub Actions UI
+
+permissions:
+  contents: write       # Needed to push to gh-pages branch
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+          cache: 'npm'
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies
+        working-directory: frontend
+        run: npm ci
+
+      - name: Build Angular app for GitHub Pages
+        working-directory: frontend
+        run: npx ng build --base-href "/tradzo/"
+
+      - name: Add .nojekyll file (prevents Jekyll processing)
+        run: touch frontend/dist/tradzo/browser/.nojekyll
+
+      - name: Add 404.html for SPA routing on GitHub Pages
+        # Copies index.html as 404.html so Angular routing works on direct URLs
+        run: cp frontend/dist/tradzo/browser/index.html frontend/dist/tradzo/browser/404.html
+
+      - name: Deploy to GitHub Pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_dir: frontend/dist/tradzo/browser
+          publish_branch: gh-pages
