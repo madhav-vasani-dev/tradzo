@@ -14,6 +14,11 @@ export class AuthService {
   private _currentUser$ = new BehaviorSubject<TradzoUser | null>(null);
   readonly currentUser$ = this._currentUser$.asObservable();
 
+  get currentUserValue(): TradzoUser | null {
+    return this._currentUser$.value;
+  }
+
+
   /** Reactive — emits true/false whenever user doc changes in Firestore */
   readonly isAdmin$ = this._currentUser$.pipe(
     map(u => !!(u?.isAdmin || u?.isSuperUser))

@@ -91,7 +91,7 @@
                   {{ us.status }}
                 </span>
                 <div class="sr-actions">
-                  @if (us.status === 'active') {
+                  @if (us.status === 'enabled' || us.status === 'ready' || us.status === 'trade_active') {
                     <button
                       class="admin-action-btn pause"
                       [disabled]="actionLoading === us.id"

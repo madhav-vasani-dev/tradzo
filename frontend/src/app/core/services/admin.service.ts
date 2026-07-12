@@ -76,7 +76,7 @@ export class AdminService {
   async resumeUserStrategyByAdmin(userStrategyId: string): Promise<void> {
     const ref = doc(this.firestore, `userStrategies/${userStrategyId}`);
     await updateDoc(ref, {
-      status: 'active',
+      status: 'enabled',
       pausedByAdmin: false,
       pausedAt: null
     });
@@ -88,13 +88,23 @@ export class AdminService {
   getActivityLogs(dateStr?: string): Observable<any[]> {
     const today = dateStr || new Date().toISOString().split('T')[0];
     return runInInjectionContext(this.injector, () => {
-      const ref = query(
-        collection(this.firestore, 'activityLogs'),
-        where('date', '==', today),
-        orderBy('createdAt', 'desc')
+      const ref = collection(this.firestore, 'activityLogs');
+      return (collectionData(ref, { idField: 'id' }) as Observable<any[]>).pipe(
+        map(logs => [...logs]
+          .filter(l => l.date === today)
+          .sort((a, b) => this.createdMillisForLog(b) - this.createdMillisForLog(a))
+        )
       );
-      return collectionData(ref, { idField: 'id' }) as Observable<any[]>;
     });
+  }
+
+  private createdMillisForLog(log: any): number {
+    const ts: any = log.createdAt;
+    if (!ts) return 0;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
   }
 
   /** Toggle paper trading mode (superuser only, sends request to FastAPI backend) */

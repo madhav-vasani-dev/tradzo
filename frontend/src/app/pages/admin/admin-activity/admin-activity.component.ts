@@ -87,16 +87,9 @@ export class AdminActivityComponent implements OnInit, OnDestroy {
   }
 
   async toggleTradingMode(newValue: boolean) {
-    const currentUser = this.authService.currentUser$;
-    let userUid = 'system';
-    let userName = 'Superuser';
-
-    currentUser.subscribe(u => {
-      if (u) {
-        userUid = u.uid;
-        userName = u.username || u.email;
-      }
-    }).unsubscribe();
+    const user = this.authService.currentUserValue;
+    const userUid = user?.uid || 'system';
+    const userName = user ? (user.username || user.email) : 'Superuser';
 
     try {
       this.isLoading = true;
@@ -110,6 +103,7 @@ export class AdminActivityComponent implements OnInit, OnDestroy {
       this.isLoading = false;
     }
   }
+
 
   private calculateStats() {
     const orderPlacements = this.logs.filter(l => l.type === 'order_placed');

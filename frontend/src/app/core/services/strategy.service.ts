@@ -15,6 +15,7 @@ import {
   serverTimestamp
 } from '@angular/fire/firestore';
 import { Observable } from 'rxjs';
+import { map } from 'rxjs/operators';
 import { Strategy, UserStrategy, Position } from '../../models/strategy.model';
 
 @Injectable({ providedIn: 'root' })
@@ -25,12 +26,13 @@ export class StrategyService {
 
   /** Returns only visible strategies for regular users */
   getVisibleStrategies(): Observable<Strategy[]> {
-    const ref = query(
-      collection(this.firestore, 'strategies'),
-      where('isVisible', '==', true),
-      orderBy('createdAt', 'desc')
+    const ref = collection(this.firestore, 'strategies');
+    return (collectionData(ref, { idField: 'id' }) as Observable<Strategy[]>).pipe(
+      map(strategies => [...strategies]
+        .filter(s => s.isVisible)
+        .sort((a, b) => this.createdMillis(b) - this.createdMillis(a))
+      )
     );
-    return collectionData(ref, { idField: 'id' }) as Observable<Strategy[]>;
   }
 
   /** Returns a single strategy by ID */
@@ -41,12 +43,13 @@ export class StrategyService {
 
   /** Returns all userStrategy deployments for a given user */
   getUserStrategies(userId: string): Observable<UserStrategy[]> {
-    const ref = query(
-      collection(this.firestore, 'userStrategies'),
-      where('userId', '==', userId),
-      orderBy('deployedAt', 'desc')
+    const ref = collection(this.firestore, 'userStrategies');
+    return (collectionData(ref, { idField: 'id' }) as Observable<UserStrategy[]>).pipe(
+      map(userStrats => [...userStrats]
+        .filter(us => us.userId === userId)
+        .sort((a, b) => this.deployedMillis(b) - this.deployedMillis(a))
+      )
     );
-    return collectionData(ref, { idField: 'id' }) as Observable<UserStrategy[]>;
   }
 
   /** Deploy a strategy for a user */
@@ -93,13 +96,31 @@ export class StrategyService {
   /** Get all positions for a user on a specific date (defaults to today) */
   getUserPositions(userId: string, dateStr?: string): Observable<Position[]> {
     const today = dateStr || new Date().toISOString().split('T')[0];
-    const ref = query(
-      collection(this.firestore, 'positions'),
-      where('userId', '==', userId),
-      where('date', '==', today),
-      orderBy('entryAt', 'asc')
+    const ref = collection(this.firestore, 'positions');
+    return (collectionData(ref, { idField: 'id' }) as Observable<Position[]>).pipe(
+      map(positions => [...positions]
+        .filter(p => p.userId === userId && p.date === today)
+        .sort((a, b) => this.entryMillis(a) - this.entryMillis(b))
+      )
     );
-    return collectionData(ref, { idField: 'id' }) as Observable<Position[]>;
+  }
+
+  private deployedMillis(us: UserStrategy): number {
+    const ts: any = us.deployedAt;
+    if (!ts) return 0;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
+  }
+
+  private entryMillis(p: Position): number {
+    const ts: any = p.entryAt;
+    if (!ts) return 0;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
   }
 
 
@@ -118,18 +139,27 @@ export class StrategyService {
   /** Resume a paused deployment */
   async resumeUserStrategy(userStrategyId: string): Promise<void> {
     const ref = doc(this.firestore, `userStrategies/${userStrategyId}`);
-    await updateDoc(ref, { status: 'active', pausedAt: null });
+    await updateDoc(ref, { status: 'enabled', pausedAt: null });
   }
 
   // ── Admin ─────────────────────────────────────────────────────────────────
 
   /** Returns ALL strategies (including hidden) — admin only */
   getAllStrategies(): Observable<Strategy[]> {
-    const ref = query(
-      collection(this.firestore, 'strategies'),
-      orderBy('createdAt', 'desc')
+    const ref = collection(this.firestore, 'strategies');
+    return (collectionData(ref, { idField: 'id' }) as Observable<Strategy[]>).pipe(
+      map(strategies => [...strategies].sort((a, b) => this.createdMillis(b) - this.createdMillis(a)))
     );
-    return collectionData(ref, { idField: 'id' }) as Observable<Strategy[]>;
+  }
+
+  /** Best-effort ms-since-epoch from a Firestore Timestamp, ISO string, or nothing. */
+  private createdMillis(s: Strategy): number {
+    const ts: any = s.createdAt;
+    if (!ts) return 0;
+    if (typeof ts.toMillis === 'function') return ts.toMillis();
+    if (typeof ts.seconds === 'number') return ts.seconds * 1000;
+    const parsed = Date.parse(ts);
+    return isNaN(parsed) ? 0 : parsed;
   }
 
   /** Create a new strategy */

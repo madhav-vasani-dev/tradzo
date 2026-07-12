@@ -312,3 +312,92 @@ input:checked + .slider {
   .text-red { color: $neon-red; }
 }
 
+// ── Mobile Responsiveness (down to 320px) ───────────────────────────────────
+@media (max-width: 576px) {
+  .page-header {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 1.25rem;
+
+    .header-stats {
+      width: 100%;
+      display: grid;
+      grid-template-columns: repeat(3, 1fr);
+      gap: 0.5rem;
+
+      .stat-pill {
+        padding: 0.5rem;
+        min-width: unset;
+
+        .stat-val {
+          font-size: 1.1rem;
+        }
+        .stat-lbl {
+          font-size: 0.6rem;
+        }
+      }
+    }
+  }
+
+  .controls-card {
+    padding: 1rem;
+    gap: 1rem;
+
+    .control-group {
+      width: 100%;
+
+      .custom-date-input {
+        width: 100%;
+      }
+
+      &.toggle-group {
+        flex-direction: column;
+        align-items: flex-start;
+        gap: 0.5rem;
+
+        .switch {
+          align-self: flex-start;
+        }
+      }
+    }
+  }
+
+  .timeline-item {
+    grid-template-columns: 28px 10px 1fr;
+    gap: 0 0.5rem;
+
+    .timeline-dot {
+      width: 28px;
+      height: 28px;
+      i {
+        font-size: 0.8rem;
+      }
+    }
+  }
+
+  .timeline-card {
+    padding: 0.85rem 1rem;
+
+    .tc-header {
+      flex-direction: column;
+      align-items: flex-start;
+      gap: 0.25rem;
+
+      .tc-time {
+        font-size: 0.68rem;
+      }
+    }
+
+    .tc-details {
+      font-size: 0.78rem;
+    }
+
+    .tc-meta {
+      padding: 0.4rem 0.6rem;
+      gap: 0.35rem 0.75rem;
+      font-size: 0.7rem;
+    }
+  }
+}
+
+
