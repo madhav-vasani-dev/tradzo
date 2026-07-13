@@ -1,0 +1,40 @@
+version: '3.8'
+
+services:
+  web:
+    build: .
+    restart: always
+    environment:
+      - PORT=8080
+      - HOST=0.0.0.0
+      - CORS_ORIGINS=${CORS_ORIGINS:-https://madhav-vasani-dev.github.io,http://localhost:4200}
+      - FRONTEND_BASE_URL=${FRONTEND_BASE_URL:-https://madhav-vasani-dev.github.io/tradzo}
+      - UPSTOX_REDIRECT_URI=${UPSTOX_REDIRECT_URI}
+      - UPSTOX_CLIENT_ID=${UPSTOX_CLIENT_ID}
+      - UPSTOX_CLIENT_SECRET=${UPSTOX_CLIENT_SECRET}
+      - JAINAM_XTS_BASE_URL=${JAINAM_XTS_BASE_URL:-https://jtrade.jainam.in:5000}
+      - JAINAM_XTS_SOURCE=${JAINAM_XTS_SOURCE:-WebAPI}
+      - TOKEN_ENCRYPTION_KEY=${TOKEN_ENCRYPTION_KEY}
+      - ENABLE_SCHEDULER=${ENABLE_SCHEDULER:-true}
+      - FIREBASE_CREDENTIALS_JSON=${FIREBASE_CREDENTIALS_JSON}
+    expose:
+      - "8080"
+
+  caddy:
+    image: caddy:2-alpine
+    restart: always
+    ports:
+      - "80:80"
+      - "443:443"
+    environment:
+      - BACKEND_DOMAIN=${BACKEND_DOMAIN}
+    volumes:
+      - ./Caddyfile:/etc/caddy/Caddyfile
+      - caddy_data:/data
+      - caddy_config:/config
+    depends_on:
+      - web
+
+volumes:
+  caddy_data:
+  caddy_config:

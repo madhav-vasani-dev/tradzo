@@ -1,0 +1,4 @@
+# Caddyfile for automatic HTTPS reverse proxy
+{$BACKEND_DOMAIN} {
+    reverse_proxy web:8080
+}
