@@ -52,3 +52,6 @@ Thumbs.db
 # Local planning docs
 *.md
 !README.md
+
+# AWS and SSH private keys
+*.pem

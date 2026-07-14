@@ -2,7 +2,9 @@
 .env
 firebase-service-account.json
 *.key
+*.pem
 token_store.enc
+credentials_store.enc
 
 # Python
 __pycache__/
