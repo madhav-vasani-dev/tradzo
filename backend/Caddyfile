@@ -1,4 +1,7 @@
-# Caddyfile for automatic HTTPS reverse proxy
+# Caddyfile for automatic HTTPS reverse proxy using ZeroSSL
 {$BACKEND_DOMAIN} {
+    tls {
+        ca https://acme.zerossl.com/v2/DV90
+    }
     reverse_proxy web:8080
 }
