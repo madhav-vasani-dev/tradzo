@@ -100,3 +100,26 @@ def update_trading_mode(req: TradingModeUpdateRequest):
         updated_by_name=req.userName,
     )
     return {"status": "success", "paperTrading": req.paperTrading}
+
+
+@router.get("/debug-deployments")
+def debug_deployments():
+    """Temporary endpoint to dump all enabled deployments for debugging."""
+    _require_firestore()
+    deployments = firebase_service.list_deployments_by_status("enabled")
+    
+    debug_info = []
+    for d in deployments:
+        debug_info.append({
+            "id": d.get("id"),
+            "status": d.get("status"),
+            "pausedByAdmin": d.get("pausedByAdmin"),
+            "pausedByAdmin_type": str(type(d.get("pausedByAdmin"))),
+            "userId": d.get("userId"),
+        })
+        
+    return {
+        "count": len(deployments),
+        "deployments": debug_info,
+        "paper": firebase_service.is_paper_trading(),
+    }
