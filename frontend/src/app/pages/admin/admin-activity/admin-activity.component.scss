@@ -241,7 +241,7 @@ input:checked + .slider {
   min-height: calc(100% + 1rem);
   align-self: stretch;
 
-  .timeline-item:last-child & { display: none; }
+  .timeline-item:last-child & { background: transparent; }
 }
 
 .timeline-card {
