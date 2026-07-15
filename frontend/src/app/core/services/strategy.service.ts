@@ -46,9 +46,9 @@ export class StrategyService {
   /** Returns all userStrategy deployments for a given user */
   getUserStrategies(userId: string): Observable<UserStrategy[]> {
     const ref = collection(this.firestore, 'userStrategies');
-    return (collectionData(ref, { idField: 'id' }) as Observable<UserStrategy[]>).pipe(
+    const q = query(ref, where('userId', '==', userId));
+    return (collectionData(q, { idField: 'id' }) as Observable<UserStrategy[]>).pipe(
       map(userStrats => [...userStrats]
-        .filter(us => us.userId === userId)
         .sort((a, b) => this.deployedMillis(b) - this.deployedMillis(a))
       )
     );
@@ -99,9 +99,9 @@ export class StrategyService {
   getUserPositions(userId: string, dateStr?: string): Observable<Position[]> {
     const today = dateStr || new Date().toISOString().split('T')[0];
     const ref = collection(this.firestore, 'positions');
-    return (collectionData(ref, { idField: 'id' }) as Observable<Position[]>).pipe(
+    const q = query(ref, where('userId', '==', userId), where('date', '==', today));
+    return (collectionData(q, { idField: 'id' }) as Observable<Position[]>).pipe(
       map(positions => [...positions]
-        .filter(p => p.userId === userId && p.date === today)
         .sort((a, b) => this.entryMillis(a) - this.entryMillis(b))
       )
     );

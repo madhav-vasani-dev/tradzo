@@ -51,6 +51,14 @@ service cloud.firestore {
       allow update, delete: if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
     }
 
+    // ── positions (individual legs) ──────────────────────────────────────────
+    // Created by backend Admin SDK. Readable by owner or admin.
+    match /positions/{id} {
+      allow read:         if isSignedIn() && (resource.data.userId == request.auth.uid || isAdmin());
+      allow write:        if false;
+    }
+
+
     // ── strategies ────────────────────────────────────────────────────────────
     // Any signed-in user can browse; only admins create/edit/delete.
     match /strategies/{id} {
