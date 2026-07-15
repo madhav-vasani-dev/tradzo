@@ -1,4 +1,8 @@
 # Caddyfile for automatic HTTPS reverse proxy using ZeroSSL
+{
+    email madhavvasani181006@gmail.com
+}
+
 {$BACKEND_DOMAIN} {
     tls {
         ca https://acme.zerossl.com/v2/DV90
