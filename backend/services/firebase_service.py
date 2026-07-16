@@ -134,6 +134,19 @@ def delete_broker_credentials(account_id: str) -> None:
     get_db().collection("brokerCredentials").document(account_id).delete()
 
 
+def set_broker_token(account_id: str, ciphertext: str) -> None:
+    get_db().collection("brokerTokens").document(account_id).set({"enc": ciphertext})
+
+
+def get_broker_token(account_id: str) -> Optional[str]:
+    snap = get_db().collection("brokerTokens").document(account_id).get()
+    return snap.to_dict().get("enc") if snap.exists else None
+
+
+def delete_broker_token(account_id: str) -> None:
+    get_db().collection("brokerTokens").document(account_id).delete()
+
+
 def list_broker_accounts() -> list[dict]:
     return [
         {**d.to_dict(), "id": d.id}

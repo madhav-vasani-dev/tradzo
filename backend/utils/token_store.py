@@ -2,24 +2,21 @@
 
 Design decision (per implementation plan): broker credentials live ONLY in the
 Python backend, never in Firestore or the Angular app. Tokens are encrypted with
-Fernet (AES-128-CBC + HMAC) using TOKEN_ENCRYPTION_KEY and persisted to a local
-file. Swap the file backend for a secrets manager (AWS Secrets Manager, GCP
-Secret Manager, Vault) in production without changing callers.
+Fernet (AES-128-CBC + HMAC) using TOKEN_ENCRYPTION_KEY and persisted to Firestore.
 """
 import json
 import logging
 import os
-from threading import Lock
 from typing import Optional
 
 from cryptography.fernet import Fernet, InvalidToken
 
 from config import settings
+from services import firebase_service
 
 logger = logging.getLogger("tradzo.tokenstore")
 
-_STORE_PATH = os.path.join(os.path.dirname(__file__), "..", "token_store.enc")
-_lock = Lock()
+_LEGACY_PATH = os.path.join(os.path.dirname(__file__), "..", "token_store.enc")
 _fernet: Optional[Fernet] = None
 
 
@@ -37,42 +34,44 @@ def _get_fernet() -> Fernet:
     return _fernet
 
 
-def _read_all() -> dict:
-    if not os.path.exists(_STORE_PATH):
-        return {}
-    try:
-        with open(_STORE_PATH, "rb") as fh:
-            raw = fh.read()
-        if not raw:
-            return {}
-        return json.loads(_get_fernet().decrypt(raw).decode())
-    except (InvalidToken, ValueError) as exc:
-        logger.error("Token store unreadable (wrong key or corrupt): %s", exc)
-        return {}
-
-
-def _write_all(data: dict) -> None:
-    encrypted = _get_fernet().encrypt(json.dumps(data).encode())
-    with open(_STORE_PATH, "wb") as fh:
-        fh.write(encrypted)
-
-
 def save_tokens(account_id: str, tokens: dict) -> None:
-    """Store the token bundle for a broker account id."""
-    with _lock:
-        data = _read_all()
-        data[account_id] = tokens
-        _write_all(data)
+    """Encrypt and persist the token bundle to Firestore."""
+    ciphertext = _get_fernet().encrypt(json.dumps(tokens).encode()).decode()
+    firebase_service.set_broker_token(account_id, ciphertext)
 
 
 def get_tokens(account_id: str) -> Optional[dict]:
-    with _lock:
-        return _read_all().get(account_id)
+    """Return the decrypted token bundle, or None if absent/undecryptable."""
+    ciphertext = firebase_service.get_broker_token(account_id)
+    if ciphertext:
+        try:
+            return json.loads(_get_fernet().decrypt(ciphertext.encode()).decode())
+        except (InvalidToken, ValueError) as exc:
+            logger.error("Stored tokens unreadable (wrong key or corrupt): %s", exc)
+            return None
+
+    # Fallback: migrate from the legacy local file if present.
+    legacy = _read_legacy(account_id)
+    if legacy is not None:
+        logger.info("Migrating tokens for %s from legacy file to Firestore.", account_id)
+        save_tokens(account_id, legacy)
+    return legacy
 
 
 def delete_tokens(account_id: str) -> None:
-    with _lock:
-        data = _read_all()
-        if account_id in data:
-            del data[account_id]
-            _write_all(data)
+    firebase_service.delete_broker_token(account_id)
+
+
+def _read_legacy(account_id: str) -> Optional[dict]:
+    if not os.path.exists(_LEGACY_PATH):
+        return None
+    try:
+        with open(_LEGACY_PATH, "rb") as fh:
+            raw = fh.read()
+        if not raw:
+            return None
+        data = json.loads(_get_fernet().decrypt(raw).decode())
+        return data.get(account_id)
+    except (InvalidToken, ValueError) as exc:
+        logger.error("Legacy tokens file unreadable: %s", exc)
+        return None
