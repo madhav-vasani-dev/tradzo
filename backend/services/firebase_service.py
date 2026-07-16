@@ -195,13 +195,14 @@ def is_paper_trading() -> bool:
 # ── Market data source account ────────────────────────────────────────────────
 
 def get_market_data_account() -> Optional[dict]:
-    """Return the broker account flagged as the market data WebSocket source.
-
+    """Return the broker account designated for fetching Nifty spot/options.
+    
     Admin marks their account with isMarketDataSource=True.
+    If none is explicitly marked, fall back to any connected Upstox account.
     """
+    db = get_db()
     docs = (
-        get_db()
-        .collection("brokerAccounts")
+        db.collection("brokerAccounts")
         .where(filter=FieldFilter("isMarketDataSource", "==", True))
         .where(filter=FieldFilter("isConnected", "==", True))
         .limit(1)
@@ -209,6 +210,18 @@ def get_market_data_account() -> Optional[dict]:
     )
     if docs:
         return {**docs[0].to_dict(), "id": docs[0].id}
+        
+    # Fallback: use any connected upstox account
+    docs = (
+        db.collection("brokerAccounts")
+        .where(filter=FieldFilter("broker", "==", "upstox"))
+        .where(filter=FieldFilter("isConnected", "==", True))
+        .limit(1)
+        .get()
+    )
+    if docs:
+        return {**docs[0].to_dict(), "id": docs[0].id}
+        
     return None
 
 
