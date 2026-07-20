@@ -213,6 +213,7 @@ async def execute_entry() -> dict:
     deployments = firebase_service.list_deployments_by_status("ready")
     accounts = _accounts_by_id()
     users = _users_by_id()
+    paper = firebase_service.is_paper_trading()
 
     if not deployments:
         log.info("No ready deployments found at entry time.")
@@ -258,6 +259,9 @@ async def execute_entry() -> dict:
             continue
 
         account = accounts.get(dep.get("brokerAccountId", ""))
+        user_id = dep.get("userId")
+        user_doc = users.get(user_id, {})
+        paper = user_doc.get("paperTrading", True)
         access_token = _get_token(account) if not paper else "paper_token"
         lots = dep.get("multiplier", 1)
         broker = dep.get("brokerName", "upstox")
