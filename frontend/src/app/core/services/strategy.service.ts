@@ -18,11 +18,13 @@ import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { Strategy, UserStrategy, Position } from '../../models/strategy.model';
 import { BACKEND_BASE_URL } from '../config';
+import { Auth } from '@angular/fire/auth';
 
 
 @Injectable({ providedIn: 'root' })
 export class StrategyService {
   private firestore = inject(Firestore);
+  private auth = inject(Auth);
 
   // ── Public (user-facing) ──────────────────────────────────────────────────
 
@@ -152,10 +154,12 @@ export class StrategyService {
 
   /** Square off positions and stop strategy for today */
   async squareOffUserStrategy(userStrategyId: string): Promise<any> {
+    const token = await this.auth.currentUser?.getIdToken();
     const response = await fetch(`${BACKEND_BASE_URL}/execution/square-off/${userStrategyId}`, {
       method: 'POST',
       headers: {
-        'Content-Type': 'application/json'
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
       }
     });
     if (!response.ok) {
@@ -212,5 +216,41 @@ export class StrategyService {
   async deleteStrategy(id: string): Promise<void> {
     const ref = doc(this.firestore, `strategies/${id}`);
     await deleteDoc(ref);
+  }
+
+  /** Get P&L report for a user, strategy, and date range */
+  async getPnlReport(
+    userId?: string,
+    strategyId?: string,
+    startDate?: string,
+    endDate?: string
+  ): Promise<any> {
+    const params = new URLSearchParams();
+    if (userId) params.append('userId', userId);
+    if (strategyId) params.append('strategyId', strategyId);
+    if (startDate) params.append('startDate', startDate);
+    if (endDate) params.append('endDate', endDate);
+
+    const token = await this.auth.currentUser?.getIdToken();
+    const response = await fetch(`${BACKEND_BASE_URL}/execution/pnl?${params.toString()}`, {
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
+    if (!response.ok) {
+      const data = await response.json();
+      throw new Error(data?.detail || 'Failed to fetch P&L report.');
+    }
+    return response.json();
+  }
+
+  /** Stream simulated (system) positions for a strategy */
+  getStrategySimulatedTrades(strategyId: string): Observable<any[]> {
+    const ref = query(
+      collection(this.firestore, 'positions'),
+      where('userId', '==', 'system'),
+      where('strategyId', '==', strategyId)
+    );
+    return collectionData(ref, { idField: 'id' }) as Observable<any[]>;
   }
 }

@@ -33,6 +33,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/broker-accounts/broker-accounts.component').then(m => m.BrokerAccountsComponent),
     canActivate: [authGuard]
   },
+  {
+    path: 'pnl',
+    loadComponent: () => import('./pages/pnl/pnl.component').then(m => m.PnlComponent),
+    canActivate: [authGuard]
+  },
 
   // ── Admin routes (authGuard + adminGuard) ────────────────────────────────
   {

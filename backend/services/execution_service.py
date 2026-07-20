@@ -52,7 +52,31 @@ def _get_token(account: dict | None) -> str | None:
     if not account or not account.get("isConnected"):
         return None
     tokens = token_store.get_tokens(account["id"])
-    return (tokens or {}).get("access_token")
+    if not tokens:
+        return None
+    if tokens.get("broker") == "jainam":
+        return tokens.get("interactive_token")
+    return tokens.get("access_token")
+
+
+def _get_jainam_market_data_token(account: dict | None) -> str | None:
+    if account:
+        tokens = token_store.get_tokens(account["id"])
+        if tokens and tokens.get("marketdata_token"):
+            return tokens["marketdata_token"]
+            
+    md_account = firebase_service.get_market_data_account()
+    if md_account and md_account.get("broker") == "jainam":
+        tokens = token_store.get_tokens(md_account["id"])
+        if tokens and tokens.get("marketdata_token"):
+            return tokens["marketdata_token"]
+            
+    for acc in firebase_service.list_broker_accounts():
+        if acc.get("broker") == "jainam" and acc.get("isConnected"):
+            tokens = token_store.get_tokens(acc["id"])
+            if tokens and tokens.get("marketdata_token"):
+                return tokens["marketdata_token"]
+    return None
 
 
 def _is_token_valid(account: dict | None) -> bool:
@@ -60,7 +84,10 @@ def _is_token_valid(account: dict | None) -> bool:
     if not account or not account.get("isConnected"):
         return False
     tokens = token_store.get_tokens(account["id"])
-    if not tokens or not tokens.get("access_token"):
+    if not tokens:
+        return False
+    token_key = "interactive_token" if tokens.get("broker") == "jainam" else "access_token"
+    if not tokens.get(token_key):
         return False
     expiry_raw = account.get("expiresAt")
     if expiry_raw is None:
@@ -73,23 +100,33 @@ def _accounts_by_id() -> dict[str, dict]:
     return {a["id"]: a for a in firebase_service.list_broker_accounts()}
 
 
+def _users_by_id() -> dict[str, dict]:
+    db = firebase_service.get_db()
+    docs = db.collection("users").stream()
+    return {d.id: d.to_dict() for d in docs}
+
+
 def _log(
     event_type: str,
     message: str,
     severity: str = "info",
     date_str: str | None = None,
     user_id: str | None = None,
+    user_name: str | None = None,
     strategy_id: str | None = None,
     position_id: str | None = None,
     paper: bool = False,
     metadata: dict | None = None,
 ) -> None:
+    if user_id == "system":
+        return
     activity.log_activity(
         type=event_type,
         message=message,
         severity=severity,
         date=date_str or _today(),
         userId=user_id,
+        userName=user_name,
         strategyId=strategy_id,
         positionId=position_id,
         isPaper=paper,
@@ -120,9 +157,9 @@ def pre_entry_check() -> dict:
     Returns a readiness summary.
     """
     today = _today()
-    paper = firebase_service.is_paper_trading()
     deployments = firebase_service.list_deployments_by_status("enabled")
     accounts = _accounts_by_id()
+    users = _users_by_id()
 
     ready = skipped = 0
     for dep in deployments:
@@ -131,6 +168,9 @@ def pre_entry_check() -> dict:
             continue
 
         account = accounts.get(dep.get("brokerAccountId", ""))
+        user_id = dep.get("userId")
+        user_doc = users.get(user_id, {})
+        paper = user_doc.get("paperTrading", True)
 
         if paper or _is_token_valid(account):
             firebase_service.update_user_strategy_status(dep["id"], "ready")
@@ -147,8 +187,8 @@ def pre_entry_check() -> dict:
                 strategy_id=dep.get("strategyId"),
             )
 
-    summary = {"ready": ready, "skipped": skipped, "paper": paper}
-    log.info("Pre-entry check: %s/%s ready (paper=%s).", ready, ready + skipped, paper)
+    summary = {"ready": ready, "skipped": skipped}
+    log.info("Pre-entry check: %s/%s ready.", ready, ready + skipped)
     _log("pre_entry_check", f"Pre-entry check: {ready} ready, {skipped} skipped.", "info",
          date_str=today, metadata=summary)
     return summary
@@ -170,9 +210,9 @@ async def execute_entry() -> dict:
     Uses paper mode from Firestore settings.
     """
     today = _today()
-    paper = firebase_service.is_paper_trading()
     deployments = firebase_service.list_deployments_by_status("ready")
     accounts = _accounts_by_id()
+    users = _users_by_id()
 
     if not deployments:
         log.info("No ready deployments found at entry time.")
@@ -220,6 +260,15 @@ async def execute_entry() -> dict:
         account = accounts.get(dep.get("brokerAccountId", ""))
         access_token = _get_token(account) if not paper else "paper_token"
         lots = dep.get("multiplier", 1)
+        broker = dep.get("brokerName", "upstox")
+
+        user_name = "User"
+        try:
+            user_doc = firebase_service.get_db().collection("users").document(dep.get("userId")).get()
+            if user_doc.exists:
+                user_name = user_doc.to_dict().get("username") or user_doc.to_dict().get("email") or "User"
+        except Exception:
+            pass
 
         try:
             strategy = get_strategy(dep.get("strategyCode", dep.get("strategyId", "")))
@@ -240,11 +289,29 @@ async def execute_entry() -> dict:
 
         for leg in legs:
             option_type = leg["optionType"]
-            instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
             qty = leg["quantity"]
             tag_prefix = f"NS_{dep['id'][:6].upper()}_{option_type}"
 
             try:
+                # Resolve instrument key and ltp
+                if not paper and broker == "jainam":
+                    from services import jainam_service
+                    md_token = _get_jainam_market_data_token(account)
+                    if not md_token:
+                        raise RuntimeError("No valid Jainam market data token found. Please connect your Jainam account.")
+                    
+                    res = await jainam_service.get_option_instrument(
+                        token=md_token,
+                        symbol="NIFTY",
+                        expiry_date_str=leg["expiry"],
+                        option_type=option_type,
+                        strike_price=leg["strike"]
+                    )
+                    instrument_key = str(res["exchangeInstrumentID"])
+                    ltp = atm_data["ce_ltp"] if option_type == "CE" else atm_data["pe_ltp"]
+                else:
+                    instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
+
                 # Step 1: Place SELL MARKET (entry)
                 sell_result = await order_service.place_sell_market(
                     access_token=access_token,
@@ -253,6 +320,7 @@ async def execute_entry() -> dict:
                     tag=f"{tag_prefix}_E",
                     paper=paper,
                     ltp=ltp,
+                    broker=broker,
                 )
                 fill_price = sell_result["fill_price"] or ltp
 
@@ -265,6 +333,7 @@ async def execute_entry() -> dict:
                     trigger_price=sl_price,
                     tag=f"{tag_prefix}_SL",
                     paper=paper,
+                    broker=broker,
                 )
 
                 # Step 3: Write position to Firestore
@@ -276,7 +345,7 @@ async def execute_entry() -> dict:
                     "strategyCode": dep.get("strategyCode", "NIFTY_STRADDLE"),
                     "userStrategyId": dep["id"],
                     "brokerAccountId": dep.get("brokerAccountId"),
-                    "broker": dep.get("brokerName", "upstox"),
+                    "broker": broker,
                     "instrumentKey": instrument_key,
                     "symbol": symbol,
                     "optionType": option_type,
@@ -305,6 +374,7 @@ async def execute_entry() -> dict:
                     severity="success",
                     date_str=today,
                     user_id=dep.get("userId"),
+                    user_name=user_name,
                     strategy_id=dep.get("strategyId"),
                     position_id=pos_id,
                     paper=paper,
@@ -329,6 +399,7 @@ async def execute_entry() -> dict:
                     severity="error",
                     date_str=today,
                     user_id=dep.get("userId"),
+                    user_name=user_name,
                     strategy_id=dep.get("strategyId"),
                     paper=paper,
                     metadata={"error": str(exc), "optionType": option_type},
@@ -343,7 +414,82 @@ async def execute_entry() -> dict:
         elif dep_failed > 0:
             firebase_service.update_user_strategy_status(dep["id"], "enabled")  # will retry nothing
 
-    summary = {"placed": placed, "failed": failed, "skipped": skipped, "paper": paper}
+    # ── Strategy Simulations ──────────────────────────────────────────────────
+    try:
+        strategies_ref = firebase_service.get_db().collection("strategies").stream()
+        for strat_doc in strategies_ref:
+            strat_data = strat_doc.to_dict()
+            strat_id = strat_doc.id
+            if not strat_data.get("isVisible", True):
+                continue
+            strat_code = strat_data.get("code") or strat_data.get("strategyCode") or strat_id.upper()
+
+            # Idempotency check: skip if system positions already exist today
+            existing_sys = (
+                firebase_service.get_db()
+                .collection("positions")
+                .where("userId", "==", "system")
+                .where("userStrategyId", "==", f"system_{strat_id}")
+                .where("date", "==", today)
+                .get()
+            )
+            if existing_sys:
+                continue
+
+            try:
+                strategy_instance = get_strategy(strat_code)
+            except ValueError:
+                strategy_instance = get_strategy("NIFTY_STRADDLE")
+
+            legs = strategy_instance.get_entry_legs({}, atm_data["atm_strike"], atm_data["expiry"], 1)
+
+            leg_map = {
+                "CE": (atm_data["ce_key"], atm_data["ce_ltp"]),
+                "PE": (atm_data["pe_key"], atm_data["pe_ltp"]),
+            }
+
+            for leg in legs:
+                option_type = leg["optionType"]
+                instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
+                qty = leg["quantity"]
+                tag_prefix = f"SYS_{strat_id[:6].upper()}_{option_type}"
+
+                fill_price = ltp
+                sl_price = strategy_instance.calculate_sl_price(fill_price)
+
+                symbol = f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}"
+                position_service.create_position({
+                    "date": today,
+                    "userId": "system",
+                    "strategyId": strat_id,
+                    "strategyCode": strat_code,
+                    "userStrategyId": f"system_{strat_id}",
+                    "brokerAccountId": "system_broker",
+                    "broker": "upstox",
+                    "instrumentKey": instrument_key,
+                    "symbol": symbol,
+                    "optionType": option_type,
+                    "strike": leg["strike"],
+                    "expiry": leg["expiry"],
+                    "quantity": qty,
+                    "lots": 1,
+                    "entryOrderId": f"sys_sell_{tag_prefix}",
+                    "slOrderId": f"sys_sl_{tag_prefix}",
+                    "entryPrice": fill_price,
+                    "slPrice": sl_price,
+                    "status": "open",
+                    "isPaper": True,
+                    "entryAt": _now_ist(),
+                    "exitAt": None,
+                    "exitPrice": None,
+                    "exitOrderId": None,
+                    "exitReason": None,
+                    "pnl": None,
+                })
+    except Exception as exc:
+        log.error("Failed to execute global strategy simulation: %s", exc)
+
+    summary = {"placed": placed, "failed": failed, "skipped": skipped}
     log.info("Entry complete: %s", summary)
     return summary
 
@@ -375,22 +521,42 @@ async def execute_exit() -> dict:
     closed_deployment_ids: set[str] = set()
 
     for pos in open_positions:
+        if pos.get("status") != "open":
+            continue
+
         # Get access token for this position's account
         account = accounts.get(pos.get("brokerAccountId", ""))
         access_token = _get_token(account) if not paper else "paper_token"
+        broker = pos.get("broker", "upstox")
+
+        user_name = "User"
+        try:
+            user_doc = firebase_service.get_db().collection("users").document(pos.get("userId")).get()
+            if user_doc.exists:
+                user_name = user_doc.to_dict().get("username") or user_doc.to_dict().get("email") or "User"
+        except Exception:
+            pass
 
         try:
             # Step 1: Cancel SL-M order
             sl_order_id = pos.get("slOrderId", "")
             if sl_order_id:
-                await order_service.cancel_order(
-                    access_token=access_token,
-                    order_id=sl_order_id,
-                    paper=paper,
-                )
+                try:
+                    await order_service.cancel_order(
+                        access_token=access_token,
+                        order_id=sl_order_id,
+                        paper=paper,
+                        broker=broker,
+                    )
+                except Exception as e:
+                    log.warning("Exit: Could not cancel SL order %s: %s", sl_order_id, e)
 
             # Step 2: Get current LTP for PnL calculation
-            current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+            current_ltp = 0.0
+            if paper:
+                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+            elif broker == "upstox":
+                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
 
             # Step 3: Place BUY MARKET to square off
             tag = f"SQ_{pos['id'][:8].upper()}"
@@ -401,8 +567,9 @@ async def execute_exit() -> dict:
                 tag=tag,
                 paper=paper,
                 ltp=current_ltp,
+                broker=broker,
             )
-            exit_price = buy_result["fill_price"] or current_ltp
+            exit_price = buy_result["fill_price"] or current_ltp or pos["entryPrice"]
 
             # Step 4: Calculate PnL (we SOLD entry, BUY to close → profit if exit < entry)
             pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
@@ -423,6 +590,7 @@ async def execute_exit() -> dict:
                 severity="success" if pnl >= 0 else "warning",
                 date_str=today,
                 user_id=pos.get("userId"),
+                user_name=user_name,
                 strategy_id=pos.get("strategyId"),
                 position_id=pos["id"],
                 paper=paper,
@@ -446,6 +614,7 @@ async def execute_exit() -> dict:
                 severity="error",
                 date_str=today,
                 user_id=pos.get("userId"),
+                user_name=user_name,
                 strategy_id=pos.get("strategyId"),
                 position_id=pos["id"],
                 paper=paper,
@@ -476,6 +645,8 @@ def eod_cleanup() -> dict:
     # Group by userId + strategyId
     user_pnl: dict[str, float] = {}
     for pos in positions:
+        if pos.get("userId") == "system":
+            continue
         key = f"{pos.get('userId')}_{pos.get('strategyId')}"
         user_pnl[key] = user_pnl.get(key, 0.0) + (pos.get("pnl") or 0.0)
 
@@ -516,6 +687,15 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
     for pos in open_positions:
         account = accounts.get(pos.get("brokerAccountId", ""))
         access_token = _get_token(account) if not paper else "paper_token"
+        broker = pos.get("broker", "upstox")
+
+        user_name = "User"
+        try:
+            user_doc = firebase_service.get_db().collection("users").document(pos.get("userId")).get()
+            if user_doc.exists:
+                user_name = user_doc.to_dict().get("username") or user_doc.to_dict().get("email") or "User"
+        except Exception:
+            pass
 
         # 1. Cancel SL-M order
         sl_order_id = pos.get("slOrderId", "")
@@ -525,6 +705,7 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
                     access_token=access_token,
                     order_id=sl_order_id,
                     paper=paper,
+                    broker=broker,
                 )
             except Exception as e:
                 log.warning("Could not cancel SL order %s: %s", sl_order_id, e)
@@ -541,6 +722,7 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
             tag=tag,
             paper=paper,
             ltp=current_ltp,
+            broker=broker,
         )
         exit_price = buy_result["fill_price"] or current_ltp
 
@@ -563,6 +745,7 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
             severity="success" if pnl >= 0 else "warning",
             date_str=today,
             user_id=pos.get("userId"),
+            user_name=user_name,
             strategy_id=pos.get("strategyId"),
             position_id=pos["id"],
             paper=paper,
@@ -579,6 +762,128 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
     # Set status to disabled_today so that EOD job does not process it again and it does not re-enter today
     firebase_service.update_user_strategy_status(user_strategy_id, "disabled_today")
     return {"closed": closed, "status": "disabled_today"}
+
+
+async def sync_order_statuses() -> dict:
+    """Sync order status for active open positions to catch stop-loss triggers."""
+    now = _now_ist()
+    # Market hours check (12:01 PM to 15:28 PM IST)
+    if not (12 <= now.hour <= 15):
+        return {"status": "outside_market_hours", "hour": now.hour}
+    if now.hour == 12 and now.minute == 0:
+        return {"status": "skipping_exact_entry"}
+    if now.hour == 15 and now.minute >= 29:
+        return {"status": "skipping_exact_exit"}
+
+    today = _today()
+    paper = firebase_service.is_paper_trading()
+    open_positions = position_service.get_open_positions_for_date(today)
+    
+    if not open_positions:
+        return {"synced": 0, "hits": 0}
+
+    accounts = _accounts_by_id()
+    synced = hits = 0
+
+    for pos in open_positions:
+        if pos.get("status") != "open":
+            continue
+
+        user_id = pos.get("userId")
+        user_name = "User"
+        try:
+            user_doc = firebase_service.get_db().collection("users").document(user_id).get()
+            if user_doc.exists:
+                user_name = user_doc.to_dict().get("username") or user_doc.to_dict().get("email") or "User"
+        except Exception:
+            pass
+
+        # Paper mode trigger simulation
+        if pos.get("isPaper"):
+            try:
+                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+                if current_ltp >= pos["slPrice"]:
+                    pnl = (pos["entryPrice"] - pos["slPrice"]) * pos["quantity"]
+                    position_service.update_position(pos["id"], {
+                        "status": "sl_hit",
+                        "exitReason": "sl_hit",
+                        "exitPrice": pos["slPrice"],
+                        "exitAt": _now_ist(),
+                        "pnl": round(pnl, 2),
+                    })
+                    _log(
+                        "sl_hit",
+                        f"[PAPER SL HIT] {pos['symbol']} | Triggered at ₹{pos['slPrice']:.1f} | PnL {pnl:+.2f}",
+                        severity="error",
+                        date_str=today,
+                        user_id=user_id,
+                        user_name=user_name,
+                        strategy_id=pos.get("strategyId"),
+                        position_id=pos["id"],
+                        paper=True,
+                    )
+                    hits += 1
+                synced += 1
+            except Exception as e:
+                log.error("Paper SL simulation failed for position %s: %s", pos["id"], e)
+            continue
+
+        # Live trading status query
+        broker = pos.get("broker", "upstox")
+        account = accounts.get(pos.get("brokerAccountId", ""))
+        access_token = _get_token(account)
+        if not access_token:
+            continue
+
+        sl_order_id = pos.get("slOrderId")
+        if not sl_order_id:
+            continue
+
+        try:
+            is_hit = False
+            exit_price = 0.0
+
+            if broker == "upstox":
+                order_data = await order_service.get_order_details(access_token, sl_order_id)
+                if order_data.get("status", "").lower() == "complete":
+                    is_hit = True
+                    exit_price = float(order_data.get("average_price") or order_data.get("trigger_price") or pos["slPrice"])
+            
+            elif broker == "jainam":
+                from services import jainam_service
+                history = await jainam_service.get_order_history(access_token, sl_order_id)
+                if history:
+                    latest = history[-1]
+                    if latest.get("orderstatus", "").upper() == "FILLED":
+                        is_hit = True
+                        exit_price = float(latest.get("averageprice") or latest.get("stopPrice") or pos["slPrice"])
+
+            if is_hit:
+                pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+                position_service.update_position(pos["id"], {
+                    "status": "sl_hit",
+                    "exitReason": "sl_hit",
+                    "exitPrice": exit_price,
+                    "exitAt": _now_ist(),
+                    "pnl": round(pnl, 2),
+                })
+                _log(
+                    "sl_hit",
+                    f"[SL HIT] {pos['symbol']} | Triggered at ₹{exit_price:.1f} | PnL {pnl:+.2f}",
+                    severity="error",
+                    date_str=today,
+                    user_id=user_id,
+                    user_name=user_name,
+                    strategy_id=pos.get("strategyId"),
+                    position_id=pos["id"],
+                    paper=False,
+                )
+                hits += 1
+            synced += 1
+        except Exception as e:
+            log.error("Failed to sync order status for position %s: %s", pos["id"], e)
+
+    return {"synced": synced, "hits": hits}
 
 
 # ── Legacy stubs (kept for backward compat / readiness endpoint) ──────────────

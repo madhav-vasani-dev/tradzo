@@ -1,6 +1,6 @@
 import { Injectable, Injector, inject, runInInjectionContext } from '@angular/core';
 import { Auth, onAuthStateChanged, User } from '@angular/fire/auth';
-import { Firestore, doc, docData, getDoc, setDoc, serverTimestamp } from '@angular/fire/firestore';
+import { Firestore, doc, docData, getDoc, setDoc, updateDoc, serverTimestamp } from '@angular/fire/firestore';
 import { Observable, BehaviorSubject, of } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { TradzoUser } from '../../models/user.model';
@@ -96,5 +96,10 @@ export class AuthService {
 
   get isSuperUser(): boolean {
     return !!this._currentUser$.getValue()?.isSuperUser;
+  }
+
+  async toggleUserTradingMode(userId: string, currentVal: boolean): Promise<void> {
+    const userRef = doc(this.firestore, `users/${userId}`);
+    await runInInjectionContext(this.injector, () => updateDoc(userRef, { paperTrading: !currentVal }));
   }
 }

@@ -9,5 +9,6 @@ export interface TradzoUser {
   updatedAt?: any;
   deployedStrategyIds: string[];
   brokerConnected: boolean;
+  paperTrading?: boolean;
 }
 

@@ -33,6 +33,11 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
   showDeployDialog = false;
   Math = Math;
 
+  // Tabs state
+  activeTab = 'performance'; // 'performance' | 'trades'
+  simulatedTrades: any[] = [];
+  isLoadingTrades = false;
+
   // Dialog confirmation state
   showConfirm = false;
   confirmTitle = '';
@@ -275,6 +280,29 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
 
   getStatusClass(status: string): string {
     return `status-${status.toLowerCase()}`;
+  }
+
+  loadSimulatedTrades() {
+    if (!this.strategy) return;
+    this.isLoadingTrades = true;
+    this.sub.add(
+      this.strategyService.getStrategySimulatedTrades(this.strategy.id).subscribe({
+        next: (trades) => {
+          this.simulatedTrades = [...trades].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          this.isLoadingTrades = false;
+        },
+        error: (err) => {
+          console.error('Error loading simulated trades:', err);
+          this.isLoadingTrades = false;
+        }
+      })
+    );
+  }
+
+  formatDate(dateStr: string): string {
+    if (!dateStr) return '—';
+    const d = new Date(dateStr);
+    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
   goBack() {

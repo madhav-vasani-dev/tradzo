@@ -25,6 +25,8 @@ def log_activity(
     isPaper: bool = False,
     metadata: Optional[dict[str, Any]] = None,
 ) -> None:
+    from datetime import datetime
+    import pytz
     payload = {
         "type": type,
         "message": message,
@@ -38,6 +40,7 @@ def log_activity(
         "isPaper": isPaper,
         "metadata": metadata or {},
         "timestamp": firebase_service.server_timestamp(),
+        "createdAt": datetime.now(pytz.timezone("Asia/Kolkata")).isoformat(),
     }
     try:
         firebase_service.add_activity_log(payload)

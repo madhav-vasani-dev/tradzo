@@ -107,9 +107,9 @@
             </span>
           </div>
 
-          <!-- Strategies count placeholder -->
-          <div class="td col-strategies">
-            <span class="strategies-count">—</span>
+          <!-- Strategies count -->
+          <div class="td col-strategies" [title]="(user.username || 'User') + ' has ' + (user.deployedStrategyIds?.length || 0) + ' strategies deployed'">
+            <span class="strategies-count">{{ user.deployedStrategyIds?.length || 0 }}</span>
           </div>
 
           <!-- Actions -->

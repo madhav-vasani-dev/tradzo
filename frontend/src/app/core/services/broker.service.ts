@@ -9,6 +9,7 @@ import {
 import { Observable } from 'rxjs';
 import { BrokerAccount, BrokerName } from '../../models/broker-account.model';
 import { BACKEND_BASE_URL } from '../config';
+import { Auth } from '@angular/fire/auth';
 
 const API_BASE = BACKEND_BASE_URL;
 
@@ -16,6 +17,7 @@ const API_BASE = BACKEND_BASE_URL;
 export class BrokerService {
   private firestore = inject(Firestore);
   private injector = inject(Injector);
+  private auth = inject(Auth);
 
   // ── Firestore reads ───────────────────────────────────────────────────────
 
@@ -65,9 +67,13 @@ export class BrokerService {
     userId: string,
     creds: Record<string, string>
   ): Promise<{ auth_url?: string; status?: string }> {
+    const token = await this.auth.currentUser?.getIdToken();
     const response = await fetch(`${API_BASE}/broker/${broker}/connect`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({ userId, ...creds }),
     });
     if (!response.ok) {
@@ -88,8 +94,12 @@ export class BrokerService {
    *  - Jainam → re-logs in synchronously and returns `{ status: 'connected' }`.
    */
   async reconnectBroker(accountId: string): Promise<{ auth_url?: string; status?: string }> {
+    const token = await this.auth.currentUser?.getIdToken();
     const response = await fetch(`${API_BASE}/broker/reconnect/${accountId}`, {
       method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
     });
     if (!response.ok) {
       let detail = 'Could not reconnect. Make sure the backend is running.';
@@ -108,7 +118,13 @@ export class BrokerService {
    * without re-entering them. The Firestore listener updates the UI in realtime.
    */
   async disconnectBroker(brokerAccountId: string): Promise<void> {
-    const resp = await fetch(`${API_BASE}/broker/disconnect/${brokerAccountId}`, { method: 'POST' });
+    const token = await this.auth.currentUser?.getIdToken();
+    const resp = await fetch(`${API_BASE}/broker/disconnect/${brokerAccountId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
     if (!resp.ok) throw new Error('Failed to disconnect the account.');
   }
 
@@ -118,7 +134,13 @@ export class BrokerService {
    * connect again.
    */
   async removeBroker(brokerAccountId: string): Promise<void> {
-    const resp = await fetch(`${API_BASE}/broker/remove/${brokerAccountId}`, { method: 'POST' });
+    const token = await this.auth.currentUser?.getIdToken();
+    const resp = await fetch(`${API_BASE}/broker/remove/${brokerAccountId}`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`
+      }
+    });
     if (!resp.ok) throw new Error('Failed to remove the account.');
   }
 }

@@ -78,3 +78,78 @@ async def place_order(token: str, order: dict) -> dict:
         logger.error("Jainam order failed: %s %s", resp.status_code, desc)
         raise RuntimeError(f"order_failed: {desc}")
     return body
+
+
+async def get_option_instrument(
+    token: str,
+    symbol: str,
+    expiry_date_str: str,
+    option_type: str,
+    strike_price: float,
+) -> dict:
+    """Resolve an option contract strike and expiry to Jainam exchangeInstrumentID."""
+    from datetime import datetime
+    dt = datetime.strptime(expiry_date_str, "%Y-%m-%d")
+    formatted_expiry = dt.strftime("%d%b%Y")  # e.g. 21Jul2026
+    
+    headers = {"Content-Type": "application/json", "authorization": token}
+    params = {
+        "exchangeSegment": 2,  # NSEFO
+        "series": "OPTIDX",
+        "symbol": symbol,
+        "expiryDate": formatted_expiry,
+        "optionType": option_type,
+        "strikePrice": int(strike_price),
+    }
+    
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_base()}/apimarketdata/instruments/instrument/optionSymbol",
+            params=params,
+            headers=headers,
+        )
+        
+    body = resp.json() if resp.content else {}
+    if resp.status_code != 200 or body.get("type") != "success":
+        desc = body.get("description") or resp.text
+        logger.error("Jainam optionSymbol resolution failed: %s %s", resp.status_code, desc)
+        raise RuntimeError(f"optionsymbol_resolution_failed: {desc}")
+        
+    result = body.get("result", {})
+    instrument_id = result.get("exchangeInstrumentID")
+    if not instrument_id:
+        raise RuntimeError("optionsymbol_resolution_failed: no exchangeInstrumentID in result")
+    return result
+
+
+async def get_order_history(token: str, app_order_id: str) -> list[dict]:
+    """Get history of an order by appOrderID."""
+    headers = {"Content-Type": "application/json", "authorization": token}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_base()}/interactive/orders?appOrderID={app_order_id}",
+            headers=headers,
+        )
+    body = resp.json() if resp.content else {}
+    if resp.status_code != 200 or body.get("type") != "success":
+        desc = body.get("description") or resp.text
+        logger.error("Jainam order details failed: %s %s", resp.status_code, desc)
+        raise RuntimeError(f"order_details_failed: {desc}")
+    return body.get("result", [])
+
+
+async def cancel_order(token: str, app_order_id: str) -> dict:
+    """Cancel an active order by appOrderID."""
+    headers = {"Content-Type": "application/json", "authorization": token}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.delete(
+            f"{_base()}/interactive/orders?appOrderID={app_order_id}",
+            headers=headers,
+        )
+    body = resp.json() if resp.content else {}
+    if resp.status_code != 200 or body.get("type") != "success":
+        desc = body.get("description") or resp.text
+        logger.error("Jainam order cancellation failed: %s %s", resp.status_code, desc)
+        raise RuntimeError(f"order_cancellation_failed: {desc}")
+    return body
+

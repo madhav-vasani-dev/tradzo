@@ -1,4 +1,26 @@
-<div class="dashboard-page">
+<div class="dashboard-page animate-fade-in">
+  <!-- Page Header -->
+  <div class="dashboard-header no-print">
+    <div>
+      <h1 class="page-title">Dashboard</h1>
+      <p class="page-subtitle" *ngIf="currentUser">Welcome back, {{ currentUser.username }}</p>
+    </div>
+    
+    <!-- User Trading Mode Toggle -->
+    <div class="trading-mode-toggle">
+      <span class="mode-label">
+        <i class="pi pi-bolt" [class.live]="!userPaperTrading" [class.simulation]="userPaperTrading"></i> Mode
+      </span>
+      <div class="toggle-switch-wrapper">
+        <button class="toggle-mode-btn" [class.live-active]="!userPaperTrading" (click)="toggleTradingMode(false)">
+          Live Orders
+        </button>
+        <button class="toggle-mode-btn" [class.simulation-active]="userPaperTrading" (click)="toggleTradingMode(true)">
+          Simulation
+        </button>
+      </div>
+    </div>
+  </div>
   <!-- Loading State -->
   @if (isLoading) {
     <div class="loading-container">

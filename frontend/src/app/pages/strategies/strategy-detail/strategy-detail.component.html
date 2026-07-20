@@ -205,7 +205,20 @@
   </div>
 
   <!-- ── Yearly Returns Table ───────────────────────────────────────────── -->
-  <div class="yearly-section glass-card">
+  <!-- Tabs Navigation -->
+  <div class="tabs-navigation no-print">
+    <button class="tab-btn" [class.active]="activeTab === 'performance'" (click)="activeTab = 'performance'">
+      Performance Data
+      <span class="active-bar" *ngIf="activeTab === 'performance'"></span>
+    </button>
+    <button class="tab-btn" [class.active]="activeTab === 'trades'" (click)="activeTab = 'trades'; loadSimulatedTrades()">
+      Simulated Trades
+      <span class="active-bar" *ngIf="activeTab === 'trades'"></span>
+    </button>
+  </div>
+
+  <!-- Performance Tab -->
+  <div class="yearly-section glass-card" *ngIf="activeTab === 'performance'">
     <div class="section-title">Yearly Performance</div>
     <table class="yearly-table">
       <thead>
@@ -234,6 +247,59 @@
         }
       </tbody>
     </table>
+  </div>
+
+  <!-- Trades Tab -->
+  <div class="yearly-section glass-card" *ngIf="activeTab === 'trades'">
+    <div class="section-title tab-title-row">
+      <span>Simulated Trade History</span>
+      <span class="badge">{{ simulatedTrades.length }} Trades</span>
+    </div>
+    
+    @if (isLoadingTrades) {
+      <div class="trades-loading">
+        <div class="loading-spinner"></div>
+        <p>Fetching simulated trade logs...</p>
+      </div>
+    } @else if (simulatedTrades.length === 0) {
+      <div class="trades-empty">
+        <i class="pi pi-inbox empty-icon"></i>
+        <p>No simulated trades recorded for this strategy yet.</p>
+      </div>
+    } @else {
+      <div class="trades-table-container">
+        <table class="sim-trades-table">
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Symbol</th>
+              <th>Type</th>
+              <th>Strike</th>
+              <th>Avg Entry</th>
+              <th>Avg Exit</th>
+              <th class="text-right">PnL</th>
+            </tr>
+          </thead>
+          <tbody>
+            @for (trade of simulatedTrades; track trade.id) {
+              <tr>
+                <td>{{ formatDate(trade.date) }}</td>
+                <td class="symbol-cell">{{ trade.symbol }}</td>
+                <td>
+                  <span class="option-type-badge" [class]="trade.optionType">{{ trade.optionType }}</span>
+                </td>
+                <td>{{ trade.strike }}</td>
+                <td>{{ formatINR(trade.entryPrice) }}</td>
+                <td>{{ trade.exitPrice ? formatINR(trade.exitPrice) : '—' }}</td>
+                <td class="pnl-cell text-right" [class.positive]="(trade.pnl || 0) > 0" [class.negative]="(trade.pnl || 0) < 0">
+                  {{ (trade.pnl || 0) > 0 ? '+' : '' }}{{ trade.pnl !== null ? formatINR(trade.pnl) : '—' }}
+                </td>
+              </tr>
+            }
+          </tbody>
+        </table>
+      </div>
+    }
   </div>
 
   <!-- Deploy Dialog -->

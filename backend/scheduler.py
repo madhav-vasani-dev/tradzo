@@ -68,6 +68,14 @@ def start_scheduler() -> AsyncIOScheduler | None:
         replace_existing=True,
     )
 
+    # ── 12:01 to 15:28 — Active Order Polling (every 1 minute) ────────────
+    _scheduler.add_job(
+        _run_async(execution_service.sync_order_statuses),
+        CronTrigger(day_of_week=_WEEKDAYS, hour="12-15", minute="*", timezone=IST),
+        id="sync_order_statuses",
+        replace_existing=True,
+    )
+
     # ── 15:29 — Exit: cancel SL orders, square off remaining positions ─────
     _scheduler.add_job(
         _run_async(execution_service.execute_exit),

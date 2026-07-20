@@ -6,6 +6,8 @@ import { Auth, user } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { StrategyService } from '../../core/services/strategy.service';
 import { UserStrategy, Position } from '../../models/strategy.model';
+import { AuthService } from '../../core/services/auth.service';
+import { TradzoUser } from '../../models/user.model';
 
 @Component({
   selector: 'app-dashboard',
@@ -17,6 +19,7 @@ import { UserStrategy, Position } from '../../models/strategy.model';
 export class DashboardComponent implements OnInit, OnDestroy {
   private auth = inject(Auth);
   private strategyService = inject(StrategyService);
+  authService = inject(AuthService);
 
   deployedStrategies: UserStrategy[] = [];
   positions: Position[] = [];
@@ -32,6 +35,27 @@ export class DashboardComponent implements OnInit, OnDestroy {
   confirmMsg = '';
   confirmBtnText = 'Confirm';
   private actionToExecute: (() => Promise<void>) | null = null;
+
+  get currentUser(): TradzoUser | null {
+    return this.authService.currentUserValue;
+  }
+
+  get userPaperTrading(): boolean {
+    return this.currentUser?.paperTrading !== false;
+  }
+
+  async toggleTradingMode(paper: boolean) {
+    if (!this.currentUser) return;
+    this.confirmTitle = paper ? 'Switch to Simulation Mode' : 'Switch to Live Orders Mode';
+    this.confirmMsg = paper 
+      ? 'Are you sure you want to switch your account to Simulation Mode? All future entry orders placed by the system on your deployments will be paper trades.'
+      : 'Are you sure you want to switch your account to Live Orders Mode? All future entry orders placed by the system on your deployments will execute real trades on your connected broker account.';
+    this.confirmBtnText = paper ? 'Switch to Simulation' : 'Switch to Live';
+    this.actionToExecute = async () => {
+      await this.authService.toggleUserTradingMode(this.currentUser!.uid, !paper);
+    };
+    this.showConfirm = true;
+  }
 
   private subscriptions = new Subscription();
 

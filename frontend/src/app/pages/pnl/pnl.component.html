@@ -1,0 +1,188 @@
+<div class="pnl-page-container">
+  
+  <!-- ── Page Header ── -->
+  <div class="page-header no-print">
+    <div>
+      <div class="pnl-badge"><i class="pi pi-percentage"></i> Reports</div>
+      <h1 class="page-title">P&L Report</h1>
+      <p class="page-subtitle">Track your trading performance, analyze statistics, and export statements</p>
+    </div>
+    <div class="header-actions">
+      <button class="export-btn csv" (click)="exportCSV()" [disabled]="positions.length === 0">
+        <i class="pi pi-file-excel"></i> Export CSV
+      </button>
+      <button class="export-btn pdf" (click)="exportPDF()" [disabled]="positions.length === 0">
+        <i class="pi pi-print"></i> Export PDF
+      </button>
+    </div>
+  </div>
+
+  <!-- ── Print-Only Header (for PDF Export) ── -->
+  <div class="print-only-header print-only">
+    <div class="brand">
+      <img src="Images/logo.jpeg" alt="Tradzo" class="print-logo" />
+      <h2>Tradzo Trading Statement</h2>
+    </div>
+    <div class="print-meta">
+      <p><strong>Report Period:</strong> {{ formatDate(startDate) }} to {{ formatDate(endDate) }}</p>
+      <p><strong>Generated At:</strong> {{ formatDate(endDate) }} IST</p>
+    </div>
+  </div>
+
+  <!-- ── Filters Card ── -->
+  <div class="filters-card glass-card no-print">
+    <div class="filters-grid">
+      <!-- Start Date -->
+      <div class="filter-group">
+        <label for="start-date"><i class="pi pi-calendar"></i> Start Date</label>
+        <input type="date" id="start-date" class="custom-input" [(ngModel)]="startDate" />
+      </div>
+
+      <!-- End Date -->
+      <div class="filter-group">
+        <label for="end-date"><i class="pi pi-calendar"></i> End Date</label>
+        <input type="date" id="end-date" class="custom-input" [(ngModel)]="endDate" />
+      </div>
+
+      <!-- Strategy filter -->
+      <div class="filter-group">
+        <label for="strategy-select"><i class="pi pi-chart-bar"></i> Strategy</label>
+        <select id="strategy-select" class="custom-input" [(ngModel)]="selectedStrategy">
+          <option value="">All Strategies</option>
+          @for (strat of deployedStrategies; track strat.id) {
+            <option [value]="strat.strategyId">{{ strat.strategyName }}</option>
+          }
+        </select>
+      </div>
+
+      <!-- User filter (Admin only) -->
+      <div class="filter-group" *ngIf="isAdmin">
+        <label for="user-select"><i class="pi pi-user"></i> User</label>
+        <select id="user-select" class="custom-input" [(ngModel)]="selectedUser">
+          @for (u of allUsers; track u.uid) {
+            <option [value]="u.uid">{{ u.username || u.email }}</option>
+          }
+        </select>
+      </div>
+
+      <!-- Actions -->
+      <div class="filter-group action-group">
+        <button class="filter-submit-btn" (click)="loadReport()" [disabled]="isLoading">
+          @if (isLoading) {
+            <span class="spinner-xs"></span> Fetching...
+          } @else {
+            <i class="pi pi-search"></i> Apply Filters
+          }
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Stats Overview ── -->
+  @if (!isLoading && positions.length > 0) {
+    <div class="stats-overview">
+      <div class="stat-card" [class.positive]="netPnl > 0" [class.negative]="netPnl < 0">
+        <div class="stat-icon pnl"><i class="pi pi-dollar"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Net Realised P&L</span>
+          <span class="stat-value" [class]="getPnlClass(netPnl)">
+            {{ netPnl > 0 ? '+' : '' }}{{ formatINR(netPnl) }}
+          </span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon winrate"><i class="pi pi-chart-pie"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Winning Ratio</span>
+          <span class="stat-value">{{ winRate }}%</span>
+          <span class="stat-sub">{{ winningTrades }} Wins / {{ losingTrades }} Losses</span>
+        </div>
+      </div>
+
+      <div class="stat-card">
+        <div class="stat-icon trades"><i class="pi pi-calculator"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Total Trades</span>
+          <span class="stat-value">{{ totalTrades }}</span>
+          <span class="stat-sub">Option legs squared off</span>
+        </div>
+      </div>
+
+      <div class="stat-card positive">
+        <div class="stat-icon profit"><i class="pi pi-arrow-up-right"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Gross Profit</span>
+          <span class="stat-value text-green">{{ formatINR(totalProfit) }}</span>
+        </div>
+      </div>
+
+      <div class="stat-card negative">
+        <div class="stat-icon loss"><i class="pi pi-arrow-down-left"></i></div>
+        <div class="stat-info">
+          <span class="stat-label">Gross Loss</span>
+          <span class="stat-value text-red">{{ formatINR(totalLoss) }}</span>
+        </div>
+      </div>
+    </div>
+  }
+
+  <!-- ── Report Loading / Empty states ── -->
+  @if (isLoading) {
+    <div class="loading-container glass-card">
+      <div class="spinner"></div>
+      <p>Aggregating P&L figures and parsing order history...</p>
+    </div>
+  } @else if (errorMsg) {
+    <div class="error-container glass-card">
+      <i class="pi pi-exclamation-triangle"></i>
+      <p>{{ errorMsg }}</p>
+    </div>
+  } @else if (positions.length === 0) {
+    <div class="empty-container glass-card">
+      <i class="pi pi-inbox empty-icon"></i>
+      <h3>No trades recorded</h3>
+      <p>No option trade positions found matching the selected dates and filters.</p>
+    </div>
+  } @else {
+    <!-- ── Detailed Trades Table ── -->
+    <div class="report-table-card glass-card">
+      <div class="table-header">
+        <div class="th col-date">Date</div>
+        <div class="th col-symbol">Symbol</div>
+        <div class="th col-broker">Broker</div>
+        <div class="th col-type">Type</div>
+        <div class="th col-strike">Strike</div>
+        <div class="th col-price">Avg Entry</div>
+        <div class="th col-price">Avg Exit</div>
+        <div class="th col-qty">Qty</div>
+        <div class="th col-pnl text-right">PnL</div>
+      </div>
+
+      <div class="table-body">
+        @for (pos of positions; track pos.id) {
+          <div class="table-row">
+            <div class="td col-date">{{ formatDate(pos.date) }}</div>
+            <div class="td col-symbol">
+              <span class="sym-text">{{ pos.symbol }}</span>
+              <span class="paper-badge" *ngIf="pos.isPaper">Paper</span>
+            </div>
+            <div class="td col-broker">
+              <span class="broker-badge" [class]="pos.broker">{{ pos.broker | uppercase }}</span>
+            </div>
+            <div class="td col-type">
+              <span class="option-type-badge" [class]="pos.optionType">{{ pos.optionType }}</span>
+            </div>
+            <div class="td col-strike">{{ pos.strike }}</div>
+            <div class="td col-price">{{ formatINR(pos.entryPrice) }}</div>
+            <div class="td col-price">{{ pos.exitPrice ? formatINR(pos.exitPrice) : '—' }}</div>
+            <div class="td col-qty">{{ pos.quantity }}</div>
+            <div class="td col-pnl text-right font-semibold" [class]="getPnlClass(pos.pnl)">
+              {{ pos.pnl > 0 ? '+' : '' }}{{ pos.pnl !== null ? formatINR(pos.pnl) : '—' }}
+            </div>
+          </div>
+        }
+      </div>
+    </div>
+  }
+</div>

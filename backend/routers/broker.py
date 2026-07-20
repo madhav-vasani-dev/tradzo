@@ -15,7 +15,7 @@ import logging
 from datetime import datetime
 
 import pytz
-from fastapi import APIRouter, HTTPException, Request
+from fastapi import APIRouter, HTTPException, Request, Depends
 from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
@@ -24,6 +24,7 @@ from services import firebase_service, jainam_service, upstox_service
 from utils import credentials_store
 from utils import logger as activity
 from utils import token_store
+from utils.auth import get_current_user
 
 log = logging.getLogger("tradzo.broker")
 router = APIRouter(prefix="/broker", tags=["broker"])
@@ -52,11 +53,13 @@ class UpstoxConnectRequest(BaseModel):
 
 
 @router.post("/upstox/connect")
-def upstox_connect(req: UpstoxConnectRequest):
+def upstox_connect(req: UpstoxConnectRequest, current_user: dict = Depends(get_current_user)):
     """Start the Upstox OAuth flow with the user's own app credentials.
 
     Returns the authorization URL the frontend should redirect the browser to.
     """
+    if req.userId != current_user["uid"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Cannot connect broker account for another user.")
     try:
         auth_url = upstox_service.build_auth_url(req.userId, req.apiKey, req.apiSecret)
     except RuntimeError as exc:
@@ -266,13 +269,15 @@ async def jainam_callback():
 
 
 @router.post("/jainam/connect")
-async def jainam_connect(req: JainamConnectRequest):
+async def jainam_connect(req: JainamConnectRequest, current_user: dict = Depends(get_current_user)):
     """Connect a Jainam XTS account by logging in with the user's XTS keys.
 
     Synchronous: logs in, stores the session token + credentials, writes the
     Firestore account doc, and returns success — no browser redirect.
     """
     _require_firestore()
+    if req.userId != current_user["uid"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Cannot connect broker account for another user.")
     creds = {
         "interactiveApiKey": req.interactiveApiKey,
         "interactiveApiSecret": req.interactiveApiSecret,
@@ -285,7 +290,7 @@ async def jainam_connect(req: JainamConnectRequest):
 # ── Reconnect (reuses stored credentials — no re-entering keys) ──────────────
 
 @router.post("/reconnect/{account_id}")
-async def reconnect(account_id: str):
+async def reconnect(account_id: str, current_user: dict = Depends(get_current_user)):
     """Reconnect an existing broker account using the API credentials already
     stored for it — the user never re-enters their keys.
 
@@ -297,6 +302,17 @@ async def reconnect(account_id: str):
     account = firebase_service.get_broker_account(account_id)
     if not account:
         raise HTTPException(status_code=404, detail="Broker account not found.")
+
+    is_owner = account.get("userId") == current_user["uid"]
+    is_admin = False
+    db = firebase_service.get_db()
+    admin_doc = db.collection("users").document(current_user["uid"]).get()
+    if admin_doc.exists:
+        admin_data = admin_doc.to_dict()
+        is_admin = bool(admin_data.get("isAdmin") or admin_data.get("isSuperUser"))
+        
+    if not is_owner and not is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this broker account.")
 
     creds = credentials_store.get_credentials(account_id)
     if not creds:
@@ -326,19 +342,32 @@ async def reconnect(account_id: str):
 # ── Disconnect (both brokers) ────────────────────────────────────────────────
 
 @router.post("/disconnect/{account_id}")
-def disconnect(account_id: str):
+def disconnect(account_id: str, current_user: dict = Depends(get_current_user)):
     """Revoke the active session token and mark the account disconnected.
 
     The user's API key/secret are intentionally KEPT (in the encrypted
     credentials store) so they can reconnect later without re-entering them.
     Use /broker/remove/{account_id} to fully forget an account, keys included.
     """
+    _require_firestore()
+    account = firebase_service.get_broker_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Broker account not found.")
+
+    is_owner = account.get("userId") == current_user["uid"]
+    is_admin = False
+    db = firebase_service.get_db()
+    admin_doc = db.collection("users").document(current_user["uid"]).get()
+    if admin_doc.exists:
+        admin_data = admin_doc.to_dict()
+        is_admin = bool(admin_data.get("isAdmin") or admin_data.get("isSuperUser"))
+        
+    if not is_owner and not is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this broker account.")
+
     token_store.delete_tokens(account_id)
 
-    _require_firestore()
-    account = None
     try:
-        account = firebase_service.get_broker_account(account_id)
         firebase_service.update_broker_account(
             account_id,
             {
@@ -355,25 +384,38 @@ def disconnect(account_id: str):
         type="broker_disconnected",
         message="Broker account disconnected.",
         severity="info",
-        userId=(account or {}).get("userId"),
+        userId=account.get("userId"),
         metadata={"accountId": account_id},
     )
     return {"status": "disconnected", "accountId": account_id}
 
 
 @router.post("/remove/{account_id}")
-def remove(account_id: str):
+def remove(account_id: str, current_user: dict = Depends(get_current_user)):
     """Fully forget an account: delete the token, the stored API credentials,
     and the Firestore document. After this the user must re-enter keys to
     connect again.
     """
+    _require_firestore()
+    account = firebase_service.get_broker_account(account_id)
+    if not account:
+        raise HTTPException(status_code=404, detail="Broker account not found.")
+
+    is_owner = account.get("userId") == current_user["uid"]
+    is_admin = False
+    db = firebase_service.get_db()
+    admin_doc = db.collection("users").document(current_user["uid"]).get()
+    if admin_doc.exists:
+        admin_data = admin_doc.to_dict()
+        is_admin = bool(admin_data.get("isAdmin") or admin_data.get("isSuperUser"))
+        
+    if not is_owner and not is_admin:
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this broker account.")
+
     token_store.delete_tokens(account_id)
     credentials_store.delete_credentials(account_id)
 
-    _require_firestore()
-    account = None
     try:
-        account = firebase_service.get_broker_account(account_id)
         firebase_service.delete_broker_account(account_id)
     except Exception as exc:  # noqa: BLE001
         log.error("Failed to remove broker account: %s", exc)
@@ -383,7 +425,7 @@ def remove(account_id: str):
         type="broker_disconnected",
         message="Broker account removed (credentials cleared).",
         severity="info",
-        userId=(account or {}).get("userId"),
+        userId=account.get("userId"),
         metadata={"accountId": account_id},
     )
     return {"status": "removed", "accountId": account_id}

@@ -13,12 +13,14 @@ import {
 } from '@angular/fire/firestore';
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
+import { Auth } from '@angular/fire/auth';
 import { TradzoUser } from '../../models/user.model';
 
 @Injectable({ providedIn: 'root' })
 export class AdminService {
   private firestore = inject(Firestore);
   private injector = inject(Injector);
+  private auth = inject(Auth);
 
   // ── Users ────────────────────────────────────────────────────────────────
 
@@ -92,7 +94,7 @@ export class AdminService {
       return (collectionData(ref, { idField: 'id' }) as Observable<any[]>).pipe(
         map(logs => [...logs]
           .filter(l => l.date === today)
-          .sort((a, b) => this.createdMillisForLog(b) - this.createdMillisForLog(a))
+          .sort((a, b) => this.createdMillisForLog(a) - this.createdMillisForLog(b))
         )
       );
     });
@@ -107,12 +109,15 @@ export class AdminService {
     return isNaN(parsed) ? 0 : parsed;
   }
 
-  /** Toggle paper trading mode (superuser only, sends request to FastAPI backend) */
   async toggleTradingMode(paper: boolean, userId: string, userName: string): Promise<void> {
     const { BACKEND_BASE_URL } = await import('../config');
+    const token = await this.auth.currentUser?.getIdToken();
     const response = await fetch(`${BACKEND_BASE_URL}/execution/trading-mode`, {
       method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${token}`
+      },
       body: JSON.stringify({
         paperTrading: paper,
         userId: userId,

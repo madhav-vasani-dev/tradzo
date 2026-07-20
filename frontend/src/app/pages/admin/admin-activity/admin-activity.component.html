@@ -82,6 +82,7 @@
               <div class="tc-header">
                 <div class="tc-event">
                   {{ formatLogType(log.type) }}
+                  <span class="user-badge" *ngIf="log.userName"><i class="pi pi-user"></i> {{ log.userName }}</span>
                   <span class="paper-tag" *ngIf="log.isPaper">[PAPER]</span>
                 </div>
                 <div class="tc-time">
