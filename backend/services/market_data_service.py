@@ -11,7 +11,7 @@ against the isMarketDataSource broker account).
 No WebSocket is used in Phase 1. Price polling for P&L display is REST-based.
 """
 import logging
-from datetime import date, timedelta
+from datetime import datetime, date, timedelta
 
 import httpx
 import pytz
@@ -48,21 +48,48 @@ def get_atm_strike(spot: float, step: int = 50) -> int:
 
 # ── Market data token ─────────────────────────────────────────────────────────
 
+def _to_dt(value) -> datetime:
+    """Coerce a Firestore timestamp / ISO string / datetime to an aware datetime."""
+    if isinstance(value, datetime):
+        return value if value.tzinfo else IST.localize(value)
+    if hasattr(value, "timestamp"):
+        return datetime.fromtimestamp(value.timestamp(), IST)
+    if isinstance(value, str):
+        return datetime.fromisoformat(value)
+    return datetime.now(IST)
+
+
 def _get_market_data_token() -> str | None:
     """Return the access token for the account flagged as market data source.
 
-    Returns None if no such account is connected or token is missing.
+    Falls back to any connected Upstox account with a valid, non-expired decrypted token.
     """
+    # 1. Try the primary market data account first
     account = firebase_service.get_market_data_account()
-    if not account:
-        log.warning("No market data source account configured. "
-                    "Set isMarketDataSource=true on an admin broker account.")
-        return None
-    tokens = token_store.get_tokens(account["id"])
-    if not tokens or not tokens.get("access_token"):
-        log.warning("Market data account %s has no valid access token.", account["id"])
-        return None
-    return tokens["access_token"]
+    if account:
+        tokens = token_store.get_tokens(account["id"])
+        if tokens and tokens.get("access_token"):
+            expiry_raw = account.get("expiresAt")
+            if expiry_raw is None or _to_dt(expiry_raw) > datetime.now(IST):
+                return tokens["access_token"]
+            else:
+                log.warning("Market data account %s has expired token.", account["id"])
+        else:
+            log.warning("Market data account %s token is corrupt or missing.", account["id"])
+
+    # 2. Fall back to any other connected Upstox account with a valid token
+    log.info("Searching other connected Upstox accounts for active market data token...")
+    for acc in firebase_service.list_broker_accounts():
+        if acc.get("broker") == "upstox" and acc.get("isConnected"):
+            tokens = token_store.get_tokens(acc["id"])
+            if tokens and tokens.get("access_token"):
+                expiry_raw = acc.get("expiresAt")
+                if expiry_raw is None or _to_dt(expiry_raw) > datetime.now(IST):
+                    log.info("Using Upstox account %s as market data source fallback.", acc["id"])
+                    return tokens["access_token"]
+
+    log.error("No connected Upstox account has a valid, decrypted market data token.")
+    return None
 
 
 # ── Upstox REST helpers ───────────────────────────────────────────────────────

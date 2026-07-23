@@ -294,3 +294,33 @@ def get_strategy_config(strategy_id: str) -> Optional[dict]:
     snap = get_db().collection("strategies").document(strategy_id).get()
     return {**snap.to_dict(), "id": snap.id} if snap.exists else None
 
+
+def disable_user_strategies_for_account(account_id: str) -> None:
+    """Disable all userStrategy deployments linked to the given broker account."""
+    db = get_db()
+    deployments = (
+        db.collection("userStrategies")
+        .where(filter=FieldFilter("brokerAccountId", "==", account_id))
+        .get()
+    )
+    for d in deployments:
+        db.collection("userStrategies").document(d.id).update({
+            "status": "disabled",
+            "pausedByAdmin": True
+        })
+
+
+def mark_broker_account_disconnected(account_id: str) -> None:
+    """Mark a broker account disconnected in Firestore and disable its deployments."""
+    try:
+        db = get_db()
+        db.collection("brokerAccounts").document(account_id).update({
+            "isConnected": False,
+            "needsReauth": True,
+            "lastRefreshedAt": firestore.SERVER_TIMESTAMP,
+        })
+        disable_user_strategies_for_account(account_id)
+        logger.warning("Broker account %s marked disconnected and its strategies disabled.", account_id)
+    except Exception as exc:
+        logger.error("Failed to mark broker account %s disconnected: %s", account_id, exc)
+

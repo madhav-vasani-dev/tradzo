@@ -85,15 +85,23 @@ def _is_token_valid(account: dict | None) -> bool:
         return False
     tokens = token_store.get_tokens(account["id"])
     if not tokens:
+        log.warning("Token decryption failed for account %s. Marking disconnected.", account["id"])
+        firebase_service.mark_broker_account_disconnected(account["id"])
         return False
     token_key = "interactive_token" if tokens.get("broker") == "jainam" else "access_token"
     if not tokens.get(token_key):
+        log.warning("Token key missing for account %s. Marking disconnected.", account["id"])
+        firebase_service.mark_broker_account_disconnected(account["id"])
         return False
     expiry_raw = account.get("expiresAt")
     if expiry_raw is None:
         return True
     expiry = _to_dt(expiry_raw)
-    return expiry > _now_ist()
+    if expiry <= _now_ist():
+        log.warning("Token expired for account %s. Marking disconnected.", account["id"])
+        firebase_service.mark_broker_account_disconnected(account["id"])
+        return False
+    return True
 
 
 def _accounts_by_id() -> dict[str, dict]:

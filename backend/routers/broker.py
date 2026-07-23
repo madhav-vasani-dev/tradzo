@@ -367,7 +367,6 @@ def disconnect(account_id: str, current_user: dict = Depends(get_current_user)):
 
     token_store.delete_tokens(account_id)
 
-    try:
         firebase_service.update_broker_account(
             account_id,
             {
@@ -376,9 +375,7 @@ def disconnect(account_id: str, current_user: dict = Depends(get_current_user)):
                 "lastRefreshedAt": firebase_service.server_timestamp(),
             },
         )
-    except Exception as exc:  # noqa: BLE001
-        log.error("Failed to update broker account on disconnect: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to disconnect account.")
+        firebase_service.disable_user_strategies_for_account(account_id)
 
     activity.log_activity(
         type="broker_disconnected",
@@ -417,9 +414,7 @@ def remove(account_id: str, current_user: dict = Depends(get_current_user)):
 
     try:
         firebase_service.delete_broker_account(account_id)
-    except Exception as exc:  # noqa: BLE001
-        log.error("Failed to remove broker account: %s", exc)
-        raise HTTPException(status_code=500, detail="Failed to remove account.")
+        firebase_service.disable_user_strategies_for_account(account_id)
 
     activity.log_activity(
         type="broker_disconnected",
