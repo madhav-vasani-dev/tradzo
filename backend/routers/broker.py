@@ -367,15 +367,15 @@ def disconnect(account_id: str, current_user: dict = Depends(get_current_user)):
 
     token_store.delete_tokens(account_id)
 
-        firebase_service.update_broker_account(
-            account_id,
-            {
-                "isConnected": False,
-                "needsReauth": False,
-                "lastRefreshedAt": firebase_service.server_timestamp(),
-            },
-        )
-        firebase_service.disable_user_strategies_for_account(account_id)
+    firebase_service.update_broker_account(
+        account_id,
+        {
+            "isConnected": False,
+            "needsReauth": False,
+            "lastRefreshedAt": firebase_service.server_timestamp(),
+        },
+    )
+    firebase_service.disable_user_strategies_for_account(account_id)
 
     activity.log_activity(
         type="broker_disconnected",
@@ -412,9 +412,8 @@ def remove(account_id: str, current_user: dict = Depends(get_current_user)):
     token_store.delete_tokens(account_id)
     credentials_store.delete_credentials(account_id)
 
-    try:
-        firebase_service.delete_broker_account(account_id)
-        firebase_service.disable_user_strategies_for_account(account_id)
+    firebase_service.delete_broker_account(account_id)
+    firebase_service.disable_user_strategies_for_account(account_id)
 
     activity.log_activity(
         type="broker_disconnected",
