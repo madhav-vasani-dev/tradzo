@@ -17,6 +17,7 @@ import {
 import { Observable } from 'rxjs';
 import { map } from 'rxjs/operators';
 import { Strategy, UserStrategy, Position } from '../../models/strategy.model';
+import { BrokerName } from '../../models/broker-account.model';
 import { BACKEND_BASE_URL } from '../config';
 import { Auth } from '@angular/fire/auth';
 
@@ -63,7 +64,7 @@ export class StrategyService {
     strategyCode: string,
     strategyName: string,
     brokerAccountId: string,
-    brokerName: 'upstox' | 'jainam',
+    brokerName: BrokerName,
     deployedAmount: number,
     multiplier: number,
   ): Promise<void> {
@@ -244,12 +245,12 @@ export class StrategyService {
     return response.json();
   }
 
-  /** Stream simulated (system) positions for a strategy */
+  /** Stream simulated (system/paper) positions for a strategy */
   getStrategySimulatedTrades(strategyId: string): Observable<any[]> {
     const ref = query(
       collection(this.firestore, 'positions'),
-      where('userId', '==', 'system'),
-      where('strategyId', '==', strategyId)
+      where('strategyId', '==', strategyId),
+      where('isPaper', '==', true)
     );
     return collectionData(ref, { idField: 'id' }) as Observable<any[]>;
   }

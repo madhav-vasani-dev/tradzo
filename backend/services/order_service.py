@@ -115,6 +115,7 @@ async def place_sell_market(
     paper: bool,
     ltp: float = 0.0,
     broker: str = "upstox",
+    delta_creds: dict | None = None,
 ) -> dict:
     """Sell (short) an instrument at market price.
 
@@ -122,9 +123,26 @@ async def place_sell_market(
     """
     if paper:
         oid = _paper_id()
-        log.info("[PAPER] SELL MKT  %-40s qty=%-5s fill=%-8.2f tag=%s → %s",
+        log.info("[PAPER] SELL MKT  %-40s qty=%-5s fill=%-8.4f tag=%s → %s",
                  instrument_key, quantity, ltp, tag, oid)
         return {"order_id": oid, "fill_price": ltp}
+
+    if broker == "delta":
+        from services import delta_service
+        payload = {
+            "product_id": int(instrument_key),
+            "size": quantity,
+            "side": "sell",
+            "order_type": "market_order",
+            "time_in_force": "ioc",
+            "client_order_id": tag[:20],  # Delta limits to 20 chars
+        }
+        result = await delta_service.place_order(
+            delta_creds["api_key"], delta_creds["api_secret"], payload
+        )
+        order_id = str(result.get("id", ""))
+        fill_price = float(result.get("average_fill_price") or ltp)
+        return {"order_id": order_id, "fill_price": fill_price}
 
     if broker == "jainam":
         payload = {
@@ -176,6 +194,7 @@ async def place_sl_market(
     tag: str,
     paper: bool,
     broker: str = "upstox",
+    delta_creds: dict | None = None,
 ) -> dict:
     """Place a BUY SL-M order (stop-loss for a short leg).
 
@@ -186,9 +205,26 @@ async def place_sl_market(
     """
     if paper:
         oid = _paper_id()
-        log.info("[PAPER] BUY SL-M  %-40s qty=%-5s trigger=%-8.2f tag=%s → %s",
+        log.info("[PAPER] BUY SL-M  %-40s qty=%-5s trigger=%-8.4f tag=%s → %s",
                  instrument_key, quantity, trigger_price, tag, oid)
         return {"order_id": oid}
+
+    if broker == "delta":
+        from services import delta_service
+        # Delta uses a stop-market (limit) order for SL; stop_price triggers the fill.
+        payload = {
+            "product_id": int(instrument_key),
+            "size": quantity,
+            "side": "buy",
+            "order_type": "stop_market_order",
+            "stop_price": str(trigger_price),
+            "time_in_force": "gtc",   # Good Till Cancelled for SL orders
+            "client_order_id": tag[:20],
+        }
+        result = await delta_service.place_order(
+            delta_creds["api_key"], delta_creds["api_secret"], payload
+        )
+        return {"order_id": str(result.get("id", ""))}
 
     if broker == "jainam":
         payload = {
@@ -235,6 +271,7 @@ async def place_buy_market(
     paper: bool,
     ltp: float = 0.0,
     broker: str = "upstox",
+    delta_creds: dict | None = None,
 ) -> dict:
     """Buy (square-off a short leg) at market price.
 
@@ -242,9 +279,26 @@ async def place_buy_market(
     """
     if paper:
         oid = _paper_id()
-        log.info("[PAPER] BUY  MKT  %-40s qty=%-5s fill=%-8.2f tag=%s → %s",
+        log.info("[PAPER] BUY  MKT  %-40s qty=%-5s fill=%-8.4f tag=%s → %s",
                  instrument_key, quantity, ltp, tag, oid)
         return {"order_id": oid, "fill_price": ltp}
+
+    if broker == "delta":
+        from services import delta_service
+        payload = {
+            "product_id": int(instrument_key),
+            "size": quantity,
+            "side": "buy",
+            "order_type": "market_order",
+            "time_in_force": "ioc",
+            "client_order_id": tag[:20],
+        }
+        result = await delta_service.place_order(
+            delta_creds["api_key"], delta_creds["api_secret"], payload
+        )
+        order_id = str(result.get("id", ""))
+        fill_price = float(result.get("average_fill_price") or ltp)
+        return {"order_id": order_id, "fill_price": fill_price}
 
     if broker == "jainam":
         payload = {
@@ -293,6 +347,8 @@ async def cancel_order(
     order_id: str,
     paper: bool,
     broker: str = "upstox",
+    delta_creds: dict | None = None,
+    product_id: str | int | None = None,
 ) -> dict:
     """Cancel an open order (e.g. SL-M before EOD square-off).
 
@@ -300,6 +356,20 @@ async def cancel_order(
     """
     if paper:
         log.info("[PAPER] CANCEL order %s", order_id)
+        return {"status": "cancelled"}
+
+    if broker == "delta":
+        from services import delta_service
+        creds = delta_creds or {}
+        try:
+            await delta_service.cancel_order(
+                creds.get("api_key", ""),
+                creds.get("api_secret", ""),
+                order_id,
+                product_id=product_id,
+            )
+        except Exception as exc:
+            log.warning("Delta cancel order %s failed (non-fatal): %s", order_id, exc)
         return {"status": "cancelled"}
 
     if broker == "jainam":

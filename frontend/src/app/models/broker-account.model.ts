@@ -1,4 +1,4 @@
-export type BrokerName = 'upstox' | 'jainam';
+export type BrokerName = 'upstox' | 'jainam' | 'delta';
 
 export interface BrokerAccount {
   id: string;                     // Firestore doc ID
@@ -105,6 +105,29 @@ export const BROKER_REGISTRY: BrokerMeta[] = [
     helpText:
       'Request XTS API activation from Jainam support for your client ID. They email you the ' +
       'Interactive and Market Data API key/secret pairs — enter them here.',
+    comingSoon: false,
+  },
+  {
+    name: 'delta',
+    label: 'Delta Exchange',
+    description: 'Connect your Delta Exchange account using your own API key and secret. Used for BTC Option Selling strategy (17:01–17:29 IST).',
+    logoUrl: '',
+    authType: 'session',
+    credentialFields: [
+      { key: 'apiKey', label: 'API Key', required: true, hint: 'From Profile → API Management on delta.exchange' },
+      { key: 'apiSecret', label: 'API Secret', secret: true, required: true },
+      { key: 'displayName', label: 'Display Name', required: false, hint: 'Optional label, e.g. "My Delta Account"' },
+    ],
+    setupUrls: [
+      {
+        label: 'Postback URL',
+        path: '/broker/delta/postback',
+        hint: 'Optional: register this as a webhook in your Delta Exchange API settings for order updates.',
+      },
+    ],
+    helpText:
+      'Go to Profile → API Management on delta.exchange (or india.delta.exchange). ' +
+      'Create a key with Read + Trading permissions, then paste the API Key and Secret here.',
     comingSoon: false,
   },
 ];

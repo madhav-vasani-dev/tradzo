@@ -5,13 +5,13 @@ import { DialogModule } from 'primeng/dialog';
 import { Auth } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { Strategy } from '../../../models/strategy.model';
-import { BrokerAccount } from '../../../models/broker-account.model';
+import { BrokerAccount, BrokerName } from '../../../models/broker-account.model';
 import { BrokerService } from '../../../core/services/broker.service';
 
 export interface DeployConfig {
   strategy: Strategy;
   brokerAccountId: string;
-  brokerName: 'upstox' | 'jainam';
+  brokerName: BrokerName;
   brokerDisplayName: string;
   multiplier: number;
   deployedAmount: number;
@@ -53,7 +53,12 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
     if (user) {
       this.sub = this.brokerService.getUserBrokerAccounts(user.uid).subscribe((accounts: BrokerAccount[]) => {
         this.brokerAccounts = accounts.filter((a: BrokerAccount) => a.isConnected);
-
+        if (this.strategy?.broker) {
+          const matching = this.brokerAccounts.find((a: BrokerAccount) => a.broker === this.strategy.broker);
+          if (matching) {
+            this.selectedBroker = matching;
+          }
+        }
         this.loadingBrokers = false;
       });
     } else {

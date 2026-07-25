@@ -124,8 +124,15 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
 
     this.equityChartData = {
       labels: p.equityCurve.map(e => {
-        const d = new Date(e.date);
-        return d.toLocaleString('default', { month: 'short' });
+        if (!e.date) return '';
+        const parts = e.date.split('-');
+        if (parts.length === 3) {
+          const yr = parts[0].slice(2);
+          const mIdx = parseInt(parts[1], 10) - 1;
+          const monthNames = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+          return `${monthNames[mIdx] || ''} '${yr}`;
+        }
+        return e.date;
       }),
       datasets: [{
         label: 'Portfolio Value ₹',
@@ -163,6 +170,10 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
 
     this.monthlyChartOptions = { ...baseOptions };
     this.equityChartOptions = { ...baseOptions };
+  }
+
+  get startingCapital(): number {
+    return this.strategy?.performance?.equityCurve?.[0]?.value ?? this.strategy?.minimumAmount ?? 0;
   }
 
   getRiskClass(): string {

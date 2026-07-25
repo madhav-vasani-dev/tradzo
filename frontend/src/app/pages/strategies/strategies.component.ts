@@ -46,7 +46,7 @@ export class StrategiesComponent implements OnInit, OnDestroy {
   confirmBtnText = 'Confirm';
   private actionToExecute: (() => Promise<void>) | null = null;
 
-  categories: FilterCategory[] = ['All', 'Options', 'Futures', 'Equity', 'Index'];
+  categories: FilterCategory[] = ['All', 'Options', 'Futures', 'Equity', 'Index', 'Crypto'];
   riskLevels: FilterRisk[] = ['All', 'Low', 'Medium', 'High'];
 
   private subscriptions = new Subscription();

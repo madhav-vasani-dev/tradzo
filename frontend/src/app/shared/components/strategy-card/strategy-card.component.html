@@ -34,9 +34,9 @@
 
   <!-- Footer: Min amount + CTA -->
   <div class="card-footer">
-    <div class="min-amount">
+    <div class="min-amount" [title]="strategy.hasLotAsterisk ? 'Minimum investment depends on lot size selected by user' : ''">
       <span class="min-label">Min. ₹</span>
-      <span class="min-value">{{ strategy.minimumAmount | number }}</span>
+      <span class="min-value">{{ strategy.minimumAmount | number }}<span *ngIf="strategy.hasLotAsterisk">*</span></span>
     </div>
 
     @if (!deployment) {

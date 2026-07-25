@@ -55,7 +55,8 @@
     <div class="deploy-panel">
       <div class="deploy-panel-inner">
         <div class="min-amount-label">Minimum Investment</div>
-        <div class="min-amount-value">{{ formatINR(strategy.minimumAmount) }}</div>
+        <div class="min-amount-value">{{ formatINR(strategy.minimumAmount) }}<span *ngIf="strategy.hasLotAsterisk">*</span></div>
+        <div *ngIf="strategy.hasLotAsterisk" style="font-size: 0.72rem; color: #8B95B0; margin-top: 0.2rem;">* Varies based on user's lot size count</div>
 
         @if (!isDeployed) {
           <button class="deploy-btn" (click)="onDeploy()">
@@ -194,12 +195,15 @@
           <div class="chart-subtitle">Portfolio value growth over backtest</div>
         </div>
         <div class="equity-badge">
-          Starting {{ formatINR(strategy.minimumAmount) }}
+          Starting {{ formatINR(startingCapital) }}
         </div>
 
       </div>
       <div class="chart-container">
         <p-chart type="line" [data]="equityChartData" [options]="equityChartOptions" height="220"></p-chart>
+      </div>
+      <div *ngIf="strategy.equityNote || strategy.strategyCode === 'BTC_OPTION_SELLING'" style="font-size: 0.73rem; color: #8B95B0; margin-top: 0.4rem; font-style: italic;">
+        {{ strategy.equityNote || '* Note: Equity curve backtest performance is based on 100 lots.' }}
       </div>
     </div>
   </div>

@@ -204,3 +204,20 @@ async def trigger_sync_orders(admin: dict = Depends(get_current_admin)):
     summary = await execution_service.sync_order_statuses()
     return {"status": "success", **summary}
 
+
+# ── BTC Option Selling (Delta Exchange) ──────────────────────────────────────
+
+@router.post("/trigger-btc-entry")
+async def trigger_btc_entry(admin: dict = Depends(get_current_admin)):
+    """Manually trigger the 17:01 PM BTC option entry job (Delta Exchange)."""
+    _require_firestore()
+    summary = await execution_service.execute_btc_entry()
+    return {"status": "executed_btc_entry", **summary}
+
+
+@router.post("/trigger-btc-exit")
+async def trigger_btc_exit(admin: dict = Depends(get_current_admin)):
+    """Manually trigger the 17:29 PM BTC option exit job (Delta Exchange)."""
+    _require_firestore()
+    summary = await execution_service.execute_btc_exit()
+    return {"status": "executed_btc_exit", **summary}

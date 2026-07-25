@@ -214,6 +214,112 @@ TRADING_MODE_DOC = {
 }
 
 
+# ── BTC Option Selling (Delta Exchange) ───────────────────────────────────────
+# Performance data extracted directly from Algotest backtest PDF report
+# (Jan 1, 2025 – Jul 24, 2026 | 570 trades | 100% SL | 17:01–17:29 IST)
+
+BTC_START_CAPITAL = 7000.0  # ₹7,000 minimum investment per lot
+
+# Exact monthly profits in INR from Algotest PDF report:
+BTC_MONTHLY_PROFITS = [
+    # 2025
+    {"year": "2025", "month": "Jan", "profit": 22279},
+    {"year": "2025", "month": "Feb", "profit": 16059},
+    {"year": "2025", "month": "Mar", "profit": 24717},
+    {"year": "2025", "month": "Apr", "profit": 11846},
+    {"year": "2025", "month": "May", "profit": 13813},
+    {"year": "2025", "month": "Jun", "profit": 15188},
+    {"year": "2025", "month": "Jul", "profit": 14258},
+    {"year": "2025", "month": "Aug", "profit": 13380},
+    {"year": "2025", "month": "Sep", "profit": 5226},
+    {"year": "2025", "month": "Oct", "profit": 15462},
+    {"year": "2025", "month": "Nov", "profit": 20382},
+    {"year": "2025", "month": "Dec", "profit": 9113},
+    # 2026
+    {"year": "2026", "month": "Jan", "profit": 4053},
+    {"year": "2026", "month": "Feb", "profit": 9856},
+    {"year": "2026", "month": "Mar", "profit": 3042},
+    {"year": "2026", "month": "Apr", "profit": 2009},
+    {"year": "2026", "month": "May", "profit": 5707},
+    {"year": "2026", "month": "Jun", "profit": -1400},
+    {"year": "2026", "month": "Jul", "profit": 2232},
+]
+
+# Baseline portfolio capital for 100-lot backtest scale
+PORTFOLIO_BASE = 70000.0
+
+btc_monthly_returns = [
+    {
+        "month": f"{item['month']} {item['year']}",
+        "returnPct": round((item["profit"] / PORTFOLIO_BASE) * 100, 2)
+    }
+    for item in BTC_MONTHLY_PROFITS
+]
+
+btc_yearly_totals = {"2025": 181730.0, "2026": 25502.0}
+btc_yearly_returns = [
+    {"year": yr, "returnPct": round((profit / PORTFOLIO_BASE) * 100, 2)}
+    for yr, profit in sorted(btc_yearly_totals.items())
+]
+
+btc_equity = [{"date": "2025-01-01", "value": PORTFOLIO_BASE}]
+curr_eq = PORTFOLIO_BASE
+for item in BTC_MONTHLY_PROFITS:
+    curr_eq = round(curr_eq + item["profit"], 2)
+    m_num = month_nums[item["month"]]
+    btc_equity.append({
+        "date": f"{item['year']}-{m_num}-28",
+        "value": curr_eq
+    })
+
+BTC_OPTION_SELLING_DOC = {
+    "id": "btc-option-selling",
+    "name": "BTC Option Selling",
+    "strategyCode": "BTC_OPTION_SELLING",
+    "description": (
+        "Sells ATM BTC Call + Put options on Delta Exchange at 17:01 IST every "
+        "trading day using the current day's expiry. Each leg has a 100% stop-loss "
+        "(doubles the premium) placed as a stop-market order at entry. Positions are "
+        "squared off at 17:29 IST. PnL is tracked in both USD and INR."
+    ),
+    "category": "Crypto",
+    "instrumentType": "BTC Daily Options (Delta Exchange)",
+    "riskLevel": "High",
+    "isVisible": True,
+    "minimumAmount": 7000.0,   # ₹7,000 per lot
+    "hasLotAsterisk": True,     # Displays * next to minimum investment
+    "equityNote": "* Note: Equity curve & backtest performance is based on 100 lots.",
+    "lotSize": 1,
+    "stopLossPercent": 100,
+    "entryTime": "17:01",
+    "exitTime": "17:29",
+    "broker": "delta",
+    "currency": "USD",
+    "dualCurrencyPnl": True,
+    "tags": ["Intraday", "Crypto", "Options Selling", "Straddle", "ATM", "BTC", "Delta Exchange"],
+    "performance": {
+        "cagr": 18.20,
+        "sharpeRatio": 1.59,
+        "maxDrawdown": 5.92,
+        "winRate": 70.88,
+        "totalTrades": 570,
+        "avgTradeReturn": 0.52,
+        "avgTradeDurationMinutes": 28,
+        "profitFactor": 1.59,
+        "calmarRatio": 3.07,
+        "expectancy": 0.84,
+        "backtestStartDate": "2025-01-01",
+        "backtestEndDate": "2026-07-24",
+        "monthlyReturns": btc_monthly_returns,
+        "yearlyReturns": btc_yearly_returns,
+        "equityCurve": btc_equity,
+    },
+    "createdAt": datetime.now(IST),
+    "updatedAt": datetime.now(IST),
+    "createdByUid": "system",
+}
+
+
 
 
 def seed():
@@ -225,6 +331,11 @@ def seed():
     strategies_ref = db.collection("strategies").document("nifty-straddle")
     strategies_ref.set(NIFTY_STRADDLE_DOC)
     print("[OK] Created/updated strategies/nifty-straddle with real stats")
+
+    # ── strategies/btc-option-selling ─────────────────────────────────────
+    btc_ref = db.collection("strategies").document("btc-option-selling")
+    btc_ref.set(BTC_OPTION_SELLING_DOC)
+    print("[OK] Created/updated strategies/btc-option-selling (Delta Exchange)")
 
     # ── settings/tradingMode ──────────────────────────────────────────────
     settings_ref = db.collection("settings").document("tradingMode")

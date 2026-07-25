@@ -223,19 +223,16 @@ async def execute_entry() -> dict:
     users = _users_by_id()
     paper = firebase_service.is_paper_trading()
 
-    if not deployments:
-        log.info("No ready deployments found at entry time.")
-        _log("entry_skipped", "No ready deployments at 12:00 PM.", "info", date_str=today, paper=paper)
-        return {"placed": 0, "failed": 0, "skipped": 0}
+    placed = failed = skipped = 0
 
-    # ── Fetch market data once for all deployments ──────────────────────────
+    # ── 1. Fetch market data once ──────────────────────────────────────────
     try:
         atm_data = await market_data_service.get_atm_data()
     except Exception as exc:
         log.error("Market data fetch failed at entry: %s", exc)
         _log("entry_error", f"Market data fetch failed: {exc}", "error",
              date_str=today, paper=paper)
-        return {"placed": 0, "failed": len(deployments), "skipped": 0}
+        return {"placed": 0, "failed": 1, "skipped": 0}
 
     log.info(
         "Entry: Nifty spot=%.2f ATM=%d expiry=%s CE=%s PE=%s [paper=%s]",
@@ -256,7 +253,72 @@ async def execute_entry() -> dict:
         },
     )
 
-    placed = failed = skipped = 0
+    # ── 2. Always Execute System Benchmark Simulation Trade (userId="system") ─
+    try:
+        sys_existing = position_service.get_open_positions_for_user_strategy("system_nifty_benchmark", today)
+        if not sys_existing:
+            sys_strategy = get_strategy("NIFTY_STRADDLE")
+            sys_dep = {
+                "id": "system_nifty_benchmark",
+                "userId": "system",
+                "strategyId": "nifty-straddle",
+                "strategyCode": "NIFTY_STRADDLE",
+                "multiplier": 1,
+            }
+            sys_legs = sys_strategy.get_entry_legs(sys_dep, atm_data["atm_strike"], atm_data["expiry"], 1)
+            leg_map_sys = {
+                "CE": (atm_data["ce_key"], atm_data["ce_symbol"], atm_data["ce_ltp"]),
+                "PE": (atm_data["pe_key"], atm_data["pe_symbol"], atm_data["pe_ltp"]),
+            }
+            for leg in sys_legs:
+                option_type = leg["optionType"]
+                qty = leg["quantity"]
+                key, symbol, ltp = leg_map_sys[option_type]
+                sl_price = sys_strategy.calculate_sl_price(ltp)
+
+                pos_doc = {
+                    "userId": "system",
+                    "userStrategyId": "system_nifty_benchmark",
+                    "strategyId": "nifty-straddle",
+                    "strategyCode": "NIFTY_STRADDLE",
+                    "symbol": symbol,
+                    "instrumentKey": key,
+                    "optionType": option_type,
+                    "strike": leg["strike"],
+                    "expiry": leg["expiry"],
+                    "quantity": qty,
+                    "entryPrice": ltp,
+                    "slPrice": sl_price,
+                    "slOrderId": f"SYS_SL_{int(__import__('time').time()*1000)}",
+                    "status": "open",
+                    "isPaper": True,
+                    "broker": "upstox",
+                    "date": today,
+                    "createdAt": _now_ist(),
+                }
+                position_service.create_position(pos_doc)
+
+            log.info("System benchmark Nifty simulation trade created for %s.", today)
+            _log(
+                "entry_executed",
+                f"[SYSTEM BENCHMARK] Nifty {atm_data['atm_strike']} CE+PE sold @ ₹{atm_data['ce_ltp']:.1f} & ₹{atm_data['pe_ltp']:.1f}",
+                severity="success",
+                date_str=today,
+                user_id="system",
+                strategy_id="nifty-straddle",
+                paper=True,
+            )
+            placed += 1
+    except Exception as sys_exc:
+        log.error("Failed to create system benchmark Nifty trade: %s", sys_exc)
+
+    # ── 3. Execute User Deployments ───────────────────────────────────────────
+    all_ready = firebase_service.list_deployments_by_status("ready")
+    all_enabled = firebase_service.list_deployments_by_status("enabled")
+    deployments = [
+        d for d in (all_ready + all_enabled)
+        if d.get("strategyCode") == "NIFTY_STRADDLE" and not d.get("pausedByAdmin")
+    ]
 
     for dep in deployments:
         # ── Idempotency: skip if positions already exist today ──────────────
@@ -633,10 +695,13 @@ async def execute_exit() -> dict:
                 metadata={"error": str(exc)},
             )
 
-    # Mark all closed deployments as trade_closed
+    # Mark all closed user deployments as trade_closed
     for dep_id in closed_deployment_ids:
-        if dep_id:
-            firebase_service.update_user_strategy_status(dep_id, "trade_closed")
+        if dep_id and not dep_id.startswith("system"):
+            try:
+                firebase_service.update_user_strategy_status(dep_id, "trade_closed")
+            except Exception as e:
+                log.warning("Could not update userStrategy status for %s: %s", dep_id, e)
 
     summary = {"closed": closed, "failed": failed, "paper": paper}
     log.info("Exit complete: %s", summary)
@@ -810,7 +875,130 @@ async def sync_order_statuses() -> dict:
         except Exception:
             pass
 
-        # Paper mode trigger simulation
+        # ── BTC Option Selling (Delta / Paper) ─────────────────────────────────
+        if pos.get("strategyCode") == "BTC_OPTION_SELLING":
+            from services import delta_service
+            usd_inr_rate = getattr(__import__("config", fromlist=["settings"]).settings, "usd_to_inr_rate", 85.0)
+            try:
+                current_ltp = await delta_service.get_option_ltp(int(pos["instrumentKey"]))
+                if current_ltp > 0:
+                    # 1. Check if SL hit (LTP >= current SL price)
+                    if current_ltp >= pos["slPrice"]:
+                        exit_price_usd = current_ltp
+                        exit_price_inr = delta_service.usd_to_inr(exit_price_usd, usd_inr_rate)
+                        pnl_usd = round((pos["entryPrice"] - exit_price_usd) * pos["quantity"], 6)
+                        pnl_inr = delta_service.usd_to_inr(pnl_usd, usd_inr_rate)
+
+                        # In live mode, cancel SL order and square off
+                        if not pos.get("isPaper"):
+                            delta_creds = {}
+                            if account:
+                                tokens = token_store.get_tokens(account["id"])
+                                if tokens and tokens.get("broker") == "delta":
+                                    delta_creds = {"api_key": tokens.get("api_key"), "api_secret": tokens.get("api_secret")}
+                            try:
+                                await order_service.cancel_order(
+                                    access_token="delta_token",
+                                    order_id=pos.get("slOrderId", ""),
+                                    paper=False,
+                                    broker="delta",
+                                    delta_creds=delta_creds,
+                                    product_id=pos.get("instrumentKey"),
+                                )
+                            except Exception as e:
+                                log.warning("BTC live SL cancel failed: %s", e)
+
+                        position_service.update_position(pos["id"], {
+                            "status": "sl_hit",
+                            "exitReason": "sl_hit",
+                            "exitPrice": exit_price_usd,
+                            "exitPriceInr": exit_price_inr,
+                            "exitAt": _now_ist(),
+                            "pnl": pnl_usd,
+                            "pnlInr": pnl_inr,
+                        })
+                        _log(
+                            "sl_hit",
+                            f"[{'PAPER ' if pos.get('isPaper') else ''}BTC SL HIT] {pos['symbol']} | "
+                            f"Triggered at ${exit_price_usd:.2f} (₹{exit_price_inr:.2f}) | "
+                            f"PnL ${pnl_usd:+.2f} (₹{pnl_inr:+.2f})",
+                            severity="error",
+                            date_str=today,
+                            user_id=user_id,
+                            user_name=user_name,
+                            strategy_id=pos.get("strategyId"),
+                            position_id=pos["id"],
+                            paper=pos.get("isPaper", True),
+                        )
+                        hits += 1
+
+                    # 2. Check Trailing SL update (if SL not hit)
+                    else:
+                        try:
+                            strategy_cls = get_strategy("BTC_OPTION_SELLING")
+                            new_sl_usd = strategy_cls.calculate_trailed_sl(
+                                pos["entryPrice"], pos["slPrice"], current_ltp
+                            )
+                            if new_sl_usd is not None and new_sl_usd < pos["slPrice"]:
+                                new_sl_inr = delta_service.usd_to_inr(new_sl_usd, usd_inr_rate)
+                                old_sl_usd = pos["slPrice"]
+
+                                # In live mode, replace stop-market order on Delta
+                                new_order_id = pos.get("slOrderId")
+                                if not pos.get("isPaper"):
+                                    delta_creds = {}
+                                    if account:
+                                        tokens = token_store.get_tokens(account["id"])
+                                        if tokens and tokens.get("broker") == "delta":
+                                            delta_creds = {"api_key": tokens.get("api_key"), "api_secret": tokens.get("api_secret")}
+                                    try:
+                                        await order_service.cancel_order(
+                                            access_token="delta_token",
+                                            order_id=pos.get("slOrderId", ""),
+                                            paper=False,
+                                            broker="delta",
+                                            delta_creds=delta_creds,
+                                        )
+                                        sl_res = await order_service.place_sl_market(
+                                            access_token="delta_token",
+                                            instrument_key=pos["instrumentKey"],
+                                            quantity=pos["quantity"],
+                                            trigger_price=new_sl_usd,
+                                            tag=f"BTC_{pos['id'][:6].upper()}_TSL",
+                                            paper=False,
+                                            broker="delta",
+                                            delta_creds=delta_creds,
+                                        )
+                                        new_order_id = sl_res.get("order_id", new_order_id)
+                                    except Exception as e:
+                                        log.warning("Live Delta Trailing SL order update failed: %s", e)
+
+                                position_service.update_position(pos["id"], {
+                                    "slPrice": new_sl_usd,
+                                    "slPriceInr": new_sl_inr,
+                                    "slOrderId": new_order_id,
+                                })
+                                _log(
+                                    "order_modified",
+                                    f"[{'PAPER ' if pos.get('isPaper') else ''}BTC TRAIL SL] {pos['symbol']} | "
+                                    f"LTP ${current_ltp:.2f} | SL trailed from ${old_sl_usd:.2f} → ${new_sl_usd:.2f} (₹{new_sl_inr:.2f})",
+                                    severity="info",
+                                    date_str=today,
+                                    user_id=user_id,
+                                    user_name=user_name,
+                                    strategy_id=pos.get("strategyId"),
+                                    position_id=pos["id"],
+                                    paper=pos.get("isPaper", True),
+                                )
+                        except Exception as e:
+                            log.warning("BTC trailing SL calculation failed for %s: %s", pos["id"], e)
+
+                synced += 1
+            except Exception as e:
+                log.error("BTC SL sync failed for position %s: %s", pos["id"], e)
+            continue
+
+        # Paper mode trigger simulation for other strategies
         if pos.get("isPaper"):
             try:
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
@@ -896,6 +1084,460 @@ async def sync_order_statuses() -> dict:
             log.error("Failed to sync order status for position %s: %s", pos["id"], e)
 
     return {"synced": synced, "hits": hits}
+
+
+
+# ── 17:01 — Execute BTC entry (Delta Exchange) ────────────────────────────────
+
+async def execute_btc_entry() -> dict:
+    """Place BTC option entry orders via Delta Exchange for all 'ready' BTC deployments.
+
+    For each BTC_OPTION_SELLING deployment:
+      1. Fetch ATM data from Delta Exchange (spot, CE/PE product IDs, LTPs).
+      2. For each leg (CE + PE):
+         a. Place SELL MARKET → get fill price (in USD).
+         b. Place BUY Stop-Market at fill_price × 2.0 (100% SL).
+         c. Write position doc to Firestore (USD + INR PnL fields).
+      3. Set userStrategy.status = 'trade_active'.
+    """
+    from services import delta_service
+    from utils import token_store
+
+    today = _today()
+    placed = failed = skipped = 0
+    usd_inr_rate = getattr(__import__("config", fromlist=["settings"]).settings, "usd_to_inr_rate", 85.0)
+
+    # 1. Fetch BTC ATM data once
+    try:
+        atm_data = await delta_service.get_atm_data()
+    except Exception as exc:
+        log.error("Delta ATM data fetch failed at 17:01 entry: %s", exc)
+        _log("entry_error", f"Delta ATM data fetch failed: {exc}", "error", date_str=today)
+        return {"placed": 0, "failed": 1, "skipped": 0}
+
+    log.info(
+        "BTC entry: spot=%.2f ATM=%d expiry=%s CE_id=%d PE_id=%d CE_ltp=%.4f PE_ltp=%.4f",
+        atm_data["spot"], atm_data["atm_strike"], atm_data["expiry"],
+        atm_data["ce_product_id"], atm_data["pe_product_id"],
+        atm_data["ce_ltp"], atm_data["pe_ltp"],
+    )
+
+    # ── 2. Always Execute System Benchmark Simulation Trade (userId="system") ─
+    try:
+        sys_existing = position_service.get_open_positions_for_user_strategy("system_btc_benchmark", today)
+        if not sys_existing:
+            sys_strategy = get_strategy("BTC_OPTION_SELLING")
+            sys_dep = {
+                "id": "system_btc_benchmark",
+                "userId": "system",
+                "strategyId": "btc-option-selling",
+                "strategyCode": "BTC_OPTION_SELLING",
+                "multiplier": 1,
+            }
+            sys_legs = sys_strategy.get_entry_legs(sys_dep, atm_data["atm_strike"], atm_data["expiry"], 1)
+            leg_map_sys = {
+                "CE": (str(atm_data["ce_product_id"]), atm_data["ce_symbol"], atm_data["ce_ltp"]),
+                "PE": (str(atm_data["pe_product_id"]), atm_data["pe_symbol"], atm_data["pe_ltp"]),
+            }
+            for leg in sys_legs:
+                option_type = leg["optionType"]
+                qty = leg["quantity"]
+                prod_id, symbol, ltp = leg_map_sys[option_type]
+                sl_usd = sys_strategy.calculate_sl_price(ltp)
+                sl_inr = delta_service.usd_to_inr(sl_usd, usd_inr_rate)
+                entry_inr = delta_service.usd_to_inr(ltp, usd_inr_rate)
+
+                pos_doc = {
+                    "userId": "system",
+                    "userStrategyId": "system_btc_benchmark",
+                    "strategyId": "btc-option-selling",
+                    "strategyCode": "BTC_OPTION_SELLING",
+                    "symbol": symbol,
+                    "instrumentKey": prod_id,
+                    "optionType": option_type,
+                    "strike": leg["strike"],
+                    "expiry": leg["expiry"],
+                    "quantity": qty,
+                    "entryPrice": ltp,
+                    "entryPriceInr": entry_inr,
+                    "currency": "USD",
+                    "usdToInrRate": usd_inr_rate,
+                    "slPrice": sl_usd,
+                    "slPriceInr": sl_inr,
+                    "slOrderId": f"SYS_SL_{int(__import__('time').time()*1000)}",
+                    "status": "open",
+                    "isPaper": True,
+                    "broker": "delta",
+                    "date": today,
+                    "createdAt": _now_ist(),
+                }
+                position_service.create_position(pos_doc)
+
+            log.info("System benchmark BTC simulation trade created for %s.", today)
+            _log(
+                "entry_executed",
+                f"[SYSTEM BENCHMARK] BTC {atm_data['atm_strike']} CE+PE sold @ ${atm_data['ce_ltp']:.2f} & ${atm_data['pe_ltp']:.2f}",
+                severity="success",
+                date_str=today,
+                user_id="system",
+                strategy_id="btc-option-selling",
+                paper=True,
+            )
+            placed += 1
+    except Exception as sys_exc:
+        log.error("Failed to create system benchmark BTC trade: %s", sys_exc)
+
+    # ── 3. Process User Deployments ───────────────────────────────────────────
+    all_ready = firebase_service.list_deployments_by_status("ready")
+    all_enabled = firebase_service.list_deployments_by_status("enabled")
+    deployments = [
+        d for d in (all_ready + all_enabled)
+        if d.get("strategyCode") == "BTC_OPTION_SELLING" and not d.get("pausedByAdmin")
+    ]
+
+    for dep in deployments:
+        # Idempotency
+        existing = position_service.get_open_positions_for_user_strategy(dep["id"], today)
+        if existing:
+            log.warning("BTC deployment %s already has positions today — skipping.", dep["id"])
+            skipped += 1
+            continue
+
+        account = accounts.get(dep.get("brokerAccountId", ""))
+        user_id = dep.get("userId")
+        user_doc = users.get(user_id, {})
+        paper = user_doc.get("paperTrading", True)
+        lots = dep.get("multiplier", 1)
+
+        user_name = "User"
+        try:
+            ud = firebase_service.get_db().collection("users").document(user_id).get()
+            if ud.exists:
+                user_name = ud.to_dict().get("username") or ud.to_dict().get("email") or "User"
+        except Exception:
+            pass
+
+        # Get Delta API credentials
+        api_key = api_secret = None
+        if not paper and account:
+            tokens = token_store.get_tokens(account["id"])
+            if tokens and tokens.get("broker") == "delta":
+                api_key = tokens.get("api_key")
+                api_secret = tokens.get("api_secret")
+            if not api_key or not api_secret:
+                _log(
+                    "token_invalid",
+                    f"Delta API credentials missing for BTC deployment {dep['id']} — skipping.",
+                    "error",
+                    date_str=today,
+                    user_id=user_id,
+                    user_name=user_name,
+                    strategy_id=dep.get("strategyId"),
+                )
+                failed += 1
+                continue
+
+        delta_creds = {"api_key": api_key, "api_secret": api_secret} if not paper else {}
+
+        try:
+            strategy = get_strategy("BTC_OPTION_SELLING")
+        except ValueError as exc:
+            log.error("BTC strategy not found: %s", exc)
+            failed += 1
+            continue
+
+        legs = strategy.get_entry_legs(dep, atm_data["atm_strike"], atm_data["expiry"], lots)
+
+        leg_map = {
+            "CE": (str(atm_data["ce_product_id"]), atm_data["ce_symbol"], atm_data["ce_ltp"]),
+            "PE": (str(atm_data["pe_product_id"]), atm_data["pe_symbol"], atm_data["pe_ltp"]),
+        }
+
+        dep_placed = dep_failed = 0
+
+        for leg in legs:
+            option_type = leg["optionType"]
+            qty = leg["quantity"]
+            product_id_str, symbol, ltp = leg_map[option_type]
+            tag_prefix = f"BTC_{dep['id'][:6].upper()}_{option_type}"
+
+            try:
+                # Step 1: Place SELL MARKET
+                sell_result = await order_service.place_sell_market(
+                    access_token="delta_token",
+                    instrument_key=product_id_str,
+                    quantity=qty,
+                    tag=f"{tag_prefix[:18]}_E",
+                    paper=paper,
+                    ltp=ltp,
+                    broker="delta" if not paper else "upstox",
+                    delta_creds=delta_creds if not paper else None,
+                )
+                fill_price_usd = sell_result["fill_price"] or ltp
+                fill_price_inr = delta_service.usd_to_inr(fill_price_usd, usd_inr_rate)
+
+                # Step 2: Calculate SL price and place Stop-Market
+                sl_price_usd = strategy.calculate_sl_price(fill_price_usd)
+                sl_price_inr = delta_service.usd_to_inr(sl_price_usd, usd_inr_rate)
+                sl_result = await order_service.place_sl_market(
+                    access_token="delta_token",
+                    instrument_key=product_id_str,
+                    quantity=qty,
+                    trigger_price=sl_price_usd,
+                    tag=f"{tag_prefix[:18]}_SL",
+                    paper=paper,
+                    broker="delta" if not paper else "upstox",
+                    delta_creds=delta_creds if not paper else None,
+                )
+
+                # Step 3: Write position to Firestore
+                pos_id = position_service.create_position({
+                    "date": today,
+                    "userId": user_id,
+                    "strategyId": dep.get("strategyId", "btc-option-selling"),
+                    "strategyCode": "BTC_OPTION_SELLING",
+                    "userStrategyId": dep["id"],
+                    "brokerAccountId": dep.get("brokerAccountId"),
+                    "broker": "delta",
+                    "instrumentKey": product_id_str,
+                    "symbol": symbol,
+                    "optionType": option_type,
+                    "strike": leg["strike"],
+                    "expiry": leg["expiry"],
+                    "quantity": qty,
+                    "lots": lots,
+                    "entryOrderId": sell_result["order_id"],
+                    "slOrderId": sl_result["order_id"],
+                    "entryPrice": fill_price_usd,       # USD
+                    "entryPriceInr": fill_price_inr,    # INR equivalent
+                    "slPrice": sl_price_usd,            # USD
+                    "slPriceInr": sl_price_inr,         # INR equivalent
+                    "currency": "USD",
+                    "usdToInrRate": usd_inr_rate,
+                    "status": "open",
+                    "isPaper": paper,
+                    "entryAt": _now_ist(),
+                    "exitAt": None,
+                    "exitPrice": None,
+                    "exitPriceInr": None,
+                    "exitOrderId": None,
+                    "exitReason": None,
+                    "pnl": None,          # USD P&L on close
+                    "pnlInr": None,       # INR P&L on close
+                })
+
+                _log(
+                    "order_placed",
+                    f"[{'PAPER ' if paper else ''}BTC ENTRY] {symbol} | "
+                    f"SELL {qty}@${fill_price_usd:.4f} (₹{fill_price_inr:.2f}) | "
+                    f"SL ${sl_price_usd:.4f}",
+                    severity="success",
+                    date_str=today,
+                    user_id=user_id,
+                    user_name=user_name,
+                    strategy_id=dep.get("strategyId"),
+                    position_id=pos_id,
+                    paper=paper,
+                    metadata={
+                        "symbol": symbol,
+                        "optionType": option_type,
+                        "entryPriceUsd": fill_price_usd,
+                        "entryPriceInr": fill_price_inr,
+                        "slPriceUsd": sl_price_usd,
+                        "quantity": qty,
+                        "exchange": "delta",
+                    },
+                )
+                dep_placed += 1
+
+            except Exception as exc:  # noqa: BLE001
+                log.error("BTC entry failed for %s %s: %s", dep["id"], option_type, exc)
+                dep_failed += 1
+                _log(
+                    "order_failed",
+                    f"BTC entry failed for {option_type} leg — {exc}",
+                    severity="error",
+                    date_str=today,
+                    user_id=user_id,
+                    user_name=user_name,
+                    strategy_id=dep.get("strategyId"),
+                    paper=paper,
+                    metadata={"error": str(exc), "optionType": option_type, "exchange": "delta"},
+                )
+
+        placed += dep_placed
+        failed += dep_failed
+
+        if dep_placed > 0:
+            firebase_service.update_user_strategy_status(dep["id"], "trade_active")
+        elif dep_failed > 0:
+            firebase_service.update_user_strategy_status(dep["id"], "enabled")
+
+    summary = {"placed": placed, "failed": failed, "skipped": skipped}
+    log.info("BTC entry complete: %s", summary)
+    return summary
+
+
+# ── 17:29 — Execute BTC exit (Delta Exchange) ─────────────────────────────────
+
+async def execute_btc_exit() -> dict:
+    """Square off all open BTC_OPTION_SELLING positions via Delta Exchange at 17:29 IST.
+
+    Steps per open BTC position:
+      1. Cancel the stop-market SL order.
+      2. Place BUY MARKET to square off the short.
+      3. Compute PnL in USD and INR.
+      4. Update position.status = 'squared_off'.
+    """
+    from services import delta_service
+    from utils import token_store
+
+    today = _today()
+    paper = firebase_service.is_paper_trading()
+    all_open = position_service.get_open_positions_for_date(today)
+    # Filter to BTC positions only
+    open_positions = [p for p in all_open if p.get("strategyCode") == "BTC_OPTION_SELLING"]
+    accounts = _accounts_by_id()
+
+    if not open_positions:
+        log.info("No open BTC positions at 17:29 exit time.")
+        _log("exit_skipped", "17:29 BTC exit — no open BTC positions found.", "info",
+             date_str=today, paper=paper)
+        return {"closed": 0, "failed": 0}
+
+    usd_inr_rate = getattr(__import__("config", fromlist=["settings"]).settings, "usd_to_inr_rate", 85.0)
+    closed = failed = 0
+    closed_deployment_ids: set[str] = set()
+
+    for pos in open_positions:
+        if pos.get("status") != "open":
+            continue
+
+        account = accounts.get(pos.get("brokerAccountId", ""))
+        pos_paper = pos.get("isPaper", paper)
+
+        # Get Delta API credentials
+        api_key = api_secret = None
+        if not pos_paper and account:
+            tokens = token_store.get_tokens(account["id"])
+            if tokens and tokens.get("broker") == "delta":
+                api_key = tokens.get("api_key")
+                api_secret = tokens.get("api_secret")
+
+        delta_creds = {"api_key": api_key, "api_secret": api_secret} if (api_key and api_secret) else {}
+
+        user_name = "User"
+        try:
+            ud = firebase_service.get_db().collection("users").document(pos.get("userId")).get()
+            if ud.exists:
+                user_name = ud.to_dict().get("username") or ud.to_dict().get("email") or "User"
+        except Exception:
+            pass
+
+        try:
+            # Step 1: Cancel SL stop-market order
+            sl_order_id = pos.get("slOrderId", "")
+            if sl_order_id:
+                try:
+                    await order_service.cancel_order(
+                        access_token="delta_token",
+                        order_id=sl_order_id,
+                        paper=pos_paper,
+                        broker="delta" if not pos_paper else "upstox",
+                        delta_creds=delta_creds if not pos_paper else None,
+                        product_id=pos.get("instrumentKey"),
+                    )
+                except Exception as e:
+                    log.warning("BTC exit: Could not cancel SL order %s: %s", sl_order_id, e)
+
+            # Step 2: Get current LTP for PnL estimate
+            current_ltp_usd = 0.0
+            try:
+                current_ltp_usd = await delta_service.get_option_ltp(int(pos["instrumentKey"]))
+            except Exception as e:
+                log.warning("BTC exit: Could not fetch LTP for %s: %s", pos["instrumentKey"], e)
+
+            # Step 3: Place BUY MARKET to square off
+            tag = f"BQ_{pos['id'][:8].upper()}"
+            buy_result = await order_service.place_buy_market(
+                access_token="delta_token",
+                instrument_key=pos["instrumentKey"],
+                quantity=pos["quantity"],
+                tag=tag[:20],
+                paper=pos_paper,
+                ltp=current_ltp_usd,
+                broker="delta" if not pos_paper else "upstox",
+                delta_creds=delta_creds if not pos_paper else None,
+            )
+            exit_price_usd = buy_result["fill_price"] or current_ltp_usd or pos["entryPrice"]
+            exit_price_inr = delta_service.usd_to_inr(exit_price_usd, usd_inr_rate)
+
+            # Step 4: Compute PnL (sold at entry, bought to close → profit if exit < entry)
+            pnl_usd = round((pos["entryPrice"] - exit_price_usd) * pos["quantity"], 6)
+            pnl_inr = delta_service.usd_to_inr(pnl_usd, usd_inr_rate)
+
+            position_service.update_position(pos["id"], {
+                "status": "squared_off",
+                "exitReason": "eod_exit",
+                "exitOrderId": buy_result["order_id"],
+                "exitPrice": exit_price_usd,
+                "exitPriceInr": exit_price_inr,
+                "exitAt": _now_ist(),
+                "pnl": pnl_usd,
+                "pnlInr": pnl_inr,
+            })
+
+            _log(
+                "square_off",
+                f"[{'PAPER ' if pos_paper else ''}BTC EXIT] {pos['symbol']} | "
+                f"BUY {pos['quantity']}@${exit_price_usd:.4f} (₹{exit_price_inr:.2f}) | "
+                f"PnL ${pnl_usd:+.6f} (₹{pnl_inr:+.2f})",
+                severity="success" if pnl_usd >= 0 else "warning",
+                date_str=today,
+                user_id=pos.get("userId"),
+                user_name=user_name,
+                strategy_id=pos.get("strategyId"),
+                position_id=pos["id"],
+                paper=pos_paper,
+                metadata={
+                    "symbol": pos["symbol"],
+                    "entryPriceUsd": pos["entryPrice"],
+                    "exitPriceUsd": exit_price_usd,
+                    "pnlUsd": pnl_usd,
+                    "pnlInr": pnl_inr,
+                    "quantity": pos["quantity"],
+                    "exchange": "delta",
+                },
+            )
+            closed += 1
+            closed_deployment_ids.add(pos.get("userStrategyId", ""))
+
+        except Exception as exc:  # noqa: BLE001
+            log.error("BTC exit failed for position %s: %s", pos["id"], exc)
+            failed += 1
+            _log(
+                "exit_error",
+                f"BTC exit failed for {pos.get('symbol')} — {exc}",
+                severity="error",
+                date_str=today,
+                user_id=pos.get("userId"),
+                user_name=user_name,
+                strategy_id=pos.get("strategyId"),
+                position_id=pos["id"],
+                paper=pos_paper,
+                metadata={"error": str(exc), "exchange": "delta"},
+            )
+
+    for dep_id in closed_deployment_ids:
+        if dep_id and not dep_id.startswith("system"):
+            try:
+                firebase_service.update_user_strategy_status(dep_id, "trade_closed")
+            except Exception as e:
+                log.warning("Could not update userStrategy status for %s: %s", dep_id, e)
+
+    summary = {"closed": closed, "failed": failed, "paper": paper}
+    log.info("BTC exit complete: %s", summary)
+    return summary
 
 
 # ── Legacy stubs (kept for backward compat / readiness endpoint) ──────────────

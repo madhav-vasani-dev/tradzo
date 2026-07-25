@@ -29,6 +29,11 @@ class Settings(BaseSettings):
     # XTS login "source": WebAPI for retail, WEBAPI/DEALERAPI variants exist.
     jainam_xts_source: str = "WebAPI"
 
+    # Delta Exchange — Indian endpoint for BTC option strategies.
+    delta_exchange_base_url: str = "https://api.india.delta.exchange/v2"
+    # USD → INR conversion rate used for BTC option PnL display.
+    usd_to_inr_rate: float = 85.0
+
     # Firebase
     firebase_credentials_path: str = "./firebase-service-account.json"
 

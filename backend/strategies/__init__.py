@@ -8,9 +8,11 @@ Adding a new strategy:
 
 from strategies.base_strategy import BaseStrategy  # noqa: F401 — re-exported
 from strategies.nifty_straddle import NiftyStraddleStrategy
+from strategies.btc_option_selling import BtcOptionSellingStrategy
 
 REGISTRY: dict[str, type[BaseStrategy]] = {
     NiftyStraddleStrategy.STRATEGY_CODE: NiftyStraddleStrategy,
+    BtcOptionSellingStrategy.STRATEGY_CODE: BtcOptionSellingStrategy,
 }
 
 

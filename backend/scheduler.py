@@ -68,15 +68,15 @@ def start_scheduler() -> AsyncIOScheduler | None:
         replace_existing=True,
     )
 
-    # ── 12:01 to 15:28 — Active Order Polling (every 1 minute) ────────────
+    # ── Active Order Polling (every 1 minute 24/7 for crypto + equity) ──────
     _scheduler.add_job(
         _run_async(execution_service.sync_order_statuses),
-        CronTrigger(day_of_week=_WEEKDAYS, hour="12-15", minute="*", timezone=IST),
+        CronTrigger(day_of_week="*", hour="*", minute="*", timezone=IST),
         id="sync_order_statuses",
         replace_existing=True,
     )
 
-    # ── 15:29 — Exit: cancel SL orders, square off remaining positions ─────
+    # ── 15:29 — Nifty Exit: cancel SL orders, square off remaining positions ─
     _scheduler.add_job(
         _run_async(execution_service.execute_exit),
         CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=29, timezone=IST),
@@ -89,6 +89,22 @@ def start_scheduler() -> AsyncIOScheduler | None:
         _run_sync(execution_service.eod_cleanup),
         CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=31, timezone=IST),
         id="eod_cleanup",
+        replace_existing=True,
+    )
+
+    # ── 17:01 — BTC entry: sell ATM BTC CE + PE via Delta Exchange (365 days) ─
+    _scheduler.add_job(
+        _run_async(execution_service.execute_btc_entry),
+        CronTrigger(day_of_week="*", hour=17, minute=1, timezone=IST),
+        id="execute_btc_entry",
+        replace_existing=True,
+    )
+
+    # ── 17:29 — BTC exit: cancel SL orders, square off BTC positions (365 days) 
+    _scheduler.add_job(
+        _run_async(execution_service.execute_btc_exit),
+        CronTrigger(day_of_week="*", hour=17, minute=29, timezone=IST),
+        id="execute_btc_exit",
         replace_existing=True,
     )
 

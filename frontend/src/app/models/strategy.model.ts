@@ -31,7 +31,7 @@ export interface StrategyPerformance {
   equityCurve: EquityPoint[];
 }
 
-export type StrategyCategory = 'Options' | 'Futures' | 'Equity' | 'Index';
+export type StrategyCategory = 'Options' | 'Futures' | 'Equity' | 'Index' | 'Crypto';
 export type RiskLevel = 'Low' | 'Medium' | 'High';
 
 export interface Strategy {
@@ -43,9 +43,9 @@ export interface Strategy {
   riskLevel: RiskLevel;
   isVisible: boolean;
   minimumAmount: number;
-  lotSize: number;          // Units per lot (e.g. 65 for Nifty)
+  lotSize: number;          // Units per lot (e.g. 1 for Delta, 65 for Nifty)
   strategyCode: string;     // Matches backend REGISTRY key (e.g. 'NIFTY_STRADDLE')
-  stopLossPercent: number;  // e.g. 30
+  stopLossPercent: number;  // e.g. 30 or 100
   entryTime: string;        // 'HH:MM'
   exitTime: string;         // 'HH:MM'
   tags: string[];
@@ -53,6 +53,16 @@ export interface Strategy {
   createdAt: any;
   updatedAt: any;
   createdByUid: string;
+  /** Broker required for this strategy ('upstox' | 'jainam' | 'delta'). Default: 'upstox' */
+  broker?: string;
+  /** Settlement currency for PnL display. Default: 'INR' */
+  currency?: 'INR' | 'USD';
+  /** If true, PnL is stored in USD with a parallel INR equivalent field. */
+  dualCurrencyPnl?: boolean;
+  /** If true, displays an asterisk (*) next to minimum investment indicating it varies with lot count. */
+  hasLotAsterisk?: boolean;
+  /** Optional note displayed below the equity curve chart (e.g. "* Equity curve is based on 100 lots"). */
+  equityNote?: string;
 }
 
 /** Status of a deployed strategy for a user throughout the trading day. */
@@ -65,7 +75,7 @@ export interface UserStrategy {
   strategyCode: string;
   strategyName: string;
   brokerAccountId: string;
-  brokerName: 'upstox' | 'jainam';
+  brokerName: 'upstox' | 'jainam' | 'delta';
   deployedAmount: number;
   multiplier: number;           // 1 = 1 lot, 2 = 2 lots, etc.
   status: UserStrategyStatus;   // live state machine status
