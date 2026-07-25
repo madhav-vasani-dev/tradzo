@@ -22,6 +22,7 @@ class BtcOptionSellingStrategy(BaseStrategy):
     STOP_LOSS_PCT = 100.0    # 100% above entry price triggers SL for short leg
     TRAIL_STEP_POINTS = 10.0 # For every 10 USD points favorable move (premium drop)
     TRAIL_MOVE_POINTS = 7.0  # Reduce stop-loss by 7 USD points
+    TARGET_PRICE_USD = 0.50  # Exit leg when option premium decays to $0.50 USD
 
     # ── Entry ─────────────────────────────────────────────────────────────────
 

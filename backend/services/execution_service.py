@@ -844,12 +844,12 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
 async def sync_order_statuses() -> dict:
     """Sync order status for active open positions to catch stop-loss triggers."""
     now = _now_ist()
-    # Market hours check (12:01 PM to 15:28 PM IST)
-    if not (12 <= now.hour <= 15):
+    # Market hours check (12:00 PM to 17:30 PM IST for Nifty + BTC)
+    if not (12 <= now.hour <= 17):
         return {"status": "outside_market_hours", "hour": now.hour}
     if now.hour == 12 and now.minute == 0:
         return {"status": "skipping_exact_entry"}
-    if now.hour == 15 and now.minute >= 29:
+    if now.hour == 15 and now.minute == 29 and not any(p.get("strategyCode") == "BTC_OPTION_SELLING" for p in open_positions):
         return {"status": "skipping_exact_exit"}
 
     today = _today()
@@ -932,7 +932,56 @@ async def sync_order_statuses() -> dict:
                         )
                         hits += 1
 
-                    # 2. Check Trailing SL update (if SL not hit)
+                    # 2. Check if Target Profit Hit (Option premium decays to <= $0.50 USD)
+                    elif current_ltp <= getattr(get_strategy("BTC_OPTION_SELLING"), "TARGET_PRICE_USD", 0.50):
+                        exit_price_usd = current_ltp
+                        exit_price_inr = delta_service.usd_to_inr(exit_price_usd, usd_inr_rate)
+                        pnl_usd = round((pos["entryPrice"] - exit_price_usd) * pos["quantity"], 6)
+                        pnl_inr = delta_service.usd_to_inr(pnl_usd, usd_inr_rate)
+
+                        if not pos.get("isPaper"):
+                            delta_creds = {}
+                            if account:
+                                tokens = token_store.get_tokens(account["id"])
+                                if tokens and tokens.get("broker") == "delta":
+                                    delta_creds = {"api_key": tokens.get("api_key"), "api_secret": tokens.get("api_secret")}
+                            try:
+                                await order_service.cancel_order(
+                                    access_token="delta_token",
+                                    order_id=pos.get("slOrderId", ""),
+                                    paper=False,
+                                    broker="delta",
+                                    delta_creds=delta_creds,
+                                    product_id=pos.get("instrumentKey"),
+                                )
+                            except Exception as e:
+                                log.warning("BTC live SL cancel on target hit failed: %s", e)
+
+                        position_service.update_position(pos["id"], {
+                            "status": "target_hit",
+                            "exitReason": "target_hit",
+                            "exitPrice": exit_price_usd,
+                            "exitPriceInr": exit_price_inr,
+                            "exitAt": _now_ist(),
+                            "pnl": pnl_usd,
+                            "pnlInr": pnl_inr,
+                        })
+                        _log(
+                            "target_hit",
+                            f"[{'PAPER ' if pos.get('isPaper') else ''}BTC TARGET HIT] {pos['symbol']} | "
+                            f"Option decayed to ${exit_price_usd:.2f} (Target $0.50) | "
+                            f"PnL ${pnl_usd:+.2f} (₹{pnl_inr:+.2f})",
+                            severity="success",
+                            date_str=today,
+                            user_id=user_id,
+                            user_name=user_name,
+                            strategy_id=pos.get("strategyId"),
+                            position_id=pos["id"],
+                            paper=pos.get("isPaper", True),
+                        )
+                        hits += 1
+
+                    # 3. Check Trailing SL update (if SL & Target not hit)
                     else:
                         try:
                             strategy_cls = get_strategy("BTC_OPTION_SELLING")
