@@ -202,14 +202,44 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     this.showDeployDialog = true;
   }
 
-  onDeployed(config: DeployConfig) {
-    this.isDeployed = true;
-    this.messageService.add({
-      severity: 'success',
-      summary: 'Strategy Deployed!',
-      detail: `${config.strategy.name} will go live at 9:15 AM IST on the next market day.`,
-      life: 6000
-    });
+  async onDeployed(config: DeployConfig) {
+    const currentUser = this.auth.currentUser;
+    if (!currentUser) {
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Not Authenticated',
+        detail: 'Please log in to deploy strategies.'
+      });
+      return;
+    }
+
+    try {
+      await this.strategyService.deployStrategy(
+        currentUser.uid,
+        config.strategy.id,
+        config.strategyCode,
+        config.strategy.name,
+        config.brokerAccountId,
+        config.brokerName,
+        config.deployedAmount,
+        config.multiplier
+      );
+
+      this.isDeployed = true;
+      this.messageService.add({
+        severity: 'success',
+        summary: 'Strategy Deployed!',
+        detail: `${config.strategy.name} deployed successfully with ${config.multiplier}x lot multiplier.`,
+        life: 6000
+      });
+    } catch (err: any) {
+      console.error('Error deploying strategy:', err);
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Deployment Failed',
+        detail: err.message || 'Failed to deploy strategy.'
+      });
+    }
   }
 
   pauseStrategy() {
