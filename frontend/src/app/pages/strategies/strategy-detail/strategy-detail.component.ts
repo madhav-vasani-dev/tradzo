@@ -11,6 +11,14 @@ import { Strategy, UserStrategy } from '../../../models/strategy.model';
 import { StrategyService } from '../../../core/services/strategy.service';
 import { DeployStrategyDialogComponent, DeployConfig } from '../../../shared/components/deploy-strategy-dialog/deploy-strategy-dialog.component';
 
+export interface TradeGroup {
+  date: string;
+  formattedDate: string;
+  totalPnl: number;
+  totalPnlInr: number;
+  trades: any[];
+}
+
 @Component({
   selector: 'app-strategy-detail',
   standalone: true,
@@ -293,6 +301,8 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     return `status-${status.toLowerCase()}`;
   }
 
+  groupedSimulatedTrades: TradeGroup[] = [];
+
   loadSimulatedTrades() {
     if (!this.strategy) return;
     this.isLoadingTrades = true;
@@ -300,6 +310,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
       this.strategyService.getStrategySimulatedTrades(this.strategy.id).subscribe({
         next: (trades) => {
           this.simulatedTrades = [...trades].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+          this.groupTradesByDate();
           this.isLoadingTrades = false;
         },
         error: (err) => {
@@ -308,6 +319,70 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
         }
       })
     );
+  }
+
+  private groupTradesByDate() {
+    const map = new Map<string, any[]>();
+    for (const trade of this.simulatedTrades) {
+      const d = trade.date || 'Unknown';
+      if (!map.has(d)) {
+        map.set(d, []);
+      }
+      map.get(d)!.push(trade);
+    }
+
+    const groups: TradeGroup[] = [];
+    map.forEach((tradeList, dateStr) => {
+      let totalPnl = 0;
+      let totalPnlInr = 0;
+      for (const t of tradeList) {
+        totalPnl += (t.pnl || 0);
+        totalPnlInr += (t.pnlInr || t.pnl || 0);
+      }
+      groups.push({
+        date: dateStr,
+        formattedDate: this.formatDate(dateStr),
+        totalPnl,
+        totalPnlInr,
+        trades: tradeList
+      });
+    });
+
+    groups.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
+    this.groupedSimulatedTrades = groups;
+  }
+
+  formatPrice(price: number | null | undefined): string {
+    if (price === null || price === undefined) return '—';
+    if (this.strategy?.currency === 'USD') {
+      return `$${price.toFixed(2)}`;
+    }
+    return this.formatINR(price);
+  }
+
+  formatTradePnl(trade: any): string {
+    if (!trade || trade.pnl === null || trade.pnl === undefined) return '—';
+    if (this.strategy?.currency === 'USD') {
+      const usdStr = (trade.pnl >= 0 ? '+' : '') + `$${trade.pnl.toFixed(2)}`;
+      if (trade.pnlInr !== undefined && trade.pnlInr !== null) {
+        const inrStr = (trade.pnlInr >= 0 ? '+' : '') + this.formatINR(trade.pnlInr);
+        return `${usdStr} (${inrStr})`;
+      }
+      return usdStr;
+    }
+    return (trade.pnl >= 0 ? '+' : '') + this.formatINR(trade.pnl);
+  }
+
+  formatGroupTotalPnl(group: TradeGroup): string {
+    if (this.strategy?.currency === 'USD') {
+      const usdStr = (group.totalPnl >= 0 ? '+' : '') + `$${group.totalPnl.toFixed(2)}`;
+      if (group.totalPnlInr !== 0) {
+        const inrStr = (group.totalPnlInr >= 0 ? '+' : '') + this.formatINR(group.totalPnlInr);
+        return `${usdStr} (${inrStr})`;
+      }
+      return usdStr;
+    }
+    return (group.totalPnl >= 0 ? '+' : '') + this.formatINR(group.totalPnl);
   }
 
   formatDate(dateStr: string): string {

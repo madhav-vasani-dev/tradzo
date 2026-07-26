@@ -253,7 +253,7 @@
     </table>
   </div>
 
-  <!-- Trades Tab -->
+  <!-- Trades Tab (Grouped by Date) -->
   <div class="yearly-section glass-card" *ngIf="activeTab === 'trades'">
     <div class="section-title tab-title-row">
       <span>Simulated Trade History</span>
@@ -265,43 +265,57 @@
         <div class="loading-spinner"></div>
         <p>Fetching simulated trade logs...</p>
       </div>
-    } @else if (simulatedTrades.length === 0) {
+    } @else if (groupedSimulatedTrades.length === 0) {
       <div class="trades-empty">
         <i class="pi pi-inbox empty-icon"></i>
         <p>No simulated trades recorded for this strategy yet.</p>
       </div>
     } @else {
       <div class="trades-table-container">
-        <table class="sim-trades-table">
-          <thead>
-            <tr>
-              <th>Date</th>
-              <th>Symbol</th>
-              <th>Type</th>
-              <th>Strike</th>
-              <th>Avg Entry</th>
-              <th>Avg Exit</th>
-              <th class="text-right">PnL</th>
-            </tr>
-          </thead>
-          <tbody>
-            @for (trade of simulatedTrades; track trade.id) {
-              <tr>
-                <td>{{ formatDate(trade.date) }}</td>
-                <td class="symbol-cell">{{ trade.symbol }}</td>
-                <td>
-                  <span class="option-type-badge" [class]="trade.optionType">{{ trade.optionType }}</span>
-                </td>
-                <td>{{ trade.strike }}</td>
-                <td>{{ formatINR(trade.entryPrice) }}</td>
-                <td>{{ trade.exitPrice ? formatINR(trade.exitPrice) : '—' }}</td>
-                <td class="pnl-cell text-right" [class.positive]="(trade.pnl || 0) > 0" [class.negative]="(trade.pnl || 0) < 0">
-                  {{ (trade.pnl || 0) > 0 ? '+' : '' }}{{ trade.pnl !== null ? formatINR(trade.pnl) : '—' }}
-                </td>
-              </tr>
-            }
-          </tbody>
-        </table>
+        @for (group of groupedSimulatedTrades; track group.date) {
+          <div class="trade-group-card" style="margin-bottom: 1.25rem; background: rgba(13, 21, 38, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden;">
+            <!-- Date Group Header -->
+            <div class="group-header" style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid rgba(255, 255, 255, 0.06);">
+              <div style="display: flex; align-items: center; gap: 0.5rem; font-weight: 700; color: #F0F4FF; font-size: 0.88rem;">
+                <i class="pi pi-calendar" style="color: #00C2E8;"></i>
+                {{ group.formattedDate }}
+              </div>
+              <div style="font-size: 0.85rem; font-weight: 700;" [class.positive]="group.totalPnl >= 0" [class.negative]="group.totalPnl < 0">
+                Daily PnL: {{ formatGroupTotalPnl(group) }}
+              </div>
+            </div>
+
+            <!-- Group Trades Table -->
+            <table class="sim-trades-table">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Type</th>
+                  <th>Strike</th>
+                  <th>Avg Entry</th>
+                  <th>Avg Exit</th>
+                  <th class="text-right">PnL</th>
+                </tr>
+              </thead>
+              <tbody>
+                @for (trade of group.trades; track trade.id) {
+                  <tr>
+                    <td class="symbol-cell">{{ trade.symbol }}</td>
+                    <td>
+                      <span class="option-type-badge" [class]="trade.optionType">{{ trade.optionType }}</span>
+                    </td>
+                    <td>{{ trade.strike }}</td>
+                    <td>{{ formatPrice(trade.entryPrice) }}</td>
+                    <td>{{ formatPrice(trade.exitPrice) }}</td>
+                    <td class="pnl-cell text-right" [class.positive]="(trade.pnl || 0) > 0" [class.negative]="(trade.pnl || 0) < 0">
+                      {{ formatTradePnl(trade) }}
+                    </td>
+                  </tr>
+                }
+              </tbody>
+            </table>
+          </div>
+        }
       </div>
     }
   </div>

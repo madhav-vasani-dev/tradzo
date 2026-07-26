@@ -53,12 +53,12 @@ def get_today_expiry_iso() -> str:
     return date.today().isoformat()
 
 
-def get_atm_strike_btc(spot: float, step: int = 100) -> int:
+def get_atm_strike_btc(spot: float, step: int = 200) -> int:
     """Round BTC spot price to nearest multiple of step.
 
-    Delta BTC options use $100 strike intervals.
+    Delta BTC options use $200 strike intervals.
     """
-    return round(spot / step) * step
+    return int(round(spot / step) * step)
 
 
 # ── HMAC-SHA256 auth signature ─────────────────────────────────────────────────
