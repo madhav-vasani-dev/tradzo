@@ -2,6 +2,7 @@ import { Component, Input, Output, EventEmitter } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { RouterModule } from '@angular/router';
 import { Strategy, UserStrategy } from '../../../models/strategy.model';
+import { formatMoney as fmtMoney } from '../../../core/format';
 
 @Component({
   selector: 'app-strategy-card',
@@ -26,10 +27,8 @@ export class StrategyCardComponent {
   }
 
 
-  formatINR(value: number): string {
-    return new Intl.NumberFormat('en-IN', {
-      style: 'currency', currency: 'INR', maximumFractionDigits: 0
-    }).format(value);
+  formatMoney(value: number): string {
+    return fmtMoney(value, this.strategy?.currency);
   }
 
 }

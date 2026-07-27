@@ -54,7 +54,7 @@ export const BROKER_REGISTRY: BrokerMeta[] = [
   {
     name: 'upstox',
     label: 'Upstox',
-    description: 'Connect your Upstox account using your own Upstox API app. Supports F&O, equity, and index strategies.',
+    description: 'Connect your Upstox account using your own Upstox API app. Supports options, futures, equity, and index strategies.',
     logoUrl: '',
     authType: 'oauth',
     credentialFields: [
@@ -110,7 +110,7 @@ export const BROKER_REGISTRY: BrokerMeta[] = [
   {
     name: 'delta',
     label: 'Delta Exchange',
-    description: 'Connect your Delta Exchange account using your own API key and secret. Used for BTC Option Selling strategy (17:01–17:29 IST).',
+    description: 'Connect your Delta Exchange account using your own API key and secret. Used for crypto options strategies.',
     logoUrl: '',
     authType: 'session',
     credentialFields: [

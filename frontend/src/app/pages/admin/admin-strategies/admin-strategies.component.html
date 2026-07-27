@@ -61,7 +61,7 @@
               <span class="sep">·</span>
               <span><i class="pi pi-shield"></i> {{ strategy.performance.maxDrawdown }}% Max DD</span>
               <span class="sep">·</span>
-              <span><i class="pi pi-indian-rupee"></i> {{ formatINR(strategy.minimumAmount) }} min</span>
+              <span>{{ formatMoney(strategy.minimumAmount, strategy.currency) }} min</span>
               <span class="sep">·</span>
               <span><i class="pi pi-users"></i> — users deployed</span>
             </div>

@@ -359,4 +359,22 @@
   }
 }
 
+// ── Tablet band (641–1024px): drop to a 3-column layout so it isn't cramped ──
+@include tablet-only {
+  .table-header {
+    display: grid;
+    grid-template-columns: 2.5fr 1fr 1.5fr;
+  }
+
+  .table-row {
+    grid-template-columns: 2.5fr 1fr 1.5fr;
+  }
+
+  // Hide the least important columns; keep User / Role / Actions.
+  .col-joined,
+  .col-strategies {
+    display: none;
+  }
+}
+
 @keyframes spin { to { transform: rotate(360deg); } }

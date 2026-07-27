@@ -25,7 +25,7 @@
     </div>
     <div class="print-meta">
       <p><strong>Report Period:</strong> {{ formatDate(startDate) }} to {{ formatDate(endDate) }}</p>
-      <p><strong>Generated At:</strong> {{ formatDate(endDate) }} IST</p>
+      <p><strong>Generated At:</strong> {{ formatDate(endDate) }}</p>
     </div>
   </div>
 
@@ -86,7 +86,7 @@
         <div class="stat-info">
           <span class="stat-label">Net Realised P&L</span>
           <span class="stat-value" [class]="getPnlClass(netPnl)">
-            {{ netPnl > 0 ? '+' : '' }}{{ formatINR(netPnl) }}
+            {{ netPnl > 0 ? '+' : '' }}{{ formatMoney(netPnl, reportCurrency) }}
           </span>
         </div>
       </div>
@@ -105,7 +105,7 @@
         <div class="stat-info">
           <span class="stat-label">Total Trades</span>
           <span class="stat-value">{{ totalTrades }}</span>
-          <span class="stat-sub">Option legs squared off</span>
+          <span class="stat-sub">Trades squared off</span>
         </div>
       </div>
 
@@ -113,7 +113,7 @@
         <div class="stat-icon profit"><i class="pi pi-arrow-up-right"></i></div>
         <div class="stat-info">
           <span class="stat-label">Gross Profit</span>
-          <span class="stat-value text-green">{{ formatINR(totalProfit) }}</span>
+          <span class="stat-value text-green">{{ formatMoney(totalProfit, reportCurrency) }}</span>
         </div>
       </div>
 
@@ -121,7 +121,7 @@
         <div class="stat-icon loss"><i class="pi pi-arrow-down-left"></i></div>
         <div class="stat-info">
           <span class="stat-label">Gross Loss</span>
-          <span class="stat-value text-red">{{ formatINR(totalLoss) }}</span>
+          <span class="stat-value text-red">{{ formatMoney(totalLoss, reportCurrency) }}</span>
         </div>
       </div>
     </div>
@@ -142,7 +142,7 @@
     <div class="empty-container glass-card">
       <i class="pi pi-inbox empty-icon"></i>
       <h3>No trades recorded</h3>
-      <p>No option trade positions found matching the selected dates and filters.</p>
+      <p>No trade positions found matching the selected dates and filters.</p>
     </div>
   } @else {
     <!-- ── Detailed Trades Table ── -->
@@ -162,23 +162,23 @@
       <div class="table-body">
         @for (pos of positions; track pos.id) {
           <div class="table-row">
-            <div class="td col-date">{{ formatDate(pos.date) }}</div>
-            <div class="td col-symbol">
+            <div class="td col-date" data-label="Date">{{ formatDate(pos.date) }}</div>
+            <div class="td col-symbol" data-label="Symbol">
               <span class="sym-text">{{ pos.symbol }}</span>
               <span class="paper-badge" *ngIf="pos.isPaper">Paper</span>
             </div>
-            <div class="td col-broker">
+            <div class="td col-broker" data-label="Broker">
               <span class="broker-badge" [class]="pos.broker">{{ pos.broker | uppercase }}</span>
             </div>
-            <div class="td col-type">
+            <div class="td col-type" data-label="Type">
               <span class="option-type-badge" [class]="pos.optionType">{{ pos.optionType }}</span>
             </div>
-            <div class="td col-strike">{{ pos.strike }}</div>
-            <div class="td col-price">{{ formatINR(pos.entryPrice) }}</div>
-            <div class="td col-price">{{ pos.exitPrice ? formatINR(pos.exitPrice) : '—' }}</div>
-            <div class="td col-qty">{{ pos.quantity }}</div>
-            <div class="td col-pnl text-right font-semibold" [class]="getPnlClass(pos.pnl)">
-              {{ pos.pnl > 0 ? '+' : '' }}{{ pos.pnl !== null ? formatINR(pos.pnl) : '—' }}
+            <div class="td col-strike" data-label="Strike">{{ pos.strike }}</div>
+            <div class="td col-price" data-label="Avg Entry">{{ posPrice(pos, 'entryPrice') }}</div>
+            <div class="td col-price" data-label="Avg Exit">{{ pos.exitPrice ? posPrice(pos, 'exitPrice') : '—' }}</div>
+            <div class="td col-qty" data-label="Qty">{{ pos.quantity }}</div>
+            <div class="td col-pnl text-right font-semibold" data-label="PnL" [class]="getPnlClass(pos.pnl)">
+              {{ pos.pnl > 0 ? '+' : '' }}{{ pos.pnl !== null ? posPnl(pos) : '—' }}
             </div>
           </div>
         }

@@ -9,6 +9,7 @@ import { BrokerService } from '../../core/services/broker.service';
 import { AuthService } from '../../core/services/auth.service';
 import { BrokerAccount, BrokerMeta, BROKER_REGISTRY } from '../../models/broker-account.model';
 import { ConnectBrokerDialogComponent } from '../../shared/components/connect-broker-dialog/connect-broker-dialog.component';
+import { formatDate } from '../../core/format';
 
 @Component({
   selector: 'app-broker-accounts',
@@ -184,7 +185,7 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
   formatDate(ts: any): string {
     if (!ts) return '—';
     const date = ts.toDate ? ts.toDate() : new Date(ts);
-    return date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    return formatDate(date, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
   formatExpiry(ts: any): string {
@@ -195,6 +196,6 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
     if (diffH < 0) return 'Expired';
     if (diffH < 1) return 'Expiring soon';
     if (diffH < 24) return `Expires in ${diffH}h`;
-    return `Expires ${date.toLocaleDateString('en-IN', { day: 'numeric', month: 'short' })}`;
+    return `Expires ${formatDate(date, { day: 'numeric', month: 'short' })}`;
   }
 }

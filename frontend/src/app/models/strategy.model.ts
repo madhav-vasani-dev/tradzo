@@ -63,6 +63,13 @@ export interface Strategy {
   hasLotAsterisk?: boolean;
   /** Optional note displayed below the equity curve chart (e.g. "* Equity curve is based on 100 lots"). */
   equityNote?: string;
+  /**
+   * Underlying units represented by a single unit of a trade's `quantity`.
+   * Lets the UI show size in the underlying (e.g. 0.001 BTC per contract → 100 qty = 0.1 BTC).
+   */
+  contractNotional?: number;
+  /** Symbol of the underlying used with contractNotional (e.g. 'BTC'). */
+  underlyingSymbol?: string;
 }
 
 /** Status of a deployed strategy for a user throughout the trading day. */
@@ -85,6 +92,8 @@ export interface UserStrategy {
   lastTradedAt?: any | null;
   pausedAt?: any | null;
   stoppedAt?: any | null;
+  /** Settlement/display currency for this deployment. Falls back to 'INR' when absent. */
+  currency?: string;
 }
 
 /** A single open/closed option leg for a user's deployed strategy. */
@@ -116,4 +125,12 @@ export interface Position {
   pnl: number | null;
   entryAt: any;
   isPaper: boolean;
+  /** Native settlement currency for prices/PnL on this position. Falls back to 'INR' when absent. */
+  currency?: string;
+  /** INR equivalents (populated for non-INR-settled instruments, e.g. crypto). Preferred for display. */
+  entryPriceInr?: number | null;
+  slPriceInr?: number | null;
+  exitPriceInr?: number | null;
+  pnlInr?: number | null;
+  usdToInrRate?: number | null;
 }

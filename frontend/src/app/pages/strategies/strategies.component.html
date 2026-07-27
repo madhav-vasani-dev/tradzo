@@ -116,7 +116,7 @@
   }
 
   <!-- Confirmation Dialog -->
-  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px' }" styleClass="custom-confirm-dialog">
+  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px', maxWidth: '95vw' }" styleClass="custom-confirm-dialog">
     <div class="confirm-content" style="padding: 1rem 0; color: #8B95B0; font-size: 0.9rem; line-height: 1.5;">
       {{ confirmMsg }}
     </div>

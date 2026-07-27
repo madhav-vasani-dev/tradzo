@@ -7,6 +7,7 @@ import { Subscription } from 'rxjs';
 import { StrategyService } from '../../../core/services/strategy.service';
 import { Strategy } from '../../../models/strategy.model';
 import { MOCK_STRATEGIES } from '../../strategies/strategies.mock';
+import { formatMoney, CurrencyCode } from '../../../core/format';
 
 @Component({
   selector: 'app-admin-strategies',
@@ -87,8 +88,8 @@ export class AdminStrategiesComponent implements OnInit, OnDestroy {
     }
   }
 
-  formatINR(value: number): string {
-    return `₹${value.toLocaleString('en-IN')}`;
+  formatMoney(value: number | null | undefined, currency?: CurrencyCode): string {
+    return formatMoney(value, currency);
   }
 }
 

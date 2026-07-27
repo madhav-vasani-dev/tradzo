@@ -61,6 +61,12 @@
   background: rgba(0,0,0,0.2);
   border-radius: 10px;
   padding: 0.75rem 0.5rem;
+
+  // On narrow cards four metrics get cramped — drop to a 2×2 grid.
+  @include below(420px) {
+    grid-template-columns: 1fr 1fr;
+    gap: 0.75rem 0.5rem;
+  }
 }
 
 .metric {
@@ -68,6 +74,12 @@
 
   &:not(:last-child) {
     border-right: 1px solid $border-default;
+  }
+
+  // The 2×2 layout only wants a divider between the two columns.
+  @include below(420px) {
+    &:not(:last-child) { border-right: none; }
+    &:nth-child(odd) { border-right: 1px solid $border-default; }
   }
 }
 

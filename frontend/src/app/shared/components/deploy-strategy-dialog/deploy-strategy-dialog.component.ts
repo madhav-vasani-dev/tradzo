@@ -7,6 +7,7 @@ import { Subscription } from 'rxjs';
 import { Strategy } from '../../../models/strategy.model';
 import { BrokerAccount, BrokerName } from '../../../models/broker-account.model';
 import { BrokerService } from '../../../core/services/broker.service';
+import { formatMoney as fmtMoney } from '../../../core/format';
 
 export interface DeployConfig {
   strategy: Strategy;
@@ -133,7 +134,7 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
     this.multiplier = value;
   }
 
-  formatINR(value: number): string {
-    return `₹${value.toLocaleString('en-IN')}`;
+  formatMoney(value: number): string {
+    return fmtMoney(value, this.strategy?.currency);
   }
 }

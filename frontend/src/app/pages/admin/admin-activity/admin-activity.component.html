@@ -97,11 +97,11 @@
               @if (log.metadata && (log.metadata.symbol || log.metadata.avgStrike || log.metadata.pnl !== undefined)) {
                 <div class="tc-meta">
                   <span *ngIf="log.metadata.symbol"><strong>Symbol:</strong> {{ log.metadata.symbol }}</span>
-                  <span *ngIf="log.metadata.entryPrice"><strong>Avg Entry:</strong> ₹{{ log.metadata.entryPrice }}</span>
-                  <span *ngIf="log.metadata.exitPrice"><strong>Avg Exit:</strong> ₹{{ log.metadata.exitPrice }}</span>
+                  <span *ngIf="log.metadata.entryPrice"><strong>Avg Entry:</strong> {{ formatMoney(log.metadata.entryPrice, log.metadata?.currency) }}</span>
+                  <span *ngIf="log.metadata.exitPrice"><strong>Avg Exit:</strong> {{ formatMoney(log.metadata.exitPrice, log.metadata?.currency) }}</span>
                   <span *ngIf="log.metadata.quantity"><strong>Qty:</strong> {{ log.metadata.quantity }}</span>
                   <span *ngIf="log.metadata.pnl !== undefined" [class]="log.metadata.pnl >= 0 ? 'text-green' : 'text-red'">
-                    <strong>PnL:</strong> ₹{{ log.metadata.pnl }}
+                    <strong>PnL:</strong> {{ formatMoney(log.metadata.pnl, log.metadata?.currency) }}
                   </span>
                 </div>
               }

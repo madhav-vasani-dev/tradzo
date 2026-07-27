@@ -5,6 +5,7 @@ import { Router } from '@angular/router';
 import { AuthService } from '../../core/services/auth.service';
 import { StrategyService } from '../../core/services/strategy.service';
 import { AdminService } from '../../core/services/admin.service';
+import { formatMoney, formatDate, CurrencyCode } from '../../core/format';
 
 @Component({
   selector: 'app-pnl',
@@ -129,7 +130,8 @@ export class PnlComponent implements OnInit {
     this.totalLoss = 0;
 
     for (const pos of this.positions) {
-      const pnl = pos.pnl || 0;
+      // Prefer the INR-equivalent so the report totals in a single currency.
+      const pnl = (pos.pnlInr ?? pos.pnl) || 0;
       this.netPnl += pnl;
 
       if (pnl > 0) {
@@ -150,16 +152,16 @@ export class PnlComponent implements OnInit {
     if (this.positions.length === 0) return;
 
     const headers = ['Date', 'Symbol', 'Broker', 'Type', 'Strike', 'Entry Price', 'Exit Price', 'Qty', 'P&L'];
-    const rows = this.positions.map(p => [
+    const rows = this.positions.map((p: any) => [
       p.date,
       p.symbol,
       p.broker.toUpperCase(),
       p.optionType,
       p.strike,
-      p.entryPrice,
-      p.exitPrice || '—',
+      p.entryPriceInr ?? p.entryPrice,
+      (p.exitPriceInr ?? p.exitPrice) ?? '—',
       p.quantity,
-      p.pnl !== null ? p.pnl : '—'
+      (p.pnlInr ?? p.pnl) !== null && (p.pnlInr ?? p.pnl) !== undefined ? (p.pnlInr ?? p.pnl) : '—'
     ]);
 
     const csvContent = [
@@ -184,14 +186,36 @@ export class PnlComponent implements OnInit {
 
   // Formatting helpers
 
-  formatINR(value: number): string {
-    return `₹${value.toLocaleString('en-IN', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+  /**
+   * Display currency for the report. Each position shows its INR-equivalent when available,
+   * so the report is INR unless every position is a single non-INR currency with no INR value.
+   */
+  get reportCurrency(): CurrencyCode {
+    const displayed = new Set(
+      this.positions.map((p: any) => (p.pnlInr !== undefined && p.pnlInr !== null ? 'INR' : (p.currency || 'INR')))
+    );
+    return displayed.size === 1 ? [...displayed][0] : 'INR';
+  }
+
+  formatMoney(value: number | null | undefined, currency?: CurrencyCode): string {
+    return formatMoney(value, currency, { decimals: 2 });
+  }
+
+  /** A position price, preferring the INR-equivalent field when present. */
+  posPrice(pos: any, base: string): string {
+    const inr = pos?.[`${base}Inr`];
+    if (inr !== undefined && inr !== null) return formatMoney(inr, 'INR', { decimals: 2 });
+    return formatMoney(pos?.[base], pos?.currency, { decimals: 2 });
+  }
+
+  /** A position PnL, preferring the INR-equivalent field when present. */
+  posPnl(pos: any): string {
+    if (pos?.pnlInr !== undefined && pos?.pnlInr !== null) return formatMoney(pos.pnlInr, 'INR', { decimals: 2 });
+    return formatMoney(pos?.pnl, pos?.currency, { decimals: 2 });
   }
 
   formatDate(dateStr: string): string {
-    if (!dateStr) return '—';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    return formatDate(dateStr);
   }
 
   getPnlClass(pnl: number): string {

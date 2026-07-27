@@ -8,6 +8,7 @@ import { Subscription } from 'rxjs';
 import { AdminService } from '../../../core/services/admin.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { TradzoUser } from '../../../models/user.model';
+import { formatDate as formatDateUtil } from '../../../core/format';
 
 @Component({
   selector: 'app-admin-users',
@@ -92,7 +93,7 @@ export class AdminUsersComponent implements OnInit, OnDestroy {
 
   formatDate(ts: any): string {
     if (!ts) return '—';
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const d = ts.toDate ? ts.toDate() : ts;
+    return formatDateUtil(d, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 }

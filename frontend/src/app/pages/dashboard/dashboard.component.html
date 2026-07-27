@@ -34,7 +34,7 @@
         <div class="stat-icon margin"><i class="pi pi-wallet"></i></div>
         <div class="stat-info">
           <span class="stat-label">Deployed Margin</span>
-          <span class="stat-value">{{ formatINR(totalCapital) }}</span>
+          <span class="stat-value">{{ formatMoney(totalCapital, portfolioCurrency) }}</span>
         </div>
       </div>
 
@@ -51,7 +51,7 @@
         <div class="stat-info">
           <span class="stat-label">Today's P&L</span>
           <span class="stat-value" [class]="getPnlClass(runningPnl)">
-            {{ runningPnl > 0 ? '+' : '' }}{{ formatINR(runningPnl) }}
+            {{ runningPnl > 0 ? '+' : '' }}{{ formatMoney(runningPnl, portfolioCurrency) }}
           </span>
         </div>
       </div>
@@ -93,7 +93,7 @@
                   </div>
                   <div class="metric">
                     <span class="metric-label">Deployed Capital</span>
-                    <span class="metric-value">{{ formatINR(dep.deployedAmount) }}</span>
+                    <span class="metric-value">{{ formatMoney(dep.deployedAmount, dep.currency) }}</span>
                   </div>
                 </div>
 
@@ -118,7 +118,7 @@
       <!-- Active Positions Section -->
       <div class="grid-section active-positions">
         <div class="section-header">
-          <h3><i class="pi pi-desktop text-gold"></i> Live Option Positions</h3>
+          <h3><i class="pi pi-desktop text-gold"></i> Live Positions</h3>
           <span class="badge status-badge live" *ngIf="positions.length > 0">Live</span>
         </div>
 
@@ -126,7 +126,7 @@
           <div class="empty-card">
             <i class="pi pi-clock empty-icon"></i>
             <p>No active trade positions running.</p>
-            <span class="empty-sub">Straddle execution starts at 12:00 PM IST on trading days.</span>
+            <span class="empty-sub">Positions open automatically during each strategy's scheduled trading session.</span>
           </div>
         } @else {
           <div class="positions-list">
@@ -143,15 +143,15 @@
                 <div class="pos-details">
                   <div class="pos-detail-col">
                     <span class="label">Average Entry</span>
-                    <span class="value">{{ formatINR(pos.entryPrice) }}</span>
+                    <span class="value">{{ posPrice(pos, 'entryPrice') }}</span>
                   </div>
                   <div class="pos-detail-col">
                     <span class="label">Stop Loss</span>
-                    <span class="value sl">{{ formatINR(pos.slPrice) }}</span>
+                    <span class="value sl">{{ posPrice(pos, 'slPrice') }}</span>
                   </div>
                   <div class="pos-detail-col" *ngIf="pos.exitPrice">
                     <span class="label">Exit Price</span>
-                    <span class="value">{{ formatINR(pos.exitPrice) }}</span>
+                    <span class="value">{{ posPrice(pos, 'exitPrice') }}</span>
                   </div>
                   <div class="pos-detail-col">
                     <span class="label">Quantity</span>
@@ -163,7 +163,7 @@
                   <div class="pnl-wrapper">
                     <span class="pnl-label">PnL</span>
                     <span class="pnl-value" [class]="getPnlClass(pos.pnl)">
-                      {{ (pos.pnl || 0) > 0 ? '+' : '' }}{{ formatINR(pos.pnl || 0) }}
+                      {{ (pos.pnl || 0) > 0 ? '+' : '' }}{{ posPnl(pos) }}
                     </span>
                   </div>
                 </div>
@@ -176,7 +176,7 @@
   }
 
   <!-- Confirmation Dialog -->
-  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px' }" styleClass="custom-confirm-dialog">
+  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px', maxWidth: '95vw' }" styleClass="custom-confirm-dialog">
     <div class="confirm-content" style="padding: 1rem 0; color: #8B95B0; font-size: 0.9rem; line-height: 1.5;">
       {{ confirmMsg }}
     </div>

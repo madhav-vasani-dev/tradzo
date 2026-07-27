@@ -29,6 +29,48 @@ export class StrategyService {
 
   // ── Public (user-facing) ──────────────────────────────────────────────────
 
+  /** Underlying units per contract for crypto instruments (used to show size, e.g. 0.001 BTC per contract). */
+  private static readonly CRYPTO_CONTRACT_NOTIONAL: Record<string, number> = {
+    BTC: 0.001,
+    ETH: 0.01,
+  };
+
+  /**
+   * Normalize a strategy for display.
+   * 1) Instruments that settle in a foreign currency (e.g. crypto in USD) are stored with
+   *    per-value INR equivalents by the backend, and the product displays everything in INR —
+   *    so we surface INR as the display currency (raw settlement value stays in the trade docs).
+   * 2) Backfill the underlying contract notional for crypto strategies so quantities can be
+   *    shown in the underlying (e.g. 0.1 BTC), driven by the strategy's own tags/instrument.
+   */
+  private toDisplayCurrency(s: Strategy): Strategy {
+    if (!s) return s;
+    let out = s;
+
+    if (out.currency && out.currency.toUpperCase() !== 'INR') {
+      out = { ...out, currency: 'INR', dualCurrencyPnl: false };
+    }
+
+    if (out.category === 'Crypto' && (!out.contractNotional || !out.underlyingSymbol)) {
+      const sym = this.detectUnderlying(out);
+      if (sym) {
+        out = {
+          ...out,
+          underlyingSymbol: out.underlyingSymbol || sym,
+          contractNotional: out.contractNotional || StrategyService.CRYPTO_CONTRACT_NOTIONAL[sym],
+        };
+      }
+    }
+    return out;
+  }
+
+  /** Best-effort underlying symbol from a strategy's tags or instrument type (BTC, ETH, …). */
+  private detectUnderlying(s: Strategy): string | null {
+    const known = Object.keys(StrategyService.CRYPTO_CONTRACT_NOTIONAL);
+    const haystack = [...(s.tags || []), s.instrumentType || ''].map(t => (t || '').toUpperCase());
+    return known.find(sym => haystack.some(h => h.includes(sym))) || null;
+  }
+
   /** Returns only visible strategies for regular users */
   getVisibleStrategies(): Observable<Strategy[]> {
     const ref = collection(this.firestore, 'strategies');
@@ -36,6 +78,7 @@ export class StrategyService {
       map(strategies => [...strategies]
         .filter(s => s.isVisible)
         .sort((a, b) => this.createdMillis(b) - this.createdMillis(a))
+        .map(s => this.toDisplayCurrency(s))
       )
     );
   }
@@ -43,7 +86,9 @@ export class StrategyService {
   /** Returns a single strategy by ID */
   getStrategy(id: string): Observable<Strategy> {
     const ref = doc(this.firestore, `strategies/${id}`);
-    return docData(ref, { idField: 'id' }) as Observable<Strategy>;
+    return (docData(ref, { idField: 'id' }) as Observable<Strategy>).pipe(
+      map(s => this.toDisplayCurrency(s))
+    );
   }
 
   /** Returns all userStrategy deployments for a given user */
@@ -177,7 +222,10 @@ export class StrategyService {
   getAllStrategies(): Observable<Strategy[]> {
     const ref = collection(this.firestore, 'strategies');
     return (collectionData(ref, { idField: 'id' }) as Observable<Strategy[]>).pipe(
-      map(strategies => [...strategies].sort((a, b) => this.createdMillis(b) - this.createdMillis(a)))
+      map(strategies => [...strategies]
+        .sort((a, b) => this.createdMillis(b) - this.createdMillis(a))
+        .map(s => this.toDisplayCurrency(s))
+      )
     );
   }
 

@@ -6,7 +6,7 @@
   [resizable]="false"
   styleClass="deploy-dialog"
   (onHide)="close()"
-  [style]="{ width: '540px' }"
+  [style]="{ width: '540px', maxWidth: '95vw' }"
 >
   <!-- ── Dialog Header ──────────────────────────────────────────────── -->
   <ng-template pTemplate="header">
@@ -112,7 +112,7 @@
         <div class="amount-section">
           <div class="min-amount-info">
             <span class="min-label">Base Margin (1 Lot = {{ strategy.lotSize }} units)</span>
-            <span class="min-value">{{ formatINR(strategy.minimumAmount) }}</span>
+            <span class="min-value">{{ formatMoney(strategy.minimumAmount) }}</span>
           </div>
 
           <div class="multiplier-selector-wrapper">
@@ -147,8 +147,8 @@
           <!-- Total Capital preview -->
           <div class="capital-preview-card">
             <div class="preview-label">Estimated Total Margin Required:</div>
-            <div class="preview-value">{{ formatINR(deployedCapital) }}</div>
-            <div class="preview-subtext">Lots: {{ multiplier }} | Total Option Units: {{ multiplier * strategy.lotSize }}</div>
+            <div class="preview-value">{{ formatMoney(deployedCapital) }}</div>
+            <div class="preview-subtext">Lots: {{ multiplier }} | Total Units: {{ multiplier * strategy.lotSize }}</div>
           </div>
         </div>
       </div>
@@ -189,13 +189,13 @@
           </div>
           <div class="confirm-row highlight">
             <span class="confirm-label">Total Capital Deployed</span>
-            <span class="confirm-value amount-display">{{ formatINR(deployedCapital) }}</span>
+            <span class="confirm-value amount-display">{{ formatMoney(deployedCapital) }}</span>
           </div>
         </div>
 
         <div class="confirm-notice">
           <i class="pi pi-shield"></i>
-          <span>Execution starts automatically at {{ strategy.entryTime }} IST on every trading session.</span>
+          <span>Execution starts automatically at {{ strategy.entryTime }} on every trading session.</span>
         </div>
       </div>
     }

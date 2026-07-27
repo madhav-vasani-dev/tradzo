@@ -207,31 +207,6 @@
 
 // ── Mobile Responsiveness (down to 320px) ───────────────────────────────────
 @media (max-width: 576px) {
-  .page-header {
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 1rem;
-    
-    .header-stats {
-      width: 100%;
-      display: grid;
-      grid-template-columns: repeat(2, 1fr);
-      gap: 0.5rem;
-
-      .stat-pill {
-        padding: 0.5rem;
-        min-width: unset;
-
-        .stat-val {
-          font-size: 1.25rem;
-        }
-        .stat-lbl {
-          font-size: 0.65rem;
-        }
-      }
-    }
-  }
-
   .meta-row {
     flex-direction: column;
     align-items: flex-start;

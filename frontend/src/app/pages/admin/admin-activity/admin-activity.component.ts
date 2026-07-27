@@ -5,6 +5,7 @@ import { Subscription } from 'rxjs';
 import { AdminService } from '../../../core/services/admin.service';
 import { AuthService } from '../../../core/services/auth.service';
 import { StrategyService } from '../../../core/services/strategy.service';
+import { formatMoney, CurrencyCode } from '../../../core/format';
 
 @Component({
   selector: 'app-admin-activity',
@@ -150,6 +151,10 @@ export class AdminActivityComponent implements OnInit, OnDestroy {
   formatLogType(type: string): string {
     if (!type) return '';
     return type.split('_').map(w => w.charAt(0).toUpperCase() + w.slice(1)).join(' ');
+  }
+
+  formatMoney(value: number | null | undefined, currency?: CurrencyCode): string {
+    return formatMoney(value, currency);
   }
 }
 

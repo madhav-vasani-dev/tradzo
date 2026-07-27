@@ -171,12 +171,12 @@ export const MOCK_STRATEGIES: Strategy[] = [
     id: 'btc-option-selling',
     name: 'BTC Option Selling',
     strategyCode: 'BTC_OPTION_SELLING',
-    description: 'Sells ATM BTC Call + Put options on Delta Exchange at 17:01 IST every trading day using the current day\'s expiry. Each leg has a 100% stop-loss (doubles the premium) placed as a stop-market order at entry. Positions are squared off at 17:29 IST. PnL is tracked in both USD and INR.',
+    description: 'Sells ATM BTC Call + Put options on Delta Exchange at 17:01 IST every trading day using the current day\'s expiry. Each leg has a 100% stop-loss (doubles the premium) placed as a stop-market order at entry. Positions are squared off at 17:29 IST. PnL is displayed in INR.',
     category: 'Crypto',
     instrumentType: 'BTC Daily Options (Delta Exchange)',
     riskLevel: 'High',
     isVisible: true,
-    minimumAmount: 7000,    // ₹7,000 per lot
+    minimumAmount: 7000,    // ₹7,000 base margin for 100 lots
     hasLotAsterisk: true,   // Displays * next to minimum investment
     equityNote: '* Note: Equity curve & backtest performance is based on 100 lots.',
     lotSize: 1,             // 1 Delta contract (0.001 BTC notional)
@@ -184,8 +184,10 @@ export const MOCK_STRATEGIES: Strategy[] = [
     entryTime: '17:01',
     exitTime: '17:29',
     broker: 'delta',
-    currency: 'USD',
-    dualCurrencyPnl: true,
+    currency: 'INR',        // trades settle in USD but are displayed in INR
+    dualCurrencyPnl: false,
+    contractNotional: 0.001, // 0.001 BTC per contract → 100 qty = 0.1 BTC
+    underlyingSymbol: 'BTC',
     tags: ['Intraday', 'Crypto', 'Options Selling', 'Straddle', 'ATM', 'BTC', 'Delta Exchange'],
     performance: {
       cagr: 18.20,

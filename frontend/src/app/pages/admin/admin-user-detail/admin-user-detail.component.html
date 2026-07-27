@@ -81,7 +81,7 @@
                 <div class="sr-meta">
                   <span>{{ us.brokerName | titlecase }}</span>
                   <span class="sep">·</span>
-                  <span>{{ formatINR(us.deployedAmount) }}</span>
+                  <span>{{ formatMoney(us.deployedAmount, us.currency) }}</span>
                   <span class="sep">·</span>
                   <span>Deployed {{ formatDate(us.deployedAt) }}</span>
                 </div>

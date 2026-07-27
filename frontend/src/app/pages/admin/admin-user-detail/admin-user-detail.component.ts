@@ -8,6 +8,7 @@ import { AdminService } from '../../../core/services/admin.service';
 import { StrategyService } from '../../../core/services/strategy.service';
 import { TradzoUser } from '../../../models/user.model';
 import { UserStrategy } from '../../../models/strategy.model';
+import { formatMoney, formatDate as formatDateUtil, CurrencyCode } from '../../../core/format';
 
 @Component({
   selector: 'app-admin-user-detail',
@@ -69,12 +70,12 @@ export class AdminUserDetailComponent implements OnInit, OnDestroy {
 
   formatDate(ts: any): string {
     if (!ts) return '—';
-    const d = ts.toDate ? ts.toDate() : new Date(ts);
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    const d = ts.toDate ? ts.toDate() : ts;
+    return formatDateUtil(d, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 
-  formatINR(value: number): string {
-    return `₹${value.toLocaleString('en-IN')}`;
+  formatMoney(value: number | null | undefined, currency?: CurrencyCode): string {
+    return formatMoney(value, currency);
   }
 
   goBack() { this.router.navigate(['/admin/users']); }

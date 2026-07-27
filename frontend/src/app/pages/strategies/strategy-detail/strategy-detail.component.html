@@ -55,7 +55,7 @@
     <div class="deploy-panel">
       <div class="deploy-panel-inner">
         <div class="min-amount-label">Minimum Investment</div>
-        <div class="min-amount-value">{{ formatINR(strategy.minimumAmount) }}<span *ngIf="strategy.hasLotAsterisk">*</span></div>
+        <div class="min-amount-value">{{ formatMoney(strategy.minimumAmount) }}<span *ngIf="strategy.hasLotAsterisk">*</span></div>
         <div *ngIf="strategy.hasLotAsterisk" style="font-size: 0.72rem; color: #8B95B0; margin-top: 0.2rem;">* Varies based on user's lot size count</div>
 
         @if (!isDeployed) {
@@ -151,7 +151,7 @@
       </div>
       <div class="sec-metric">
         <div class="sec-label">Expectancy / Trade</div>
-        <div class="sec-value">{{ formatINR(strategy.performance.expectancy) }}</div>
+        <div class="sec-value">{{ formatMoney(strategy.performance.expectancy) }}</div>
       </div>
       <div class="sec-metric">
         <div class="sec-label">Avg Trade Return</div>
@@ -195,15 +195,15 @@
           <div class="chart-subtitle">Portfolio value growth over backtest</div>
         </div>
         <div class="equity-badge">
-          Starting {{ formatINR(startingCapital) }}
+          Starting {{ formatMoney(startingCapital) }}
         </div>
 
       </div>
       <div class="chart-container">
         <p-chart type="line" [data]="equityChartData" [options]="equityChartOptions" height="220"></p-chart>
       </div>
-      <div *ngIf="strategy.equityNote || strategy.strategyCode === 'BTC_OPTION_SELLING'" style="font-size: 0.73rem; color: #8B95B0; margin-top: 0.4rem; font-style: italic;">
-        {{ strategy.equityNote || '* Note: Equity curve backtest performance is based on 100 lots.' }}
+      <div *ngIf="strategy.equityNote" style="font-size: 0.73rem; color: #8B95B0; margin-top: 0.4rem; font-style: italic;">
+        {{ strategy.equityNote }}
       </div>
     </div>
   </div>
@@ -286,34 +286,38 @@
             </div>
 
             <!-- Group Trades Table -->
-            <table class="sim-trades-table">
-              <thead>
-                <tr>
-                  <th>Symbol</th>
-                  <th>Type</th>
-                  <th>Strike</th>
-                  <th>Avg Entry</th>
-                  <th>Avg Exit</th>
-                  <th class="text-right">PnL</th>
-                </tr>
-              </thead>
-              <tbody>
-                @for (trade of group.trades; track trade.id) {
+            <div class="sim-table-scroll">
+              <table class="sim-trades-table">
+                <thead>
                   <tr>
-                    <td class="symbol-cell">{{ trade.symbol }}</td>
-                    <td>
-                      <span class="option-type-badge" [class]="trade.optionType">{{ trade.optionType }}</span>
-                    </td>
-                    <td>{{ trade.strike }}</td>
-                    <td>{{ formatPrice(trade.entryPrice) }}</td>
-                    <td>{{ formatPrice(trade.exitPrice) }}</td>
-                    <td class="pnl-cell text-right" [class.positive]="(trade.pnl || 0) > 0" [class.negative]="(trade.pnl || 0) < 0">
-                      {{ formatTradePnl(trade) }}
-                    </td>
+                    <th>Symbol</th>
+                    <th>Type</th>
+                    <th>Strike</th>
+                    <th>Qty</th>
+                    <th>Avg Entry</th>
+                    <th>Avg Exit</th>
+                    <th class="text-right">PnL</th>
                   </tr>
-                }
-              </tbody>
-            </table>
+                </thead>
+                <tbody>
+                  @for (trade of group.trades; track trade.id) {
+                    <tr>
+                      <td class="symbol-cell">{{ trade.symbol }}</td>
+                      <td>
+                        <span class="option-type-badge" [class]="trade.optionType">{{ trade.optionType }}</span>
+                      </td>
+                      <td>{{ trade.strike }}</td>
+                      <td>{{ formatQuantity(trade) }}</td>
+                      <td>{{ formatPrice(trade.entryPriceInr ?? trade.entryPrice) }}</td>
+                      <td>{{ formatPrice(trade.exitPriceInr ?? trade.exitPrice) }}</td>
+                      <td class="pnl-cell text-right" [class.positive]="(trade.pnl || 0) > 0" [class.negative]="(trade.pnl || 0) < 0">
+                        {{ formatTradePnl(trade) }}
+                      </td>
+                    </tr>
+                  }
+                </tbody>
+              </table>
+            </div>
           </div>
         }
       </div>
@@ -330,7 +334,7 @@
   }
 
   <!-- Confirmation Dialog -->
-  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px' }" styleClass="custom-confirm-dialog">
+  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px', maxWidth: '95vw' }" styleClass="custom-confirm-dialog">
     <div class="confirm-content" style="padding: 1rem 0; color: #8B95B0; font-size: 0.9rem; line-height: 1.5;">
       {{ confirmMsg }}
     </div>

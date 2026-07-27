@@ -10,6 +10,7 @@ import { Subscription } from 'rxjs';
 import { Strategy, UserStrategy } from '../../../models/strategy.model';
 import { StrategyService } from '../../../core/services/strategy.service';
 import { DeployStrategyDialogComponent, DeployConfig } from '../../../shared/components/deploy-strategy-dialog/deploy-strategy-dialog.component';
+import { formatMoney as fmtMoney, formatDualMoney, formatDate as fmtDate, currencySymbol, CurrencyCode } from '../../../core/format';
 
 export interface TradeGroup {
   date: string;
@@ -143,7 +144,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
         return e.date;
       }),
       datasets: [{
-        label: 'Portfolio Value ₹',
+        label: `Portfolio Value ${currencySymbol(this.strategy?.currency)}`,
         data: p.equityCurve.map(e => e.value),
         borderColor: '#00C2E8',
         backgroundColor: 'rgba(0,194,232,0.08)',
@@ -188,8 +189,9 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     return this.strategy?.riskLevel.toLowerCase() ?? '';
   }
 
-  formatINR(value: number): string {
-    return new Intl.NumberFormat('en-IN', { style: 'currency', currency: 'INR', maximumFractionDigits: 0 }).format(value);
+  /** Format money in the strategy's currency (or an explicit override). */
+  formatMoney(value: number, currency?: CurrencyCode): string {
+    return fmtMoney(value, currency ?? this.strategy?.currency);
   }
 
   formatDuration(minutes: number): string {
@@ -280,7 +282,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
 
   squareOffToday() {
     this.confirmTitle = 'Square Off & Stop Today';
-    this.confirmMsg = 'Are you sure you want to square off all running option positions immediately and stop execution for today?';
+    this.confirmMsg = 'Are you sure you want to square off all running positions immediately and stop execution for today?';
     this.confirmBtnText = 'Square Off & Stop';
     this.actionToExecute = async () => {
       if (this.deployedUserStrategy) {
@@ -382,43 +384,68 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     this.groupedSimulatedTrades = groups;
   }
 
+  /**
+   * Format a leg price/premium in the strategy's display currency.
+   * Option premiums are quoted per 1 unit of the underlying (e.g. per 1 BTC), so when the
+   * strategy defines a contract notional we scale to the actual contract (× 0.001 BTC),
+   * matching how the quantity is shown (0.1 BTC).
+   */
   formatPrice(price: number | null | undefined): string {
     if (price === null || price === undefined) return '—';
-    if (this.strategy?.currency === 'USD') {
-      return `$${price.toFixed(2)}`;
+    const perContract = this.strategy?.contractNotional ? price * this.strategy.contractNotional : price;
+    return fmtMoney(perContract, this.strategy?.currency, { decimals: 2 });
+  }
+
+  /**
+   * Show trade size in the underlying when the strategy defines one (e.g. 100 qty → "0.1 BTC"),
+   * otherwise fall back to the raw contract quantity.
+   */
+  formatQuantity(trade: any): string {
+    const qty = trade?.quantity ?? 0;
+    const notional = this.strategy?.contractNotional;
+    const unit = this.strategy?.underlyingSymbol;
+    if (notional && unit) {
+      const amount = qty * notional;
+      const trimmed = parseFloat(amount.toFixed(8)).toString();
+      return `${trimmed} ${unit}`;
     }
-    return this.formatINR(price);
+    return `${qty}`;
+  }
+
+  /**
+   * Pick the value to display in the strategy's currency.
+   * When the strategy displays INR but trades settle in another currency, the backend
+   * stores an `<field>Inr` equivalent — prefer it so display matches the chosen currency.
+   */
+  private displayValue(obj: any, baseKey: string): number {
+    const cur = this.strategy?.currency || 'INR';
+    const inr = obj?.[`${baseKey}Inr`];
+    if (cur === 'INR' && inr !== undefined && inr !== null) return inr;
+    return obj?.[baseKey];
   }
 
   formatTradePnl(trade: any): string {
-    if (!trade || trade.pnl === null || trade.pnl === undefined) return '—';
-    if (this.strategy?.currency === 'USD') {
-      const usdStr = (trade.pnl >= 0 ? '+' : '') + `$${trade.pnl.toFixed(2)}`;
-      if (trade.pnlInr !== undefined && trade.pnlInr !== null) {
-        const inrStr = (trade.pnlInr >= 0 ? '+' : '') + this.formatINR(trade.pnlInr);
-        return `${usdStr} (${inrStr})`;
-      }
-      return usdStr;
+    if (!trade || (trade.pnl === null || trade.pnl === undefined) && (trade.pnlInr === null || trade.pnlInr === undefined)) return '—';
+    const cur = this.strategy?.currency || 'INR';
+    // Dual-currency strategies show a secondary settlement value in parentheses.
+    if (this.strategy?.dualCurrencyPnl && trade.pnlInr !== undefined && trade.pnlInr !== null) {
+      return formatDualMoney(trade.pnl, cur, trade.pnlInr, 'INR', 2);
     }
-    return (trade.pnl >= 0 ? '+' : '') + this.formatINR(trade.pnl);
+    return fmtMoney(this.displayValue(trade, 'pnl'), cur, { decimals: cur === 'INR' ? 0 : 2, signed: true });
   }
 
   formatGroupTotalPnl(group: TradeGroup): string {
-    if (this.strategy?.currency === 'USD') {
-      const usdStr = (group.totalPnl >= 0 ? '+' : '') + `$${group.totalPnl.toFixed(2)}`;
-      if (group.totalPnlInr !== 0) {
-        const inrStr = (group.totalPnlInr >= 0 ? '+' : '') + this.formatINR(group.totalPnlInr);
-        return `${usdStr} (${inrStr})`;
-      }
-      return usdStr;
+    const cur = this.strategy?.currency || 'INR';
+    if (this.strategy?.dualCurrencyPnl && group.totalPnlInr !== 0) {
+      return formatDualMoney(group.totalPnl, cur, group.totalPnlInr, 'INR', 2);
     }
-    return (group.totalPnl >= 0 ? '+' : '') + this.formatINR(group.totalPnl);
+    // totalPnlInr already aggregates pnlInr (falling back to pnl), so it equals the INR total.
+    const value = cur === 'INR' ? group.totalPnlInr : group.totalPnl;
+    return fmtMoney(value, cur, { decimals: cur === 'INR' ? 0 : 2, signed: true });
   }
 
   formatDate(dateStr: string): string {
-    if (!dateStr) return '—';
-    const d = new Date(dateStr);
-    return d.toLocaleDateString('en-IN', { day: 'numeric', month: 'short', year: 'numeric' });
+    return fmtDate(dateStr);
   }
 
   goBack() {

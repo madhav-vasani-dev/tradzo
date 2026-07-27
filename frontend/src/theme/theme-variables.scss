@@ -47,3 +47,22 @@ $shadow-glow-gold: 0 0 24px rgba(244, 185, 66, 0.18);
 $primary-blue: $primary-cyan;
 $bright-blue:  $bright-cyan;
 $soft-blue:    $soft-cyan;
+
+// ── Responsive Breakpoints ────────────────────────────────────────────────────
+// Single source of truth. Use the mixins below instead of ad-hoc @media queries.
+$bp-mobile:  640px;   // phones
+$bp-tablet:  1024px;  // tablets / small laptops
+$bp-desktop: 1200px;  // wide desktops
+
+// Max-width (mobile-down) mixins — the common case.
+@mixin mobile   { @media (max-width: $bp-mobile)  { @content; } }
+@mixin tablet   { @media (max-width: $bp-tablet)  { @content; } }
+@mixin desktop  { @media (min-width: #{$bp-desktop + 1px}) { @content; } }
+
+// Range: strictly the tablet band (between mobile and tablet).
+@mixin tablet-only {
+  @media (min-width: #{$bp-mobile + 1px}) and (max-width: $bp-tablet) { @content; }
+}
+
+// Custom one-off breakpoint when a component genuinely needs it.
+@mixin below($width) { @media (max-width: $width) { @content; } }

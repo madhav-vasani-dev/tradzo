@@ -6,6 +6,7 @@ import { Auth, user } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { StrategyService } from '../../core/services/strategy.service';
 import { UserStrategy, Position } from '../../models/strategy.model';
+import { formatMoney, CurrencyCode } from '../../core/format';
 import { AuthService } from '../../core/services/auth.service';
 import { TradzoUser } from '../../models/user.model';
 
@@ -113,8 +114,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.totalCapital = this.deployedStrategies.reduce((sum, d) => sum + (d.deployedAmount || 0), 0);
     this.totalLots = this.deployedStrategies.reduce((sum, d) => sum + (d.multiplier || 0), 0);
 
-    // Positions P&L sum
-    this.runningPnl = this.positions.reduce((sum, p) => sum + (p.pnl || 0), 0);
+    // Positions P&L sum — prefer the INR-equivalent so mixed-settlement positions add up in one currency.
+    this.runningPnl = this.positions.reduce((sum, p) => sum + ((p.pnlInr ?? p.pnl) || 0), 0);
   }
 
   private resetData() {
@@ -186,7 +187,26 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return pnl > 0 ? 'pnl-positive' : 'pnl-negative';
   }
 
-  formatINR(val: number): string {
-    return `₹${val.toLocaleString('en-IN')}`;
+  /** Currency shared by the user's deployments, or INR when mixed/absent. */
+  get portfolioCurrency(): CurrencyCode {
+    const currencies = new Set(this.deployedStrategies.map(d => d.currency).filter(Boolean));
+    return currencies.size === 1 ? [...currencies][0]! : 'INR';
+  }
+
+  formatMoney(value: number | null | undefined, currency?: CurrencyCode): string {
+    return formatMoney(value, currency);
+  }
+
+  /** A position price, preferring the INR-equivalent field when present (prices need decimals). */
+  posPrice(pos: any, base: string): string {
+    const inr = pos?.[`${base}Inr`];
+    if (inr !== undefined && inr !== null) return formatMoney(inr, 'INR', { decimals: 2 });
+    return formatMoney(pos?.[base], pos?.currency, { decimals: 2 });
+  }
+
+  /** A position PnL, preferring the INR-equivalent field when present. */
+  posPnl(pos: any): string {
+    if (pos?.pnlInr !== undefined && pos?.pnlInr !== null) return formatMoney(pos.pnlInr, 'INR');
+    return formatMoney(pos?.pnl ?? 0, pos?.currency);
   }
 }
