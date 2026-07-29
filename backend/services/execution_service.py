@@ -13,7 +13,9 @@ Design principles:
   - Idempotency: entry skips deployments that already have open positions today.
   - All meaningful events are written to activityLogs with date + userId.
 """
+import asyncio
 import logging
+import time
 from datetime import datetime, date
 from typing import Any
 
@@ -44,7 +46,8 @@ def _to_dt(value: Any) -> datetime:
     if hasattr(value, "timestamp"):
         return datetime.fromtimestamp(value.timestamp(), IST)
     if isinstance(value, str):
-        return datetime.fromisoformat(value)
+        dt = datetime.fromisoformat(value)
+        return dt if dt.tzinfo else IST.localize(dt)
     return _now_ist()
 
 
@@ -104,6 +107,20 @@ def _is_token_valid(account: dict | None) -> bool:
     return True
 
 
+def _is_delta_ready(account: dict | None) -> bool:
+    """Readiness check for Delta (crypto) accounts.
+
+    Delta uses persistent api_key/api_secret (no daily-expiring OAuth token like Upstox),
+    so `_is_token_valid` — which looks for an access_token — is not the right check here.
+    """
+    if not account or not account.get("isConnected"):
+        return False
+    tokens = token_store.get_tokens(account["id"])
+    if not tokens or tokens.get("broker") != "delta":
+        return False
+    return bool(tokens.get("api_key") and tokens.get("api_secret"))
+
+
 def _accounts_by_id() -> dict[str, dict]:
     return {a["id"]: a for a in firebase_service.list_broker_accounts()}
 
@@ -158,10 +175,12 @@ def reset_daily_statuses() -> dict:
 # ── 11:55 — Pre-entry check ───────────────────────────────────────────────────
 
 def pre_entry_check() -> dict:
-    """Validate broker tokens for all 'enabled' deployments.
+    """Validate broker tokens for 'enabled' deployments ahead of the 12:00 entry.
 
     Sets status='ready' for those with valid tokens.
     Logs a warning for those that will be skipped.
+    BTC has a much later entry (17:01) and gets its own pre-check (`pre_entry_check_btc`),
+    so it is intentionally excluded here.
     Returns a readiness summary.
     """
     today = _today()
@@ -173,6 +192,10 @@ def pre_entry_check() -> dict:
     for dep in deployments:
         if dep.get("pausedByAdmin"):
             skipped += 1
+            continue
+
+        # BTC entry is at 17:01 — it is validated by pre_entry_check_btc (~16:56), not here.
+        if dep.get("strategyCode") == "BTC_OPTION_SELLING":
             continue
 
         account = accounts.get(dep.get("brokerAccountId", ""))
@@ -202,6 +225,55 @@ def pre_entry_check() -> dict:
     return summary
 
 
+# ── 16:56 — BTC pre-entry check (5 min before the 17:01 BTC entry) ────────────
+
+def pre_entry_check_btc() -> dict:
+    """Validate Delta (crypto) accounts for 'enabled' BTC deployments ahead of 17:01 entry.
+
+    Runs ~5 minutes before BTC entry (not at 11:55, which is far too early for a 17:01 job).
+    Sets status='ready' for deployments whose Delta account is connected with valid creds;
+    logs a warning for the rest. Delta uses persistent api_key/api_secret, so readiness is
+    checked via `_is_delta_ready`, not the Upstox-style token check.
+    """
+    today = _today()
+    deployments = firebase_service.list_deployments_by_status("enabled")
+    accounts = _accounts_by_id()
+    users = _users_by_id()
+
+    ready = skipped = 0
+    for dep in deployments:
+        if dep.get("strategyCode") != "BTC_OPTION_SELLING":
+            continue
+        if dep.get("pausedByAdmin"):
+            skipped += 1
+            continue
+
+        account = accounts.get(dep.get("brokerAccountId", ""))
+        user_doc = users.get(dep.get("userId"), {})
+        paper = user_doc.get("paperTrading", True)
+
+        if paper or _is_delta_ready(account):
+            firebase_service.update_user_strategy_status(dep["id"], "ready")
+            ready += 1
+        else:
+            skipped += 1
+            _log(
+                "token_invalid",
+                f"Skipped {dep.get('strategyName')} for user {dep.get('userId')}: "
+                "Delta account not connected or API credentials missing — user must reconnect.",
+                severity="warning",
+                date_str=today,
+                user_id=dep.get("userId"),
+                strategy_id=dep.get("strategyId"),
+            )
+
+    summary = {"ready": ready, "skipped": skipped}
+    log.info("BTC pre-entry check: %s/%s ready.", ready, ready + skipped)
+    _log("pre_entry_check", f"BTC pre-entry check: {ready} ready, {skipped} skipped.", "info",
+         date_str=today, metadata=summary)
+    return summary
+
+
 # ── 12:00 — Execute entry ─────────────────────────────────────────────────────
 
 async def execute_entry() -> dict:
@@ -218,21 +290,26 @@ async def execute_entry() -> dict:
     Uses paper mode from Firestore settings.
     """
     today = _today()
+    t_start = time.monotonic()  # wall-clock stopwatch to surface entry latency vs 12:00:00
+
+    # ── 1. Fetch market data FIRST so the ATM strike/price reflects ~12:00:00 ──
+    try:
+        atm_data = await market_data_service.get_atm_data()
+    except Exception as exc:
+        log.error("Market data fetch failed at entry: %s", exc)
+        _log("entry_error", f"Market data fetch failed: {exc}", "error", date_str=today)
+        return {"placed": 0, "failed": 1, "skipped": 0}
+
+    t_md = time.monotonic() - t_start
+
     deployments = firebase_service.list_deployments_by_status("ready")
     accounts = _accounts_by_id()
     users = _users_by_id()
     paper = firebase_service.is_paper_trading()
 
     placed = failed = skipped = 0
-
-    # ── 1. Fetch market data once ──────────────────────────────────────────
-    try:
-        atm_data = await market_data_service.get_atm_data()
-    except Exception as exc:
-        log.error("Market data fetch failed at entry: %s", exc)
-        _log("entry_error", f"Market data fetch failed: {exc}", "error",
-             date_str=today, paper=paper)
-        return {"placed": 0, "failed": 1, "skipped": 0}
+    log.info("Entry timing: market-data %.2fs, prep %.2fs after 12:00 trigger",
+             t_md, time.monotonic() - t_start)
 
     log.info(
         "Entry: Nifty spot=%.2f ATM=%d expiry=%s CE=%s PE=%s [paper=%s]",
@@ -344,6 +421,22 @@ async def execute_entry() -> dict:
         except Exception:
             pass
 
+        # Live deployments need a valid broker token; skip cleanly rather than sending "Bearer None".
+        if not paper and not access_token:
+            log.warning("Skipping deployment %s — no valid broker token.", dep["id"])
+            _log(
+                "token_invalid",
+                "Skipped entry — broker token missing or expired. Please reconnect your broker.",
+                severity="warning",
+                date_str=today,
+                user_id=user_id,
+                user_name=user_name,
+                strategy_id=dep.get("strategyId"),
+                paper=paper,
+            )
+            skipped += 1
+            continue
+
         try:
             strategy = get_strategy(dep.get("strategyCode", dep.get("strategyId", "")))
         except ValueError as exc:
@@ -361,56 +454,92 @@ async def execute_entry() -> dict:
 
         dep_placed = dep_failed = 0
 
-        for leg in legs:
+        # ── Phase 1: fire the SELL MARKET orders for ALL legs CONCURRENTLY ──────
+        # Both legs enter as close to 12:00:00 as possible to minimise slippage vs
+        # the backtested entry price. Instrument resolution + the SELL run together
+        # per leg; the (slower) fill-price poll and SL attach happen in phase 2.
+        async def _open_leg(leg: dict) -> dict:
             option_type = leg["optionType"]
             qty = leg["quantity"]
             tag_prefix = f"NS_{dep['id'][:6].upper()}_{option_type}"
 
-            try:
-                # Resolve instrument key and ltp
-                if not paper and broker == "jainam":
-                    from services import jainam_service
-                    md_token = _get_jainam_market_data_token(account)
-                    if not md_token:
-                        raise RuntimeError("No valid Jainam market data token found. Please connect your Jainam account.")
-                    
-                    res = await jainam_service.get_option_instrument(
-                        token=md_token,
-                        symbol="NIFTY",
-                        expiry_date_str=leg["expiry"],
-                        option_type=option_type,
-                        strike_price=leg["strike"]
-                    )
-                    instrument_key = str(res["exchangeInstrumentID"])
-                    ltp = atm_data["ce_ltp"] if option_type == "CE" else atm_data["pe_ltp"]
-                else:
-                    instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
-
-                # Step 1: Place SELL MARKET (entry)
-                sell_result = await order_service.place_sell_market(
-                    access_token=access_token,
-                    instrument_key=instrument_key,
-                    quantity=qty,
-                    tag=f"{tag_prefix}_E",
-                    paper=paper,
-                    ltp=ltp,
-                    broker=broker,
+            if not paper and broker == "jainam":
+                from services import jainam_service
+                md_token = _get_jainam_market_data_token(account)
+                if not md_token:
+                    raise RuntimeError("No valid Jainam market data token found. Please connect your Jainam account.")
+                res = await jainam_service.get_option_instrument(
+                    token=md_token,
+                    symbol="NIFTY",
+                    expiry_date_str=leg["expiry"],
+                    option_type=option_type,
+                    strike_price=leg["strike"],
                 )
-                fill_price = sell_result["fill_price"] or ltp
+                instrument_key = str(res["exchangeInstrumentID"])
+                ltp = atm_data["ce_ltp"] if option_type == "CE" else atm_data["pe_ltp"]
+            else:
+                instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
 
-                # Step 2: Calculate SL price and place BUY SL-M immediately
+            sell_result = await order_service.place_sell_market(
+                access_token=access_token,
+                instrument_key=instrument_key,
+                quantity=qty,
+                tag=f"{tag_prefix}_E",
+                paper=paper,
+                ltp=ltp,
+                broker=broker,
+            )
+            return {
+                "leg": leg,
+                "option_type": option_type,
+                "qty": qty,
+                "tag_prefix": tag_prefix,
+                "instrument_key": instrument_key,
+                "ltp": ltp,
+                "sell_result": sell_result,
+                "fill_price": sell_result["fill_price"] or ltp,
+            }
+
+        sell_outcomes = await asyncio.gather(*[_open_leg(l) for l in legs], return_exceptions=True)
+
+        # ── Phase 2: attach the protective SL-M, persist the position, log ──────
+        for leg, outcome in zip(legs, sell_outcomes):
+            option_type = leg["optionType"]
+
+            if isinstance(outcome, Exception):
+                log.error("Entry (SELL) failed for %s %s: %s", dep["id"], option_type, outcome)
+                dep_failed += 1
+                _log(
+                    "order_failed",
+                    f"Entry failed for {option_type} leg — {outcome}",
+                    severity="error",
+                    date_str=today,
+                    user_id=dep.get("userId"),
+                    user_name=user_name,
+                    strategy_id=dep.get("strategyId"),
+                    paper=paper,
+                    metadata={"error": str(outcome), "optionType": option_type},
+                )
+                continue
+
+            try:
+                qty = outcome["qty"]
+                instrument_key = outcome["instrument_key"]
+                fill_price = outcome["fill_price"]
+                sell_result = outcome["sell_result"]
+
+                # SL is computed from the ACTUAL fill price (not the pre-trade LTP).
                 sl_price = strategy.calculate_sl_price(fill_price)
                 sl_result = await order_service.place_sl_market(
                     access_token=access_token,
                     instrument_key=instrument_key,
                     quantity=qty,
                     trigger_price=sl_price,
-                    tag=f"{tag_prefix}_SL",
+                    tag=f"{outcome['tag_prefix']}_SL",
                     paper=paper,
                     broker=broker,
                 )
 
-                # Step 3: Write position to Firestore
                 symbol = f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}"
                 pos_id = position_service.create_position({
                     "date": today,
@@ -465,11 +594,11 @@ async def execute_entry() -> dict:
                 dep_placed += 1
 
             except Exception as exc:  # noqa: BLE001
-                log.error("Entry failed for %s %s: %s", dep["id"], option_type, exc)
+                log.error("Entry (SL/persist) failed for %s %s: %s", dep["id"], option_type, exc)
                 dep_failed += 1
                 _log(
                     "order_failed",
-                    f"Entry failed for {option_type} leg — {exc}",
+                    f"Entry failed for {option_type} leg (SL/persist) — {exc}",
                     severity="error",
                     date_str=today,
                     user_id=dep.get("userId"),
@@ -563,8 +692,9 @@ async def execute_entry() -> dict:
     except Exception as exc:
         log.error("Failed to execute global strategy simulation: %s", exc)
 
-    summary = {"placed": placed, "failed": failed, "skipped": skipped}
-    log.info("Entry complete: %s", summary)
+    elapsed = round(time.monotonic() - t_start, 2)
+    summary = {"placed": placed, "failed": failed, "skipped": skipped, "elapsedSec": elapsed}
+    log.info("Entry complete in %.2fs: %s", elapsed, summary)
     return summary
 
 
@@ -582,7 +712,12 @@ async def execute_exit() -> dict:
     """
     today = _today()
     paper = firebase_service.is_paper_trading()
-    open_positions = position_service.get_open_positions_for_date(today)
+    # This is the 15:29 EOD exit for intraday (Nifty) strategies only.
+    # BTC exits at 17:29 via execute_btc_exit — never square it off here.
+    open_positions = [
+        p for p in position_service.get_open_positions_for_date(today)
+        if p.get("strategyCode") != "BTC_OPTION_SELLING"
+    ]
     accounts = _accounts_by_id()
 
     if not open_positions:
@@ -598,9 +733,11 @@ async def execute_exit() -> dict:
         if pos.get("status") != "open":
             continue
 
+        # Use the position's own paper flag (set per-user at entry), not the global one.
+        pos_paper = pos.get("isPaper", paper)
         # Get access token for this position's account
         account = accounts.get(pos.get("brokerAccountId", ""))
-        access_token = _get_token(account) if not paper else "paper_token"
+        access_token = _get_token(account) if not pos_paper else "paper_token"
         broker = pos.get("broker", "upstox")
 
         user_name = "User"
@@ -612,34 +749,64 @@ async def execute_exit() -> dict:
             pass
 
         try:
-            # Step 1: Cancel SL-M order
+            # Step 1: Cancel the SL-M and CONFIRM it can't fill, before squaring off.
             sl_order_id = pos.get("slOrderId", "")
-            if sl_order_id:
-                try:
-                    await order_service.cancel_order(
-                        access_token=access_token,
-                        order_id=sl_order_id,
-                        paper=paper,
-                        broker=broker,
-                    )
-                except Exception as e:
-                    log.warning("Exit: Could not cancel SL order %s: %s", sl_order_id, e)
+            sl_state = await order_service.cancel_and_confirm_sl(
+                access_token=access_token,
+                order_id=sl_order_id,
+                paper=pos_paper,
+                broker=broker,
+            )
+            if sl_state["state"] == "unknown":
+                # Could not confirm the SL is cancelled — squaring off now risks a double-fill
+                # (SL + buy → net long). Leave the position open for the next sync / manual review.
+                raise RuntimeError(
+                    f"SL {sl_order_id} could not be confirmed cancelled — skipping square-off to avoid double-fill"
+                )
+            if sl_state["state"] == "filled":
+                # The SL already closed the short. Reconcile from the SL fill; do NOT buy again.
+                exit_price = sl_state.get("fill_price") or pos.get("slPrice") or pos["entryPrice"]
+                pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+                position_service.update_position(pos["id"], {
+                    "status": "squared_off",
+                    "exitReason": "sl_hit",
+                    "exitOrderId": sl_order_id,
+                    "exitPrice": exit_price,
+                    "exitAt": _now_ist(),
+                    "pnl": round(pnl, 2),
+                })
+                _log(
+                    "square_off",
+                    f"[{'PAPER ' if pos_paper else ''}EXIT via SL] {pos['symbol']} | "
+                    f"SL filled @₹{exit_price:.1f} | PnL ₹{pnl:+.2f}",
+                    severity="success" if pnl >= 0 else "warning",
+                    date_str=today,
+                    user_id=pos.get("userId"),
+                    user_name=user_name,
+                    strategy_id=pos.get("strategyId"),
+                    position_id=pos["id"],
+                    paper=pos_paper,
+                    metadata={"symbol": pos["symbol"], "exitPrice": exit_price, "pnl": round(pnl, 2)},
+                )
+                closed += 1
+                closed_deployment_ids.add(pos.get("userStrategyId", ""))
+                continue
 
             # Step 2: Get current LTP for PnL calculation
             current_ltp = 0.0
-            if paper:
+            if pos_paper:
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
             elif broker == "upstox":
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
 
-            # Step 3: Place BUY MARKET to square off
+            # Step 3: Place BUY MARKET to square off (SL is confirmed cancelled)
             tag = f"SQ_{pos['id'][:8].upper()}"
             buy_result = await order_service.place_buy_market(
                 access_token=access_token,
                 instrument_key=pos["instrumentKey"],
                 quantity=pos["quantity"],
                 tag=tag,
-                paper=paper,
+                paper=pos_paper,
                 ltp=current_ltp,
                 broker=broker,
             )
@@ -659,7 +826,7 @@ async def execute_exit() -> dict:
 
             _log(
                 "square_off",
-                f"[{'PAPER ' if paper else ''}EXIT] {pos['symbol']} | "
+                f"[{'PAPER ' if pos_paper else ''}EXIT] {pos['symbol']} | "
                 f"BUY {pos['quantity']}@₹{exit_price:.1f} | PnL ₹{pnl:+.2f}",
                 severity="success" if pnl >= 0 else "warning",
                 date_str=today,
@@ -667,7 +834,7 @@ async def execute_exit() -> dict:
                 user_name=user_name,
                 strategy_id=pos.get("strategyId"),
                 position_id=pos["id"],
-                paper=paper,
+                paper=pos_paper,
                 metadata={
                     "symbol": pos["symbol"],
                     "entryPrice": pos["entryPrice"],
@@ -691,7 +858,7 @@ async def execute_exit() -> dict:
                 user_name=user_name,
                 strategy_id=pos.get("strategyId"),
                 position_id=pos["id"],
-                paper=paper,
+                paper=pos_paper,
                 metadata={"error": str(exc)},
             )
 
@@ -763,8 +930,14 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
     closed = 0
     for pos in open_positions:
         account = accounts.get(pos.get("brokerAccountId", ""))
-        access_token = _get_token(account) if not paper else "paper_token"
+        pos_paper = pos.get("isPaper", paper)  # per-position paper flag, not the global one
+        access_token = _get_token(account) if not pos_paper else "paper_token"
         broker = pos.get("broker", "upstox")
+        delta_creds = None
+        if not pos_paper and broker == "delta" and account:
+            tokens = token_store.get_tokens(account["id"])
+            if tokens and tokens.get("broker") == "delta":
+                delta_creds = {"api_key": tokens.get("api_key"), "api_secret": tokens.get("api_secret")}
 
         user_name = "User"
         try:
@@ -774,42 +947,63 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
         except Exception:
             pass
 
-        # 1. Cancel SL-M order
+        # 1. Cancel the SL-M and CONFIRM it can't fill, before squaring off.
         sl_order_id = pos.get("slOrderId", "")
-        if sl_order_id:
-            try:
-                await order_service.cancel_order(
-                    access_token=access_token,
-                    order_id=sl_order_id,
-                    paper=paper,
-                    broker=broker,
-                )
-            except Exception as e:
-                log.warning("Could not cancel SL order %s: %s", sl_order_id, e)
-
-        # 2. Get current LTP
-        current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
-
-        # 3. Place BUY MARKET to close
-        tag = f"SQ_MAN_{pos['id'][:6].upper()}"
-        buy_result = await order_service.place_buy_market(
+        sl_state = await order_service.cancel_and_confirm_sl(
             access_token=access_token,
-            instrument_key=pos["instrumentKey"],
-            quantity=pos["quantity"],
-            tag=tag,
-            paper=paper,
-            ltp=current_ltp,
+            order_id=sl_order_id,
+            paper=pos_paper,
             broker=broker,
+            delta_creds=delta_creds,
+            product_id=pos.get("instrumentKey"),
         )
-        exit_price = buy_result["fill_price"] or current_ltp
+        if sl_state["state"] == "unknown":
+            # Can't confirm the SL is gone — skip this leg to avoid a double-fill; leave it open.
+            log.error("Manual exit: SL %s not confirmed cancelled for %s — skipping square-off.", sl_order_id, pos["id"])
+            _log(
+                "exit_error",
+                f"Square-off skipped for {pos.get('symbol')} — stop-loss could not be confirmed cancelled. Retry shortly.",
+                severity="error",
+                date_str=today,
+                user_id=pos.get("userId"),
+                user_name=user_name,
+                strategy_id=pos.get("strategyId"),
+                position_id=pos["id"],
+                paper=pos_paper,
+                metadata={"slOrderId": sl_order_id},
+            )
+            continue
+
+        if sl_state["state"] == "filled":
+            # SL already closed the short — reconcile, don't buy again.
+            exit_price = sl_state.get("fill_price") or pos.get("slPrice") or pos["entryPrice"]
+            exit_order_id = sl_order_id
+            exit_reason = "sl_hit"
+        else:
+            # 2. Get current LTP + place BUY MARKET to close (SL confirmed cancelled).
+            current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+            tag = f"SQ_MAN_{pos['id'][:6].upper()}"
+            buy_result = await order_service.place_buy_market(
+                access_token=access_token,
+                instrument_key=pos["instrumentKey"],
+                quantity=pos["quantity"],
+                tag=tag,
+                paper=pos_paper,
+                ltp=current_ltp,
+                broker=broker,
+                delta_creds=delta_creds,
+            )
+            exit_price = buy_result["fill_price"] or current_ltp
+            exit_order_id = buy_result["order_id"]
+            exit_reason = "manual_exit"
 
         # 4. Calculate PnL
         pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
 
         position_service.update_position(pos["id"], {
             "status": "squared_off",
-            "exitReason": "manual_exit",
-            "exitOrderId": buy_result["order_id"],
+            "exitReason": exit_reason,
+            "exitOrderId": exit_order_id,
             "exitPrice": exit_price,
             "exitAt": _now_ist(),
             "pnl": round(pnl, 2),
@@ -817,7 +1011,7 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
 
         _log(
             "square_off",
-            f"[MANUAL EXIT] {pos['symbol']} | "
+            f"[MANUAL EXIT{' via SL' if exit_reason == 'sl_hit' else ''}] {pos['symbol']} | "
             f"BUY {pos['quantity']}@₹{exit_price:.1f} | PnL {pnl:+.2f}",
             severity="success" if pnl >= 0 else "warning",
             date_str=today,
@@ -825,7 +1019,7 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
             user_name=user_name,
             strategy_id=pos.get("strategyId"),
             position_id=pos["id"],
-            paper=paper,
+            paper=pos_paper,
             metadata={
                 "symbol": pos["symbol"],
                 "entryPrice": pos["entryPrice"],
@@ -849,16 +1043,21 @@ async def sync_order_statuses() -> dict:
         return {"status": "outside_market_hours", "hour": now.hour}
     if now.hour == 12 and now.minute == 0:
         return {"status": "skipping_exact_entry"}
-    if now.hour == 15 and now.minute == 29 and not any(p.get("strategyCode") == "BTC_OPTION_SELLING" for p in open_positions):
-        return {"status": "skipping_exact_exit"}
 
     today = _today()
-    paper = firebase_service.is_paper_trading()
     open_positions = position_service.get_open_positions_for_date(today)
-    
+
+    # At 15:29 the Nifty EOD exit runs; skip syncing then unless a BTC position is open
+    # (BTC exits at 17:29, so its SL must still be monitored through 15:29).
+    if now.hour == 15 and now.minute == 29 and not any(
+        p.get("strategyCode") == "BTC_OPTION_SELLING" for p in open_positions
+    ):
+        return {"status": "skipping_exact_exit"}
+
     if not open_positions:
         return {"synced": 0, "hits": 0}
 
+    paper = firebase_service.is_paper_trading()
     accounts = _accounts_by_id()
     synced = hits = 0
 
@@ -867,6 +1066,7 @@ async def sync_order_statuses() -> dict:
             continue
 
         user_id = pos.get("userId")
+        account = accounts.get(pos.get("brokerAccountId", ""))
         user_name = "User"
         try:
             user_doc = firebase_service.get_db().collection("users").document(user_id).get()
@@ -992,8 +1192,9 @@ async def sync_order_statuses() -> dict:
                                 new_sl_inr = delta_service.usd_to_inr(new_sl_usd, usd_inr_rate)
                                 old_sl_usd = pos["slPrice"]
 
-                                # In live mode, replace stop-market order on Delta
+                                # In live mode, replace the stop order on Delta.
                                 new_order_id = pos.get("slOrderId")
+                                apply_trail = True
                                 if not pos.get("isPaper"):
                                     delta_creds = {}
                                     if account:
@@ -1001,13 +1202,10 @@ async def sync_order_statuses() -> dict:
                                         if tokens and tokens.get("broker") == "delta":
                                             delta_creds = {"api_key": tokens.get("api_key"), "api_secret": tokens.get("api_secret")}
                                     try:
-                                        await order_service.cancel_order(
-                                            access_token="delta_token",
-                                            order_id=pos.get("slOrderId", ""),
-                                            paper=False,
-                                            broker="delta",
-                                            delta_creds=delta_creds,
-                                        )
+                                        # Place the tighter SL FIRST — reduce_only makes the brief
+                                        # overlap with the old SL safe — then cancel the old one only
+                                        # once the new one is confirmed live. If placement fails we keep
+                                        # the existing SL, so the short is never left unprotected.
                                         sl_res = await order_service.place_sl_market(
                                             access_token="delta_token",
                                             instrument_key=pos["instrumentKey"],
@@ -1018,27 +1216,44 @@ async def sync_order_statuses() -> dict:
                                             broker="delta",
                                             delta_creds=delta_creds,
                                         )
-                                        new_order_id = sl_res.get("order_id", new_order_id)
+                                        placed_id = sl_res.get("order_id")
+                                        if not placed_id:
+                                            raise RuntimeError("trailed SL placement returned no order_id")
+                                        new_order_id = placed_id
+                                        try:
+                                            await order_service.cancel_order(
+                                                access_token="delta_token",
+                                                order_id=pos.get("slOrderId", ""),
+                                                paper=False,
+                                                broker="delta",
+                                                delta_creds=delta_creds,
+                                                product_id=pos.get("instrumentKey"),
+                                            )
+                                        except Exception as ce:
+                                            log.warning("Could not cancel old BTC SL after placing trailed SL %s: %s", new_order_id, ce)
                                     except Exception as e:
-                                        log.warning("Live Delta Trailing SL order update failed: %s", e)
+                                        log.warning("Live Delta trailing SL replace failed; keeping existing SL: %s", e)
+                                        apply_trail = False
 
-                                position_service.update_position(pos["id"], {
-                                    "slPrice": new_sl_usd,
-                                    "slPriceInr": new_sl_inr,
-                                    "slOrderId": new_order_id,
-                                })
-                                _log(
-                                    "order_modified",
-                                    f"[{'PAPER ' if pos.get('isPaper') else ''}BTC TRAIL SL] {pos['symbol']} | "
-                                    f"LTP ${current_ltp:.2f} | SL trailed from ${old_sl_usd:.2f} → ${new_sl_usd:.2f} (₹{new_sl_inr:.2f})",
-                                    severity="info",
-                                    date_str=today,
-                                    user_id=user_id,
-                                    user_name=user_name,
-                                    strategy_id=pos.get("strategyId"),
-                                    position_id=pos["id"],
-                                    paper=pos.get("isPaper", True),
-                                )
+                                # Only record the tightened SL if it is actually live on the broker.
+                                if apply_trail:
+                                    position_service.update_position(pos["id"], {
+                                        "slPrice": new_sl_usd,
+                                        "slPriceInr": new_sl_inr,
+                                        "slOrderId": new_order_id,
+                                    })
+                                    _log(
+                                        "order_modified",
+                                        f"[{'PAPER ' if pos.get('isPaper') else ''}BTC TRAIL SL] {pos['symbol']} | "
+                                        f"LTP ${current_ltp:.2f} | SL trailed from ${old_sl_usd:.2f} → ${new_sl_usd:.2f} (₹{new_sl_inr:.2f})",
+                                        severity="info",
+                                        date_str=today,
+                                        user_id=user_id,
+                                        user_name=user_name,
+                                        strategy_id=pos.get("strategyId"),
+                                        position_id=pos["id"],
+                                        paper=pos.get("isPaper", True),
+                                    )
                         except Exception as e:
                             log.warning("BTC trailing SL calculation failed for %s: %s", pos["id"], e)
 
@@ -1154,6 +1369,8 @@ async def execute_btc_entry() -> dict:
 
     today = _today()
     placed = failed = skipped = 0
+    accounts = _accounts_by_id()
+    users = _users_by_id()
     usd_inr_rate = getattr(__import__("config", fromlist=["settings"]).settings, "usd_to_inr_rate", 85.0)
 
     # 1. Fetch BTC ATM data once
@@ -1484,20 +1701,53 @@ async def execute_btc_exit() -> dict:
             pass
 
         try:
-            # Step 1: Cancel SL stop-market order
+            # Step 1: Cancel the SL and CONFIRM it can't fill, before squaring off.
             sl_order_id = pos.get("slOrderId", "")
-            if sl_order_id:
-                try:
-                    await order_service.cancel_order(
-                        access_token="delta_token",
-                        order_id=sl_order_id,
-                        paper=pos_paper,
-                        broker="delta" if not pos_paper else "upstox",
-                        delta_creds=delta_creds if not pos_paper else None,
-                        product_id=pos.get("instrumentKey"),
-                    )
-                except Exception as e:
-                    log.warning("BTC exit: Could not cancel SL order %s: %s", sl_order_id, e)
+            sl_state = await order_service.cancel_and_confirm_sl(
+                access_token="delta_token",
+                order_id=sl_order_id,
+                paper=pos_paper,
+                broker="delta" if not pos_paper else "upstox",
+                delta_creds=delta_creds if not pos_paper else None,
+                product_id=pos.get("instrumentKey"),
+            )
+            if sl_state["state"] == "unknown":
+                raise RuntimeError(
+                    f"SL {sl_order_id} could not be confirmed cancelled — skipping BTC square-off to avoid double-fill"
+                )
+            if sl_state["state"] == "filled":
+                # SL already closed the short — reconcile from the SL fill; don't buy again.
+                exit_price_usd = sl_state.get("fill_price") or pos.get("slPrice") or pos["entryPrice"]
+                exit_price_inr = delta_service.usd_to_inr(exit_price_usd, usd_inr_rate)
+                pnl_usd = round((pos["entryPrice"] - exit_price_usd) * pos["quantity"], 6)
+                pnl_inr = delta_service.usd_to_inr(pnl_usd, usd_inr_rate)
+                position_service.update_position(pos["id"], {
+                    "status": "squared_off",
+                    "exitReason": "sl_hit",
+                    "exitOrderId": sl_order_id,
+                    "exitPrice": exit_price_usd,
+                    "exitPriceInr": exit_price_inr,
+                    "exitAt": _now_ist(),
+                    "pnl": pnl_usd,
+                    "pnlInr": pnl_inr,
+                })
+                _log(
+                    "square_off",
+                    f"[{'PAPER ' if pos_paper else ''}BTC EXIT via SL] {pos['symbol']} | "
+                    f"SL filled @${exit_price_usd:.4f} (₹{exit_price_inr:.2f}) | "
+                    f"PnL ${pnl_usd:+.6f} (₹{pnl_inr:+.2f})",
+                    severity="success" if pnl_usd >= 0 else "warning",
+                    date_str=today,
+                    user_id=pos.get("userId"),
+                    user_name=user_name,
+                    strategy_id=pos.get("strategyId"),
+                    position_id=pos["id"],
+                    paper=pos_paper,
+                    metadata={"symbol": pos["symbol"], "exitPriceUsd": exit_price_usd, "pnlUsd": pnl_usd, "pnlInr": pnl_inr},
+                )
+                closed += 1
+                closed_deployment_ids.add(pos.get("userStrategyId", ""))
+                continue
 
             # Step 2: Get current LTP for PnL estimate
             current_ltp_usd = 0.0

@@ -90,20 +90,47 @@ async def get_order_details(access_token: str, order_id: str) -> dict:
     return body.get("data", {})
 
 
+async def _get_upstox_fill_price(access_token: str, order_id: str, default_price: float) -> float:
+    """Poll Upstox order details for the actual average fill price of a MARKET order.
+
+    Upstox's place-order response does not include the fill price, so the SL must be
+    computed from the real fill (not the pre-trade LTP). Falls back to default_price
+    (the LTP) only if the fill genuinely can't be retrieved in time.
+    """
+    import asyncio
+    if not order_id:
+        return default_price
+    for _ in range(10):
+        try:
+            details = await get_order_details(access_token, order_id)
+            status = str(details.get("status", "")).lower()
+            avg = float(details.get("average_price") or 0.0)
+            if status == "complete" and avg > 0:
+                return avg
+            if status in ("rejected", "cancelled"):
+                break
+        except Exception as e:  # noqa: BLE001 — polling must not raise
+            log.warning("Upstox fill-price poll failed for %s: %s", order_id, e)
+        await asyncio.sleep(0.2)
+    return default_price
+
+
 async def _get_jainam_fill_price(token: str, app_order_id: str, default_price: float) -> float:
     import asyncio
     from services import jainam_service
-    for _ in range(5):
+    # Poll for up to ~4.5s — a market order often isn't reported FILLED within 0.5s,
+    # and the SL must be computed off the real fill, not the fallback LTP.
+    for _ in range(15):
         try:
             history = await jainam_service.get_order_history(token, app_order_id)
             if history:
-                latest = history[-1]
-                status = latest.get("orderstatus", "").upper()
-                if status == "FILLED":
+                filled = [h for h in history if str(h.get("orderstatus", "")).upper() == "FILLED"]
+                if filled:
+                    latest = filled[-1]
                     return float(latest.get("averageprice") or latest.get("averagePrice") or default_price)
         except Exception as e:
             log.warning("Failed to get Jainam order fill price: %s", e)
-        await asyncio.sleep(0.1)
+        await asyncio.sleep(0.3)
     return default_price
 
 
@@ -173,6 +200,7 @@ async def place_sell_market(
         "transaction_type": "SELL",
         "product": "I",
         "validity": "DAY",
+        "price": 0,            # Upstox requires price=0 for MARKET orders (UDAPI1008 otherwise)
         "disclosed_quantity": 0,
         "trigger_price": 0,
         "is_amo": False,
@@ -180,9 +208,12 @@ async def place_sell_market(
     }
     resp = await _real_place(access_token, payload)
     data = resp.get("data", {})
+    order_id = data.get("order_id", "")
+    # Upstox does not return a fill price on placement — fetch the real average fill.
+    fill_price = data.get("average_price") or await _get_upstox_fill_price(access_token, order_id, ltp)
     return {
-        "order_id": data.get("order_id", ""),
-        "fill_price": data.get("average_price", 0.0),
+        "order_id": order_id,
+        "fill_price": fill_price,
     }
 
 
@@ -211,14 +242,19 @@ async def place_sl_market(
 
     if broker == "delta":
         from services import delta_service
-        # Delta uses a stop-market (limit) order for SL; stop_price triggers the fill.
+        # Delta expresses a stop-MARKET SL as a market_order + stop_order_type=stop_loss_order.
+        # (order_type only accepts "limit_order"/"market_order"; "stop_market_order" is invalid
+        # and was being rejected, leaving live BTC shorts unprotected.)
         payload = {
             "product_id": int(instrument_key),
             "size": quantity,
             "side": "buy",
-            "order_type": "stop_market_order",
+            "order_type": "market_order",
+            "stop_order_type": "stop_loss_order",
             "stop_price": str(trigger_price),
-            "time_in_force": "gtc",   # Good Till Cancelled for SL orders
+            "stop_trigger_method": "mark_price",
+            "reduce_only": True,       # SL only closes the existing short, never opens new
+            "time_in_force": "gtc",    # Good Till Cancelled for SL orders
             "client_order_id": tag[:20],
         }
         result = await delta_service.place_order(
@@ -254,6 +290,7 @@ async def place_sl_market(
         "transaction_type": "BUY",
         "product": "I",
         "validity": "DAY",
+        "price": 0,            # SL-M becomes a MARKET order once triggered; Upstox requires price=0
         "disclosed_quantity": 0,
         "trigger_price": trigger_price,
         "is_amo": False,
@@ -329,6 +366,7 @@ async def place_buy_market(
         "transaction_type": "BUY",
         "product": "I",
         "validity": "DAY",
+        "price": 0,            # Upstox requires price=0 for MARKET orders (UDAPI1008 otherwise)
         "disclosed_quantity": 0,
         "trigger_price": 0,
         "is_amo": False,
@@ -336,9 +374,12 @@ async def place_buy_market(
     }
     resp = await _real_place(access_token, payload)
     data = resp.get("data", {})
+    order_id = data.get("order_id", "")
+    # Upstox does not return a fill price on placement — fetch the real average fill.
+    fill_price = data.get("average_price") or await _get_upstox_fill_price(access_token, order_id, ltp)
     return {
-        "order_id": data.get("order_id", ""),
-        "fill_price": data.get("average_price", 0.0),
+        "order_id": order_id,
+        "fill_price": fill_price,
     }
 
 
@@ -379,4 +420,97 @@ async def cancel_order(
 
     resp = await _real_cancel(access_token, order_id)
     return {"status": resp.get("data", {}).get("status", "cancelled")}
+
+
+async def _sl_order_state(
+    access_token: str,
+    order_id: str,
+    broker: str,
+    delta_creds: dict | None,
+) -> tuple[str, float | None]:
+    """Query a broker for an order's terminal state.
+
+    Returns (state, fill_price) where state is 'filled' | 'cancelled' | 'unknown'.
+    Any error → 'unknown' (the caller must treat that as "not safe to square off").
+    """
+    try:
+        if broker == "delta":
+            from services import delta_service
+            creds = delta_creds or {}
+            od = await delta_service.get_order_status(
+                creds.get("api_key", ""), creds.get("api_secret", ""), order_id
+            )
+            state = str(od.get("state", "")).lower()
+            if state == "closed":
+                return "filled", float(od.get("average_fill_price") or 0) or None
+            if state == "cancelled":
+                return "cancelled", None
+            return "unknown", None
+
+        if broker == "jainam":
+            from services import jainam_service
+            hist = await jainam_service.get_order_history(access_token, order_id)
+            statuses = [str(h.get("orderstatus", "")).upper() for h in hist]
+            if any(s == "FILLED" for s in statuses):
+                filled = [h for h in hist if str(h.get("orderstatus", "")).upper() == "FILLED"][-1]
+                price = filled.get("averageprice") or filled.get("AverageTradedPrice") or 0
+                return "filled", float(price) or None
+            if any(s in ("CANCELLED", "REJECTED") for s in statuses):
+                return "cancelled", None
+            return "unknown", None
+
+        # Upstox
+        details = await get_order_details(access_token, order_id)
+        status = str(details.get("status", "")).lower()
+        if status == "complete":
+            return "filled", float(details.get("average_price") or 0) or None
+        if status in ("cancelled", "rejected"):
+            return "cancelled", None
+        return "unknown", None
+    except Exception as e:  # noqa: BLE001
+        log.warning("Could not query SL order state for %s (%s): %s", order_id, broker, e)
+        return "unknown", None
+
+
+async def cancel_and_confirm_sl(
+    access_token: str,
+    order_id: str,
+    paper: bool,
+    broker: str = "upstox",
+    delta_creds: dict | None = None,
+    product_id: str | int | None = None,
+) -> dict:
+    """Cancel a resting SL order and CONFIRM it can no longer fill, before squaring off.
+
+    Prevents a double-fill (SL + square-off both executing → net long): we only tell the
+    caller it's safe to square off once the SL is verified cancelled.
+
+    Returns one of:
+      {"state": "cancelled"}                    → safe to place the square-off buy
+      {"state": "filled", "fill_price": float}  → SL already closed the position; DON'T buy again
+      {"state": "unknown"}                       → cannot confirm; DON'T buy (avoid double-fill)
+    """
+    if not order_id or paper:
+        return {"state": "cancelled"}
+
+    # 1. Attempt the cancel (best-effort — some brokers swallow their own errors).
+    try:
+        await cancel_order(
+            access_token=access_token,
+            order_id=order_id,
+            paper=False,
+            broker=broker,
+            delta_creds=delta_creds,
+            product_id=product_id,
+        )
+    except Exception as e:  # noqa: BLE001
+        log.warning("SL cancel raised for %s; will verify actual state: %s", order_id, e)
+
+    # 2. Verify the order truly can't fill anymore (cancel is not always authoritative).
+    state, fill_price = await _sl_order_state(access_token, order_id, broker, delta_creds)
+    if state == "filled":
+        return {"state": "filled", "fill_price": fill_price}
+    if state == "cancelled":
+        return {"state": "cancelled"}
+    return {"state": "unknown"}
 

@@ -1,11 +1,19 @@
-"""APScheduler setup — 5 weekday jobs, all in IST.
+"""APScheduler setup — all jobs in IST.
 
-Jobs (Mon–Fri):
+Nifty straddle (Mon–Fri):
   08:00  reset_daily_statuses    — reset userStrategy.status to "enabled"
-  11:55  pre_entry_check         — validate tokens, set status="ready"
+  11:55  pre_entry_check         — validate tokens, set status="ready" (Nifty only)
   12:00  execute_entry           — place straddle orders + SL-M
   15:29  execute_exit            — cancel SL orders, square off remaining
   15:31  eod_cleanup             — compute PnL, log day summary
+
+BTC option selling (every day):
+  16:56  pre_entry_check_btc     — validate Delta accounts, set status="ready" (5 min before entry)
+  17:01  execute_btc_entry       — sell ATM BTC CE + PE via Delta Exchange
+  17:29  execute_btc_exit        — cancel SL orders, square off BTC positions
+
+Continuous:
+  every minute  sync_order_statuses — poll open positions for SL/target hits
 """
 import asyncio
 import logging
@@ -89,6 +97,14 @@ def start_scheduler() -> AsyncIOScheduler | None:
         _run_sync(execution_service.eod_cleanup),
         CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=31, timezone=IST),
         id="eod_cleanup",
+        replace_existing=True,
+    )
+
+    # ── 16:56 — BTC pre-entry check (5 min before the 17:01 BTC entry) ────────
+    _scheduler.add_job(
+        _run_sync(execution_service.pre_entry_check_btc),
+        CronTrigger(day_of_week="*", hour=16, minute=56, timezone=IST),
+        id="pre_entry_check_btc",
         replace_existing=True,
     )
 
