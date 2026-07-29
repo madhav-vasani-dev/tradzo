@@ -617,80 +617,11 @@ async def execute_entry() -> dict:
         elif dep_failed > 0:
             firebase_service.update_user_strategy_status(dep["id"], "enabled")  # will retry nothing
 
-    # ── Strategy Simulations ──────────────────────────────────────────────────
-    try:
-        strategies_ref = firebase_service.get_db().collection("strategies").stream()
-        for strat_doc in strategies_ref:
-            strat_data = strat_doc.to_dict()
-            strat_id = strat_doc.id
-            if not strat_data.get("isVisible", True):
-                continue
-            strat_code = strat_data.get("code") or strat_data.get("strategyCode") or strat_id.upper()
-
-            # Idempotency check: skip if system positions already exist today
-            existing_sys = (
-                firebase_service.get_db()
-                .collection("positions")
-                .where("userId", "==", "system")
-                .where("userStrategyId", "==", f"system_{strat_id}")
-                .where("date", "==", today)
-                .get()
-            )
-            if existing_sys:
-                continue
-
-            try:
-                strategy_instance = get_strategy(strat_code)
-            except ValueError:
-                strategy_instance = get_strategy("NIFTY_STRADDLE")
-
-            legs = strategy_instance.get_entry_legs({}, atm_data["atm_strike"], atm_data["expiry"], 1)
-
-            leg_map = {
-                "CE": (atm_data["ce_key"], atm_data["ce_ltp"]),
-                "PE": (atm_data["pe_key"], atm_data["pe_ltp"]),
-            }
-
-            for leg in legs:
-                option_type = leg["optionType"]
-                instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
-                qty = leg["quantity"]
-                tag_prefix = f"SYS_{strat_id[:6].upper()}_{option_type}"
-
-                fill_price = ltp
-                sl_price = strategy_instance.calculate_sl_price(fill_price)
-
-                symbol = f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}"
-                position_service.create_position({
-                    "date": today,
-                    "userId": "system",
-                    "strategyId": strat_id,
-                    "strategyCode": strat_code,
-                    "userStrategyId": f"system_{strat_id}",
-                    "brokerAccountId": "system_broker",
-                    "broker": "upstox",
-                    "instrumentKey": instrument_key,
-                    "symbol": symbol,
-                    "optionType": option_type,
-                    "strike": leg["strike"],
-                    "expiry": leg["expiry"],
-                    "quantity": qty,
-                    "lots": 1,
-                    "entryOrderId": f"sys_sell_{tag_prefix}",
-                    "slOrderId": f"sys_sl_{tag_prefix}",
-                    "entryPrice": fill_price,
-                    "slPrice": sl_price,
-                    "status": "open",
-                    "isPaper": True,
-                    "entryAt": _now_ist(),
-                    "exitAt": None,
-                    "exitPrice": None,
-                    "exitOrderId": None,
-                    "exitReason": None,
-                    "pnl": None,
-                })
-    except Exception as exc:
-        log.error("Failed to execute global strategy simulation: %s", exc)
+    # NOTE: Per-strategy benchmark simulation trades are created by each strategy's own entry
+    # job — the Nifty benchmark above (system_nifty_benchmark) and the BTC benchmark in
+    # execute_btc_entry (system_btc_benchmark). The previous generic loop here cloned Nifty
+    # market data for EVERY strategy, which (a) surfaced NIFTY trades on the BTC page and
+    # (b) doubled the Nifty page's trades. It has been removed.
 
     elapsed = round(time.monotonic() - t_start, 2)
     summary = {"placed": placed, "failed": failed, "skipped": skipped, "elapsedSec": elapsed}
