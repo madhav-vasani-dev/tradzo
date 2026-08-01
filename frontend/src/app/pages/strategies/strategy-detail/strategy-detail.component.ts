@@ -4,26 +4,18 @@ import { ActivatedRoute, Router } from '@angular/router';
 import { ChartModule } from 'primeng/chart';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
-import { DialogModule } from 'primeng/dialog';
 import { Auth, user } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { Strategy, UserStrategy } from '../../../models/strategy.model';
 import { StrategyService } from '../../../core/services/strategy.service';
 import { DeployStrategyDialogComponent, DeployConfig } from '../../../shared/components/deploy-strategy-dialog/deploy-strategy-dialog.component';
-import { formatMoney as fmtMoney, formatDualMoney, formatDate as fmtDate, currencySymbol, CurrencyCode } from '../../../core/format';
-
-export interface TradeGroup {
-  date: string;
-  formattedDate: string;
-  totalPnl: number;
-  totalPnlInr: number;
-  trades: any[];
-}
+import { ConfirmActionDialogComponent } from '../../../shared/components/confirm-action-dialog/confirm-action-dialog.component';
+import { formatMoney as fmtMoney, formatDate as fmtDate, currencySymbol, CurrencyCode } from '../../../core/format';
 
 @Component({
   selector: 'app-strategy-detail',
   standalone: true,
-  imports: [CommonModule, ChartModule, ToastModule, DialogModule, DeployStrategyDialogComponent],
+  imports: [CommonModule, ChartModule, ToastModule, DeployStrategyDialogComponent, ConfirmActionDialogComponent],
   templateUrl: './strategy-detail.component.html',
   styleUrl: './strategy-detail.component.scss',
   providers: [MessageService]
@@ -40,19 +32,18 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
   deployedUserStrategy: UserStrategy | null = null;
   isLoading = true;
   showDeployDialog = false;
+  /** True while the deployment write is in flight — keeps the Deploy button from firing twice. */
+  isDeploying = false;
   Math = Math;
 
-  // Tabs state
-  activeTab = 'performance'; // 'performance' | 'trades'
-  simulatedTrades: any[] = [];
-  isLoadingTrades = false;
-
-  // Dialog confirmation state
+  // Dialog confirmation state. The dialog runs `actionToExecute` itself and blocks
+  // repeat clicks while it is in flight.
   showConfirm = false;
   confirmTitle = '';
   confirmMsg = '';
   confirmBtnText = 'Confirm';
-  private actionToExecute: (() => Promise<void>) | null = null;
+  confirmRunningText = 'Processing…';
+  actionToExecute: (() => Promise<void>) | null = null;
 
   // Chart data
   monthlyChartData: any = {};
@@ -201,10 +192,12 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
   }
 
   onDeploy() {
+    if (this.isDeploying) return;
     this.showDeployDialog = true;
   }
 
   async onDeployed(config: DeployConfig) {
+    if (this.isDeploying) return;
     const currentUser = this.auth.currentUser;
     if (!currentUser) {
       this.messageService.add({
@@ -215,6 +208,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
       return;
     }
 
+    this.isDeploying = true;
     try {
       await this.strategyService.deployStrategy(
         currentUser.uid,
@@ -241,6 +235,8 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
         summary: 'Deployment Failed',
         detail: err.message || 'Failed to deploy strategy.'
       });
+    } finally {
+      this.isDeploying = false;
     }
   }
 
@@ -248,6 +244,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     this.confirmTitle = 'Disable Strategy';
     this.confirmMsg = 'Are you sure you want to disable this strategy? It will not execute orders for any future days until you enable it again.';
     this.confirmBtnText = 'Disable';
+    this.confirmRunningText = 'Disabling…';
     this.actionToExecute = async () => {
       if (this.deployedUserStrategy) {
         await this.strategyService.pauseUserStrategy(this.deployedUserStrategy.id);
@@ -260,6 +257,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     this.confirmTitle = 'Activate Strategy';
     this.confirmMsg = 'Are you sure you want to activate this strategy? It will start executing orders automatically on future trading days.';
     this.confirmBtnText = 'Activate';
+    this.confirmRunningText = 'Activating…';
     this.actionToExecute = async () => {
       if (this.deployedUserStrategy) {
         await this.strategyService.resumeUserStrategy(this.deployedUserStrategy.id);
@@ -272,6 +270,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     this.confirmTitle = 'Stop Algo for Today';
     this.confirmMsg = 'Are you sure you want to stop the algorithm for today only? No entry orders will be taken today. It will resume automatically tomorrow.';
     this.confirmBtnText = 'Stop for Today';
+    this.confirmRunningText = 'Stopping…';
     this.actionToExecute = async () => {
       if (this.deployedUserStrategy) {
         await this.strategyService.disableStrategyForToday(this.deployedUserStrategy.id);
@@ -284,6 +283,7 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
     this.confirmTitle = 'Square Off & Stop Today';
     this.confirmMsg = 'Are you sure you want to square off all running positions immediately and stop execution for today?';
     this.confirmBtnText = 'Square Off & Stop';
+    this.confirmRunningText = 'Squaring off…';
     this.actionToExecute = async () => {
       if (this.deployedUserStrategy) {
         await this.strategyService.squareOffUserStrategy(this.deployedUserStrategy.id);
@@ -293,27 +293,23 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
   }
 
 
-  async executeAction() {
-    if (this.actionToExecute) {
-      try {
-        await this.actionToExecute();
-        this.messageService.add({
-          severity: 'success',
-          summary: 'Action Executed',
-          detail: 'Strategy deployment status updated successfully.'
-        });
-      } catch (err: any) {
-        console.error('Failed to execute action:', err);
-        this.messageService.add({
-          severity: 'error',
-          summary: 'Action Failed',
-          detail: err.message || 'An error occurred.'
-        });
-      } finally {
-        this.actionToExecute = null;
-        this.showConfirm = false;
-      }
-    }
+  onActionSucceeded() {
+    this.actionToExecute = null;
+    this.messageService.add({
+      severity: 'success',
+      summary: 'Action Executed',
+      detail: 'Strategy deployment status updated successfully.'
+    });
+  }
+
+  onActionFailed(err: Error) {
+    this.actionToExecute = null;
+    console.error('Failed to execute action:', err);
+    this.messageService.add({
+      severity: 'error',
+      summary: 'Action Failed',
+      detail: err.message || 'An error occurred.'
+    });
   }
 
   getStatusLabel(status: string): string {
@@ -331,117 +327,6 @@ export class StrategyDetailComponent implements OnInit, OnDestroy {
 
   getStatusClass(status: string): string {
     return `status-${status.toLowerCase()}`;
-  }
-
-  groupedSimulatedTrades: TradeGroup[] = [];
-
-  loadSimulatedTrades() {
-    if (!this.strategy) return;
-    this.isLoadingTrades = true;
-    this.sub.add(
-      this.strategyService.getStrategySimulatedTrades(this.strategy.id).subscribe({
-        next: (trades) => {
-          this.simulatedTrades = [...trades].sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-          this.groupTradesByDate();
-          this.isLoadingTrades = false;
-        },
-        error: (err) => {
-          console.error('Error loading simulated trades:', err);
-          this.isLoadingTrades = false;
-        }
-      })
-    );
-  }
-
-  private groupTradesByDate() {
-    const map = new Map<string, any[]>();
-    for (const trade of this.simulatedTrades) {
-      const d = trade.date || 'Unknown';
-      if (!map.has(d)) {
-        map.set(d, []);
-      }
-      map.get(d)!.push(trade);
-    }
-
-    const groups: TradeGroup[] = [];
-    map.forEach((tradeList, dateStr) => {
-      let totalPnl = 0;
-      let totalPnlInr = 0;
-      for (const t of tradeList) {
-        totalPnl += (t.pnl || 0);
-        totalPnlInr += (t.pnlInr || t.pnl || 0);
-      }
-      groups.push({
-        date: dateStr,
-        formattedDate: this.formatDate(dateStr),
-        totalPnl,
-        totalPnlInr,
-        trades: tradeList
-      });
-    });
-
-    groups.sort((a, b) => new Date(b.date).getTime() - new Date(a.date).getTime());
-    this.groupedSimulatedTrades = groups;
-  }
-
-  /**
-   * Format a leg price/premium in the strategy's display currency.
-   * Option premiums are quoted per 1 unit of the underlying (e.g. per 1 BTC), so when the
-   * strategy defines a contract notional we scale to the actual contract (× 0.001 BTC),
-   * matching how the quantity is shown (0.1 BTC).
-   */
-  formatPrice(price: number | null | undefined): string {
-    if (price === null || price === undefined) return '—';
-    const perContract = this.strategy?.contractNotional ? price * this.strategy.contractNotional : price;
-    return fmtMoney(perContract, this.strategy?.currency, { decimals: 2 });
-  }
-
-  /**
-   * Show trade size in the underlying when the strategy defines one (e.g. 100 qty → "0.1 BTC"),
-   * otherwise fall back to the raw contract quantity.
-   */
-  formatQuantity(trade: any): string {
-    const qty = trade?.quantity ?? 0;
-    const notional = this.strategy?.contractNotional;
-    const unit = this.strategy?.underlyingSymbol;
-    if (notional && unit) {
-      const amount = qty * notional;
-      const trimmed = parseFloat(amount.toFixed(8)).toString();
-      return `${trimmed} ${unit}`;
-    }
-    return `${qty}`;
-  }
-
-  /**
-   * Pick the value to display in the strategy's currency.
-   * When the strategy displays INR but trades settle in another currency, the backend
-   * stores an `<field>Inr` equivalent — prefer it so display matches the chosen currency.
-   */
-  private displayValue(obj: any, baseKey: string): number {
-    const cur = this.strategy?.currency || 'INR';
-    const inr = obj?.[`${baseKey}Inr`];
-    if (cur === 'INR' && inr !== undefined && inr !== null) return inr;
-    return obj?.[baseKey];
-  }
-
-  formatTradePnl(trade: any): string {
-    if (!trade || (trade.pnl === null || trade.pnl === undefined) && (trade.pnlInr === null || trade.pnlInr === undefined)) return '—';
-    const cur = this.strategy?.currency || 'INR';
-    // Dual-currency strategies show a secondary settlement value in parentheses.
-    if (this.strategy?.dualCurrencyPnl && trade.pnlInr !== undefined && trade.pnlInr !== null) {
-      return formatDualMoney(trade.pnl, cur, trade.pnlInr, 'INR', 2);
-    }
-    return fmtMoney(this.displayValue(trade, 'pnl'), cur, { decimals: cur === 'INR' ? 0 : 2, signed: true });
-  }
-
-  formatGroupTotalPnl(group: TradeGroup): string {
-    const cur = this.strategy?.currency || 'INR';
-    if (this.strategy?.dualCurrencyPnl && group.totalPnlInr !== 0) {
-      return formatDualMoney(group.totalPnl, cur, group.totalPnlInr, 'INR', 2);
-    }
-    // totalPnlInr already aggregates pnlInr (falling back to pnl), so it equals the INR total.
-    const value = cur === 'INR' ? group.totalPnlInr : group.totalPnl;
-    return fmtMoney(value, cur, { decimals: cur === 'INR' ? 0 : 2, signed: true });
   }
 
   formatDate(dateStr: string): string {

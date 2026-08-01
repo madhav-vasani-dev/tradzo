@@ -1,22 +1,28 @@
 """APScheduler setup — all jobs in IST.
 
 Nifty straddle (Mon–Fri):
-  08:00  reset_daily_statuses    — reset userStrategy.status to "enabled"
-  11:55  pre_entry_check         — validate tokens, set status="ready" (Nifty only)
-  12:00  execute_entry           — place straddle orders + SL-M
-  15:29  execute_exit            — cancel SL orders, square off remaining
-  15:31  eod_cleanup             — compute PnL, log day summary
+  08:00     reset_daily_statuses  — reset userStrategy.status to "enabled"
+  11:55     pre_entry_check       — validate tokens, set status="ready" (Nifty only)
+  11:59:45  execute_entry         — pre-stage, then place straddle orders + SL at 12:00:00
+  15:29     execute_exit          — cancel SL orders, square off remaining
+  15:31     eod_cleanup           — compute PnL, log day summary
 
 BTC option selling (every day):
-  16:56  pre_entry_check_btc     — validate Delta accounts, set status="ready" (5 min before entry)
-  17:01  execute_btc_entry       — sell ATM BTC CE + PE via Delta Exchange
-  17:29  execute_btc_exit        — cancel SL orders, square off BTC positions
+  16:56     pre_entry_check_btc   — validate Delta accounts, set status="ready"
+  17:00:45  execute_btc_entry     — pre-stage, then sell ATM BTC CE + PE at 17:01:00
+  17:29     execute_btc_exit      — cancel SL orders, square off BTC positions
 
 Continuous:
   every minute  sync_order_statuses — poll open positions for SL/target hits
+
+Entry jobs are scheduled `settings.entry_prestage_lead_seconds` EARLY. The job spends
+that lead window on Firestore reads, token decryption, instrument resolution and the
+market snapshot, then sleeps to the exact entry second before sending any order — so
+the fill lands at 12:00:00 rather than drifting out to 12:00:12.
 """
 import asyncio
 import logging
+from datetime import datetime, timedelta
 
 from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
@@ -28,6 +34,22 @@ log = logging.getLogger("tradzo.scheduler")
 
 _scheduler: AsyncIOScheduler | None = None
 _WEEKDAYS = "mon-fri"
+
+
+def _prestage_trigger(entry_time: str, day_of_week: str) -> CronTrigger:
+    """CronTrigger that fires `entry_prestage_lead_seconds` before `entry_time` ("HH:MM")."""
+    hour, minute = (int(part) for part in entry_time.split(":", 1))
+    lead = max(0, int(settings.entry_prestage_lead_seconds))
+    fire_at = datetime(2000, 1, 1, hour, minute) - timedelta(seconds=lead)
+    log.info("Entry %s will pre-stage at %s (lead %ds).",
+             entry_time, fire_at.strftime("%H:%M:%S"), lead)
+    return CronTrigger(
+        day_of_week=day_of_week,
+        hour=fire_at.hour,
+        minute=fire_at.minute,
+        second=fire_at.second,
+        timezone=IST,
+    )
 
 
 def _run_async(coro_fn):
@@ -68,12 +90,13 @@ def start_scheduler() -> AsyncIOScheduler | None:
         replace_existing=True,
     )
 
-    # ── 12:00 — Entry: place SELL + SL-M orders ───────────────────────────
+    # ── 11:59:45 — Pre-stage, then fire SELL + SL orders at 12:00:00 sharp ─
     _scheduler.add_job(
         _run_async(execution_service.execute_entry),
-        CronTrigger(day_of_week=_WEEKDAYS, hour=12, minute=0, timezone=IST),
+        _prestage_trigger(execution_service.NIFTY_ENTRY_TIME, _WEEKDAYS),
         id="execute_entry",
         replace_existing=True,
+        misfire_grace_time=10,
     )
 
     # ── Active Order Polling (every 1 minute 24/7 for crypto + equity) ──────
@@ -108,12 +131,13 @@ def start_scheduler() -> AsyncIOScheduler | None:
         replace_existing=True,
     )
 
-    # ── 17:01 — BTC entry: sell ATM BTC CE + PE via Delta Exchange (365 days) ─
+    # ── 17:00:45 — Pre-stage, then sell ATM BTC CE + PE at 17:01:00 sharp ─────
     _scheduler.add_job(
         _run_async(execution_service.execute_btc_entry),
-        CronTrigger(day_of_week="*", hour=17, minute=1, timezone=IST),
+        _prestage_trigger(execution_service.BTC_ENTRY_TIME, "*"),
         id="execute_btc_entry",
         replace_existing=True,
+        misfire_grace_time=10,
     )
 
     # ── 17:29 — BTC exit: cancel SL orders, square off BTC positions (365 days) 

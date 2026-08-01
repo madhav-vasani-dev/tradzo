@@ -177,8 +177,8 @@
             <div class="td col-price" data-label="Avg Entry">{{ posPrice(pos, 'entryPrice') }}</div>
             <div class="td col-price" data-label="Avg Exit">{{ pos.exitPrice ? posPrice(pos, 'exitPrice') : '—' }}</div>
             <div class="td col-qty" data-label="Qty">{{ pos.quantity }}</div>
-            <div class="td col-pnl text-right font-semibold" data-label="PnL" [class]="getPnlClass(pos.pnl)">
-              {{ pos.pnl > 0 ? '+' : '' }}{{ pos.pnl !== null ? posPnl(pos) : '—' }}
+            <div class="td col-pnl text-right font-semibold" data-label="PnL" [class]="getPnlClass(effectivePnl(pos))">
+              {{ effectivePnl(pos) > 0 ? '+' : '' }}{{ hasPnl(pos) ? posPnl(pos) : '—' }}
             </div>
           </div>
         }

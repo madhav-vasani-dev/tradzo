@@ -80,6 +80,25 @@ async def place_order(token: str, order: dict) -> dict:
     return body
 
 
+async def modify_order(token: str, modification: dict) -> dict:
+    """Modify a resting order via the XTS interactive API.
+
+    `modification` must follow the XTS modify-order schema (appOrderID,
+    modifiedProductType, modifiedOrderType, modifiedOrderQuantity,
+    modifiedLimitPrice, modifiedStopPrice, modifiedTimeInForce, ...).
+    """
+    headers = {"Content-Type": "application/json", "authorization": token}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.put(f"{_base()}{PLACE_ORDER_PATH}", json=modification, headers=headers)
+
+    body = resp.json() if resp.content else {}
+    if resp.status_code not in (200, 201) or body.get("type") != "success":
+        desc = body.get("description") or resp.text
+        logger.error("Jainam order modification failed: %s %s", resp.status_code, desc)
+        raise RuntimeError(f"order_modify_failed: {desc}")
+    return body
+
+
 async def get_option_instrument(
     token: str,
     symbol: str,

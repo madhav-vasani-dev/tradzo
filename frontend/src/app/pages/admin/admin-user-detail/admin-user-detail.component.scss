@@ -117,9 +117,10 @@
   color: $primary-cyan;
   border: 1px solid rgba(0,194,232,0.25);
 
-  &:hover { background: rgba(0,194,232,0.2); }
+  &:hover:not(:disabled) { background: rgba(0,194,232,0.2); }
   &.danger { background: $soft-red; color: $neon-red; border-color: rgba(239,68,68,0.25); }
-  &.danger:hover { background: rgba(239,68,68,0.2); }
+  &.danger:hover:not(:disabled) { background: rgba(239,68,68,0.2); }
+  &:disabled { opacity: 0.6; cursor: not-allowed; }
 }
 
 // ── Strategies Section ────────────────────────────────────────────────────────

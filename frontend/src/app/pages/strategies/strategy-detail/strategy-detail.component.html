@@ -59,9 +59,9 @@
         <div *ngIf="strategy.hasLotAsterisk" style="font-size: 0.72rem; color: #8B95B0; margin-top: 0.2rem;">* Varies based on user's lot size count</div>
 
         @if (!isDeployed) {
-          <button class="deploy-btn" (click)="onDeploy()">
-            <i class="pi pi-play"></i>
-            Deploy Strategy
+          <button class="deploy-btn" [disabled]="isDeploying" (click)="onDeploy()">
+            <i class="pi" [class.pi-play]="!isDeploying" [class.pi-spinner]="isDeploying" [class.pi-spin]="isDeploying"></i>
+            {{ isDeploying ? 'Deploying…' : 'Deploy Strategy' }}
           </button>
           <p class="deploy-note">Choose your broker account and investment amount in the next step.</p>
         } @else {
@@ -209,20 +209,7 @@
   </div>
 
   <!-- ── Yearly Returns Table ───────────────────────────────────────────── -->
-  <!-- Tabs Navigation -->
-  <div class="tabs-navigation no-print">
-    <button class="tab-btn" [class.active]="activeTab === 'performance'" (click)="activeTab = 'performance'">
-      Performance Data
-      <span class="active-bar" *ngIf="activeTab === 'performance'"></span>
-    </button>
-    <button class="tab-btn" [class.active]="activeTab === 'trades'" (click)="activeTab = 'trades'; loadSimulatedTrades()">
-      Simulated Trades
-      <span class="active-bar" *ngIf="activeTab === 'trades'"></span>
-    </button>
-  </div>
-
-  <!-- Performance Tab -->
-  <div class="yearly-section glass-card" *ngIf="activeTab === 'performance'">
+  <div class="yearly-section glass-card">
     <div class="section-title">Yearly Performance</div>
     <table class="yearly-table">
       <thead>
@@ -253,77 +240,6 @@
     </table>
   </div>
 
-  <!-- Trades Tab (Grouped by Date) -->
-  <div class="yearly-section glass-card" *ngIf="activeTab === 'trades'">
-    <div class="section-title tab-title-row">
-      <span>Simulated Trade History</span>
-      <span class="badge">{{ simulatedTrades.length }} Trades</span>
-    </div>
-    
-    @if (isLoadingTrades) {
-      <div class="trades-loading">
-        <div class="loading-spinner"></div>
-        <p>Fetching simulated trade logs...</p>
-      </div>
-    } @else if (groupedSimulatedTrades.length === 0) {
-      <div class="trades-empty">
-        <i class="pi pi-inbox empty-icon"></i>
-        <p>No simulated trades recorded for this strategy yet.</p>
-      </div>
-    } @else {
-      <div class="trades-table-container">
-        @for (group of groupedSimulatedTrades; track group.date) {
-          <div class="trade-group-card" style="margin-bottom: 1.25rem; background: rgba(13, 21, 38, 0.6); border: 1px solid rgba(255, 255, 255, 0.08); border-radius: 10px; overflow: hidden;">
-            <!-- Date Group Header -->
-            <div class="group-header" style="display: flex; justify-content: space-between; align-items: center; padding: 0.75rem 1rem; background: rgba(255, 255, 255, 0.03); border-bottom: 1px solid rgba(255, 255, 255, 0.06);">
-              <div style="display: flex; align-items: center; gap: 0.5rem; font-weight: 700; color: #F0F4FF; font-size: 0.88rem;">
-                <i class="pi pi-calendar" style="color: #00C2E8;"></i>
-                {{ group.formattedDate }}
-              </div>
-              <div style="font-size: 0.85rem; font-weight: 700;" [class.positive]="group.totalPnl >= 0" [class.negative]="group.totalPnl < 0">
-                Daily PnL: {{ formatGroupTotalPnl(group) }}
-              </div>
-            </div>
-
-            <!-- Group Trades Table -->
-            <div class="sim-table-scroll">
-              <table class="sim-trades-table">
-                <thead>
-                  <tr>
-                    <th>Symbol</th>
-                    <th>Type</th>
-                    <th>Strike</th>
-                    <th>Qty</th>
-                    <th>Avg Entry</th>
-                    <th>Avg Exit</th>
-                    <th class="text-right">PnL</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  @for (trade of group.trades; track trade.id) {
-                    <tr>
-                      <td class="symbol-cell">{{ trade.symbol }}</td>
-                      <td>
-                        <span class="option-type-badge" [class]="trade.optionType">{{ trade.optionType }}</span>
-                      </td>
-                      <td>{{ trade.strike }}</td>
-                      <td>{{ formatQuantity(trade) }}</td>
-                      <td>{{ formatPrice(trade.entryPriceInr ?? trade.entryPrice) }}</td>
-                      <td>{{ formatPrice(trade.exitPriceInr ?? trade.exitPrice) }}</td>
-                      <td class="pnl-cell text-right" [class.positive]="(trade.pnl || 0) > 0" [class.negative]="(trade.pnl || 0) < 0">
-                        {{ formatTradePnl(trade) }}
-                      </td>
-                    </tr>
-                  }
-                </tbody>
-              </table>
-            </div>
-          </div>
-        }
-      </div>
-    }
-  </div>
-
   <!-- Deploy Dialog -->
   @if (strategy) {
     <app-deploy-strategy-dialog
@@ -334,17 +250,16 @@
   }
 
   <!-- Confirmation Dialog -->
-  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px', maxWidth: '95vw' }" styleClass="custom-confirm-dialog">
-    <div class="confirm-content" style="padding: 1rem 0; color: #8B95B0; font-size: 0.9rem; line-height: 1.5;">
-      {{ confirmMsg }}
-    </div>
-    <ng-template pTemplate="footer">
-      <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-        <button class="btn-secondary" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #F0F4FF; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600; cursor: pointer;" (click)="showConfirm = false">Cancel</button>
-        <button class="btn-primary" style="background: linear-gradient(135deg, #00C2E8, #00E5FF); border: none; color: #0D1526; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 700; cursor: pointer;" (click)="executeAction()">{{ confirmBtnText }}</button>
-      </div>
-    </ng-template>
-  </p-dialog>
+  <app-confirm-action-dialog
+    [(visible)]="showConfirm"
+    [title]="confirmTitle"
+    [message]="confirmMsg"
+    [confirmText]="confirmBtnText"
+    [runningText]="confirmRunningText"
+    [action]="actionToExecute"
+    (succeeded)="onActionSucceeded()"
+    (failed)="onActionFailed($event)"
+  ></app-confirm-action-dialog>
 </div>
 }
 

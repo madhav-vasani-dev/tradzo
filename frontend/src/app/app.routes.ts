@@ -61,7 +61,7 @@ export const routes: Routes = [
     canActivate: [authGuard, adminGuard]
   },
 
-  // Redirects
-  { path: '', redirectTo: 'strategies', pathMatch: 'full' },
-  { path: '**', redirectTo: 'strategies' }
+  // Redirects — the dashboard is the app's landing page.
+  { path: '', redirectTo: 'dashboard', pathMatch: 'full' },
+  { path: '**', redirectTo: 'dashboard' }
 ];

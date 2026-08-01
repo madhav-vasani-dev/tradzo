@@ -388,6 +388,19 @@
 
   i { font-size: 0.8rem; }
 
+  &:disabled {
+    opacity: 0.6;
+    cursor: not-allowed;
+  }
+
+  // The shared .spinner is dark (sized for the light gold button) — tint it red here.
+  .spinner {
+    border-color: rgba(239, 68, 68, 0.3);
+    border-top-color: $neon-red;
+    width: 13px;
+    height: 13px;
+  }
+
   &:hover { background: rgba(239, 68, 68, 0.2); }
 }
 

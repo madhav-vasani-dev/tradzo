@@ -1,11 +1,19 @@
 """Execution Engine — orchestrates all daily trading jobs.
 
 Job sequence (weekdays, IST):
-  08:00  reset_daily_statuses     — set all userStrategy.status back to "enabled"
-  11:55  pre_entry_check          — validate tokens, set status="ready"
-  12:00  execute_entry            — place SELL + SL-M orders, set status="trade_active"
-  15:29  execute_exit             — cancel SL orders, square off, set status="trade_closed"
-  15:31  eod_cleanup              — compute PnL, log day summary
+  08:00     reset_daily_statuses  — set all userStrategy.status back to "enabled"
+  11:55     pre_entry_check       — validate tokens, set status="ready"
+  11:59:45  execute_entry         — pre-stage, then place SELL + SL at 12:00:00 sharp
+  15:29     execute_exit          — cancel SL orders, square off, set status="trade_closed"
+  15:31     eod_cleanup           — compute PnL, log day summary
+
+Entry timing
+------------
+The entry jobs are scheduled `entry_prestage_lead_seconds` BEFORE the strategy's entry
+time, not at it. Everything slow — Firestore reads, token decryption, broker instrument
+resolution, the market snapshot — happens during that lead window; then the job sleeps
+to the exact entry second and fires every leg of every deployment concurrently. Placing
+the job at 12:00:00 instead used to push the first fill out to ~12:00:12.
 
 Design principles:
   - One user's failure must never block another user's execution.
@@ -16,11 +24,12 @@ Design principles:
 import asyncio
 import logging
 import time
-from datetime import datetime, date
+from datetime import datetime, date, timedelta
 from typing import Any
 
 import pytz
 
+from config import settings
 from services import firebase_service, market_data_service, order_service, position_service
 from strategies import get_strategy
 from utils import logger as activity, token_store
@@ -37,6 +46,22 @@ def _today() -> str:
 
 def _now_ist() -> datetime:
     return datetime.now(IST)
+
+
+def entry_target_dt(entry_time: str) -> datetime:
+    """Today's exact entry instant in IST, e.g. "12:00" → today 12:00:00.000."""
+    hour, minute = (int(part) for part in entry_time.split(":", 1))
+    return _now_ist().replace(hour=hour, minute=minute, second=0, microsecond=0)
+
+
+async def _sleep_until(target: datetime, label: str) -> None:
+    """Block until `target`. Logs (and returns immediately) if we are already late."""
+    remaining = (target - _now_ist()).total_seconds()
+    if remaining > 0:
+        await asyncio.sleep(remaining)
+    elif remaining < -0.5:
+        log.warning("%s: %.2fs late for %s — firing immediately.",
+                    label, -remaining, target.strftime("%H:%M:%S"))
 
 
 def _to_dt(value: Any) -> datetime:
@@ -274,122 +299,19 @@ def pre_entry_check_btc() -> dict:
     return summary
 
 
-# ── 12:00 — Execute entry ─────────────────────────────────────────────────────
+# ── 12:00 — Execute entry (job runs at 11:59:45, orders fire at 12:00:00) ─────
 
-async def execute_entry() -> dict:
-    """Place entry orders for all 'ready' deployments.
+NIFTY_ENTRY_TIME = "12:00"
 
-    For each deployment:
-      1. Resolve strategy → get ATM data.
-      2. For each leg (CE + PE):
-         a. Place SELL MARKET → get fill price.
-         b. Place BUY SL-M at fill_price × 1.30 immediately.
-         c. Write position doc to Firestore.
-      3. Set userStrategy.status = 'trade_active'.
 
-    Uses paper mode from Firestore settings.
+def _stage_nifty_deployments(today: str) -> tuple[list[dict], int]:
+    """Resolve everything an entry needs that does NOT depend on the market snapshot.
+
+    Runs in the pre-stage window so no Firestore read, token decryption or user lookup
+    sits between the entry bell and the first order. Returns (staged, skipped).
     """
-    today = _today()
-    t_start = time.monotonic()  # wall-clock stopwatch to surface entry latency vs 12:00:00
-
-    # ── 1. Fetch market data FIRST so the ATM strike/price reflects ~12:00:00 ──
-    try:
-        atm_data = await market_data_service.get_atm_data()
-    except Exception as exc:
-        log.error("Market data fetch failed at entry: %s", exc)
-        _log("entry_error", f"Market data fetch failed: {exc}", "error", date_str=today)
-        return {"placed": 0, "failed": 1, "skipped": 0}
-
-    t_md = time.monotonic() - t_start
-
-    deployments = firebase_service.list_deployments_by_status("ready")
     accounts = _accounts_by_id()
     users = _users_by_id()
-    paper = firebase_service.is_paper_trading()
-
-    placed = failed = skipped = 0
-    log.info("Entry timing: market-data %.2fs, prep %.2fs after 12:00 trigger",
-             t_md, time.monotonic() - t_start)
-
-    log.info(
-        "Entry: Nifty spot=%.2f ATM=%d expiry=%s CE=%s PE=%s [paper=%s]",
-        atm_data["spot"], atm_data["atm_strike"], atm_data["expiry"],
-        atm_data["ce_key"], atm_data["pe_key"], paper,
-    )
-    _log(
-        "entry_started",
-        f"12:00 entry — Nifty {atm_data['atm_strike']} "
-        f"CE+PE | expiry {atm_data['expiry']} | paper={paper}",
-        "info",
-        date_str=today,
-        paper=paper,
-        metadata={
-            "atmStrike": atm_data["atm_strike"],
-            "expiry": atm_data["expiry"],
-            "spot": atm_data["spot"],
-        },
-    )
-
-    # ── 2. Always Execute System Benchmark Simulation Trade (userId="system") ─
-    try:
-        sys_existing = position_service.get_open_positions_for_user_strategy("system_nifty_benchmark", today)
-        if not sys_existing:
-            sys_strategy = get_strategy("NIFTY_STRADDLE")
-            sys_dep = {
-                "id": "system_nifty_benchmark",
-                "userId": "system",
-                "strategyId": "nifty-straddle",
-                "strategyCode": "NIFTY_STRADDLE",
-                "multiplier": 1,
-            }
-            sys_legs = sys_strategy.get_entry_legs(sys_dep, atm_data["atm_strike"], atm_data["expiry"], 1)
-            leg_map_sys = {
-                "CE": (atm_data["ce_key"], atm_data["ce_symbol"], atm_data["ce_ltp"]),
-                "PE": (atm_data["pe_key"], atm_data["pe_symbol"], atm_data["pe_ltp"]),
-            }
-            for leg in sys_legs:
-                option_type = leg["optionType"]
-                qty = leg["quantity"]
-                key, symbol, ltp = leg_map_sys[option_type]
-                sl_price = sys_strategy.calculate_sl_price(ltp)
-
-                pos_doc = {
-                    "userId": "system",
-                    "userStrategyId": "system_nifty_benchmark",
-                    "strategyId": "nifty-straddle",
-                    "strategyCode": "NIFTY_STRADDLE",
-                    "symbol": symbol,
-                    "instrumentKey": key,
-                    "optionType": option_type,
-                    "strike": leg["strike"],
-                    "expiry": leg["expiry"],
-                    "quantity": qty,
-                    "entryPrice": ltp,
-                    "slPrice": sl_price,
-                    "slOrderId": f"SYS_SL_{int(__import__('time').time()*1000)}",
-                    "status": "open",
-                    "isPaper": True,
-                    "broker": "upstox",
-                    "date": today,
-                    "createdAt": _now_ist(),
-                }
-                position_service.create_position(pos_doc)
-
-            log.info("System benchmark Nifty simulation trade created for %s.", today)
-            _log(
-                "entry_executed",
-                f"[SYSTEM BENCHMARK] Nifty {atm_data['atm_strike']} CE+PE sold @ ₹{atm_data['ce_ltp']:.1f} & ₹{atm_data['pe_ltp']:.1f}",
-                severity="success",
-                date_str=today,
-                user_id="system",
-                strategy_id="nifty-straddle",
-                paper=True,
-            )
-            placed += 1
-    except Exception as sys_exc:
-        log.error("Failed to create system benchmark Nifty trade: %s", sys_exc)
-
-    # ── 3. Execute User Deployments ───────────────────────────────────────────
     all_ready = firebase_service.list_deployments_by_status("ready")
     all_enabled = firebase_service.list_deployments_by_status("enabled")
     deployments = [
@@ -397,31 +319,24 @@ async def execute_entry() -> dict:
         if d.get("strategyCode") == "NIFTY_STRADDLE" and not d.get("pausedByAdmin")
     ]
 
+    staged: list[dict] = []
+    skipped = 0
+
     for dep in deployments:
-        # ── Idempotency: skip if positions already exist today ──────────────
-        existing = position_service.get_open_positions_for_user_strategy(dep["id"], today)
-        if existing:
+        # Idempotency: never double-enter a deployment that already traded today.
+        if position_service.get_open_positions_for_user_strategy(dep["id"], today):
             log.warning("Deployment %s already has positions today — skipping.", dep["id"])
             skipped += 1
             continue
 
-        account = accounts.get(dep.get("brokerAccountId", ""))
         user_id = dep.get("userId")
-        user_doc = users.get(user_id, {})
+        user_doc = users.get(user_id, {}) or {}
         paper = user_doc.get("paperTrading", True)
+        account = accounts.get(dep.get("brokerAccountId", ""))
         access_token = _get_token(account) if not paper else "paper_token"
-        lots = dep.get("multiplier", 1)
+        user_name = user_doc.get("username") or user_doc.get("email") or "User"
         broker = dep.get("brokerName", "upstox")
 
-        user_name = "User"
-        try:
-            user_doc = firebase_service.get_db().collection("users").document(dep.get("userId")).get()
-            if user_doc.exists:
-                user_name = user_doc.to_dict().get("username") or user_doc.to_dict().get("email") or "User"
-        except Exception:
-            pass
-
-        # Live deployments need a valid broker token; skip cleanly rather than sending "Bearer None".
         if not paper and not access_token:
             log.warning("Skipping deployment %s — no valid broker token.", dep["id"])
             _log(
@@ -437,196 +352,332 @@ async def execute_entry() -> dict:
             skipped += 1
             continue
 
+        # Jainam resolves its own exchangeInstrumentID; without the market-data token we
+        # would otherwise send an Upstox instrument key to Jainam.
+        md_token = _get_jainam_market_data_token(account) if (not paper and broker == "jainam") else None
+        if not paper and broker == "jainam" and not md_token:
+            log.warning("Skipping deployment %s — no valid Jainam market data token.", dep["id"])
+            _log(
+                "token_invalid",
+                "Skipped entry — Jainam market data token missing or expired. Please reconnect your Jainam account.",
+                severity="warning",
+                date_str=today,
+                user_id=user_id,
+                user_name=user_name,
+                strategy_id=dep.get("strategyId"),
+                paper=paper,
+            )
+            skipped += 1
+            continue
+
         try:
             strategy = get_strategy(dep.get("strategyCode", dep.get("strategyId", "")))
         except ValueError as exc:
             log.error("Unknown strategy for deployment %s: %s", dep["id"], exc)
-            failed += 1
+            skipped += 1
             continue
 
-        legs = strategy.get_entry_legs(dep, atm_data["atm_strike"], atm_data["expiry"], lots)
+        staged.append({
+            "dep": dep,
+            "strategy": strategy,
+            "account": account,
+            "paper": paper,
+            "access_token": access_token,
+            "user_id": user_id,
+            "user_name": user_name,
+            "broker": broker,
+            "lots": dep.get("multiplier", 1),
+            "md_token": md_token,
+        })
 
-        # Map optionType → (instrument_key, ltp)
-        leg_map = {
-            "CE": (atm_data["ce_key"], atm_data["ce_ltp"]),
-            "PE": (atm_data["pe_key"], atm_data["pe_ltp"]),
-        }
+    return staged, skipped
 
-        dep_placed = dep_failed = 0
 
-        # ── Phase 1: fire the SELL MARKET orders for ALL legs CONCURRENTLY ──────
-        # Both legs enter as close to 12:00:00 as possible to minimise slippage vs
-        # the backtested entry price. Instrument resolution + the SELL run together
-        # per leg; the (slower) fill-price poll and SL attach happen in phase 2.
-        async def _open_leg(leg: dict) -> dict:
+async def _resolve_leg_instruments(staged: list[dict], atm_data: dict) -> None:
+    """Attach the broker instrument key + reference LTP to every leg, in place.
+
+    Upstox keys come straight from the option chain; Jainam needs one lookup per leg.
+    All lookups run concurrently and still inside the pre-stage window.
+    """
+    from services import jainam_service
+
+    leg_map = {
+        "CE": (atm_data["ce_key"], atm_data["ce_ltp"]),
+        "PE": (atm_data["pe_key"], atm_data["pe_ltp"]),
+    }
+
+    lookups = []
+    for item in staged:
+        legs = item["strategy"].get_entry_legs(
+            item["dep"], atm_data["atm_strike"], atm_data["expiry"], item["lots"]
+        )
+        item["legs"] = legs
+        item["orders"] = []
+        for leg in legs:
             option_type = leg["optionType"]
-            qty = leg["quantity"]
-            tag_prefix = f"NS_{dep['id'][:6].upper()}_{option_type}"
-
-            if not paper and broker == "jainam":
-                from services import jainam_service
-                md_token = _get_jainam_market_data_token(account)
-                if not md_token:
-                    raise RuntimeError("No valid Jainam market data token found. Please connect your Jainam account.")
-                res = await jainam_service.get_option_instrument(
-                    token=md_token,
-                    symbol="NIFTY",
-                    expiry_date_str=leg["expiry"],
-                    option_type=option_type,
-                    strike_price=leg["strike"],
-                )
-                instrument_key = str(res["exchangeInstrumentID"])
-                ltp = atm_data["ce_ltp"] if option_type == "CE" else atm_data["pe_ltp"]
-            else:
-                instrument_key, ltp = leg_map.get(option_type, ("", 0.0))
-
-            sell_result = await order_service.place_sell_market(
-                access_token=access_token,
-                instrument_key=instrument_key,
-                quantity=qty,
-                tag=f"{tag_prefix}_E",
-                paper=paper,
-                ltp=ltp,
-                broker=broker,
-            )
-            return {
+            key, ltp = leg_map.get(option_type, ("", 0.0))
+            order = {
+                "item": item,
                 "leg": leg,
                 "option_type": option_type,
-                "qty": qty,
-                "tag_prefix": tag_prefix,
-                "instrument_key": instrument_key,
+                "qty": leg["quantity"],
+                "tag_prefix": f"NS_{item['dep']['id'][:6].upper()}_{option_type}",
+                "instrument_key": key,
                 "ltp": ltp,
-                "sell_result": sell_result,
-                "fill_price": sell_result["fill_price"] or ltp,
+                "error": None,
             }
+            item["orders"].append(order)
 
-        sell_outcomes = await asyncio.gather(*[_open_leg(l) for l in legs], return_exceptions=True)
+            if item["md_token"]:
+                lookups.append(_resolve_jainam_key(order, item, leg, option_type, jainam_service))
 
-        # ── Phase 2: attach the protective SL-M, persist the position, log ──────
-        for leg, outcome in zip(legs, sell_outcomes):
-            option_type = leg["optionType"]
+    if lookups:
+        await asyncio.gather(*lookups, return_exceptions=True)
 
-            if isinstance(outcome, Exception):
-                log.error("Entry (SELL) failed for %s %s: %s", dep["id"], option_type, outcome)
-                dep_failed += 1
-                _log(
-                    "order_failed",
-                    f"Entry failed for {option_type} leg — {outcome}",
-                    severity="error",
-                    date_str=today,
-                    user_id=dep.get("userId"),
-                    user_name=user_name,
-                    strategy_id=dep.get("strategyId"),
-                    paper=paper,
-                    metadata={"error": str(outcome), "optionType": option_type},
-                )
-                continue
 
-            try:
-                qty = outcome["qty"]
-                instrument_key = outcome["instrument_key"]
-                fill_price = outcome["fill_price"]
-                sell_result = outcome["sell_result"]
+async def _resolve_jainam_key(order: dict, item: dict, leg: dict, option_type: str, jainam_service) -> None:
+    try:
+        res = await jainam_service.get_option_instrument(
+            token=item["md_token"],
+            symbol="NIFTY",
+            expiry_date_str=leg["expiry"],
+            option_type=option_type,
+            strike_price=leg["strike"],
+        )
+        order["instrument_key"] = str(res["exchangeInstrumentID"])
+    except Exception as exc:  # noqa: BLE001 — one leg failing must not stop the rest
+        order["error"] = RuntimeError(f"Jainam instrument lookup failed: {exc}")
 
-                # SL is computed from the ACTUAL fill price (not the pre-trade LTP).
-                sl_price = strategy.calculate_sl_price(fill_price)
-                sl_result = await order_service.place_sl_market(
-                    access_token=access_token,
-                    instrument_key=instrument_key,
-                    quantity=qty,
-                    trigger_price=sl_price,
-                    tag=f"{outcome['tag_prefix']}_SL",
-                    paper=paper,
-                    broker=broker,
-                )
 
-                symbol = f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}"
-                pos_id = position_service.create_position({
-                    "date": today,
-                    "userId": dep.get("userId"),
-                    "strategyId": dep.get("strategyId", "nifty-straddle"),
-                    "strategyCode": dep.get("strategyCode", "NIFTY_STRADDLE"),
-                    "userStrategyId": dep["id"],
-                    "brokerAccountId": dep.get("brokerAccountId"),
-                    "broker": broker,
-                    "instrumentKey": instrument_key,
+async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
+    """Enter the Nifty straddle for every eligible deployment at `entry_time` sharp.
+
+    Timeline (default entry 12:00:00, job scheduled at 11:59:45):
+      T-15s  stage deployments — Firestore reads, tokens, strategy objects, idempotency
+      T-6s   fetch the market snapshot, then resolve broker instrument keys concurrently
+      T-0s   fire every SELL MARKET, for every leg of every deployment, concurrently
+      T+     attach the protective SL, persist positions, write activity logs
+
+    Only the SELL orders are on the critical path; everything else happens before or
+    after. Called with no arguments by the scheduler.
+    """
+    today = _today()
+    target = entry_target_dt(entry_time)
+    t_start = time.monotonic()
+
+    # ── Stage 1 (T-lead): everything slow that the market snapshot doesn't gate ──
+    staged, skipped = _stage_nifty_deployments(today)
+    if not staged:
+        log.info("Entry: no eligible Nifty deployments (%d skipped).", skipped)
+        return {"placed": 0, "failed": 0, "skipped": skipped, "elapsedSec": 0.0}
+
+    # ── Stage 2 (T-6s): market snapshot, as late as instrument resolution allows ──
+    md_lead = max(0, int(getattr(settings, "entry_marketdata_lead_seconds", 6)))
+    await _sleep_until(target - timedelta(seconds=md_lead), "entry:market-data")
+    try:
+        atm_data = await market_data_service.get_atm_data()
+    except Exception as exc:
+        log.error("Market data fetch failed at entry: %s", exc)
+        _log("entry_error", f"Market data fetch failed: {exc}", "error", date_str=today)
+        return {"placed": 0, "failed": 1, "skipped": skipped}
+
+    paper_global = firebase_service.is_paper_trading()
+    log.info(
+        "Entry: Nifty spot=%.2f ATM=%d expiry=%s CE=%s PE=%s [global paper=%s] — %d deployment(s)",
+        atm_data["spot"], atm_data["atm_strike"], atm_data["expiry"],
+        atm_data["ce_key"], atm_data["pe_key"], paper_global, len(staged),
+    )
+    _log(
+        "entry_started",
+        f"{entry_time} entry — Nifty {atm_data['atm_strike']} "
+        f"CE+PE | expiry {atm_data['expiry']} | paper={paper_global}",
+        "info",
+        date_str=today,
+        paper=paper_global,
+        metadata={
+            "atmStrike": atm_data["atm_strike"],
+            "expiry": atm_data["expiry"],
+            "spot": atm_data["spot"],
+        },
+    )
+
+    # ── Stage 3 (still pre-T0): resolve every leg's broker instrument key ────────
+    await _resolve_leg_instruments(staged, atm_data)
+    all_orders = [o for item in staged for o in item["orders"]]
+
+    # ── Stage 4: fire at exactly T0 ──────────────────────────────────────────────
+    await _sleep_until(target, "entry")
+    fired_at = _now_ist()
+
+    async def _sell(order: dict) -> dict:
+        if order["error"]:
+            raise order["error"]
+        item = order["item"]
+        result = await order_service.place_sell_market(
+            access_token=item["access_token"],
+            instrument_key=order["instrument_key"],
+            quantity=order["qty"],
+            tag=f"{order['tag_prefix']}_E",
+            paper=item["paper"],
+            ltp=order["ltp"],
+            broker=item["broker"],
+        )
+        order["sell_result"] = result
+        order["fill_price"] = result["fill_price"] or order["ltp"]
+        return order
+
+    outcomes = await asyncio.gather(*[_sell(o) for o in all_orders], return_exceptions=True)
+    log.info(
+        "Entry fired at %s (%+.3fs vs %s) for %d leg(s); fills settled in %.2fs.",
+        fired_at.strftime("%H:%M:%S.%f")[:-3],
+        (fired_at - target).total_seconds(),
+        target.strftime("%H:%M:%S"),
+        len(all_orders),
+        time.monotonic() - t_start,
+    )
+
+    # ── Stage 5: attach the protective SL, persist the position, log ─────────────
+    placed = failed = 0
+    per_dep: dict[str, list[int]] = {item["dep"]["id"]: [0, 0] for item in staged}
+
+    for order, outcome in zip(all_orders, outcomes):
+        item = order["item"]
+        dep = item["dep"]
+        option_type = order["option_type"]
+        counters = per_dep[dep["id"]]
+
+        if isinstance(outcome, BaseException):
+            log.error("Entry (SELL) failed for %s %s: %s", dep["id"], option_type, outcome)
+            counters[1] += 1
+            _log(
+                "order_failed",
+                f"Entry failed for {option_type} leg — {outcome}",
+                severity="error",
+                date_str=today,
+                user_id=item["user_id"],
+                user_name=item["user_name"],
+                strategy_id=dep.get("strategyId"),
+                paper=item["paper"],
+                metadata={"error": str(outcome), "optionType": option_type},
+            )
+            continue
+
+        try:
+            leg = order["leg"]
+            fill_price = order["fill_price"]
+            sell_result = order["sell_result"]
+
+            # SL is computed from the ACTUAL fill price (not the pre-trade LTP).
+            sl_price = item["strategy"].calculate_sl_price(fill_price)
+            sl_result = await order_service.place_sl_market(
+                access_token=item["access_token"],
+                instrument_key=order["instrument_key"],
+                quantity=order["qty"],
+                trigger_price=sl_price,
+                tag=f"{order['tag_prefix']}_SL",
+                paper=item["paper"],
+                broker=item["broker"],
+            )
+
+            symbol = f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}"
+            pos_id = position_service.create_position({
+                "date": today,
+                "userId": item["user_id"],
+                "strategyId": dep.get("strategyId", "nifty-straddle"),
+                "strategyCode": dep.get("strategyCode", "NIFTY_STRADDLE"),
+                "userStrategyId": dep["id"],
+                "brokerAccountId": dep.get("brokerAccountId"),
+                "broker": item["broker"],
+                "instrumentKey": order["instrument_key"],
+                "symbol": symbol,
+                "optionType": option_type,
+                "strike": leg["strike"],
+                "expiry": leg["expiry"],
+                "quantity": order["qty"],
+                "lots": item["lots"],
+                "entryOrderId": sell_result["order_id"],
+                "slOrderId": sl_result["order_id"],
+                "entryPrice": fill_price,
+                "slPrice": sl_price,
+                "status": "open",
+                "isPaper": item["paper"],
+                "entryAt": fired_at,
+                "exitAt": None,
+                "exitPrice": None,
+                "exitOrderId": None,
+                "exitReason": None,
+                "pnl": None,
+            })
+
+            _log(
+                "order_placed",
+                f"[{'PAPER ' if item['paper'] else ''}ENTRY] {symbol} | "
+                f"SELL {order['qty']}@₹{fill_price:.1f} | SL ₹{sl_price:.1f}",
+                severity="success",
+                date_str=today,
+                user_id=item["user_id"],
+                user_name=item["user_name"],
+                strategy_id=dep.get("strategyId"),
+                position_id=pos_id,
+                paper=item["paper"],
+                metadata={
                     "symbol": symbol,
                     "optionType": option_type,
-                    "strike": leg["strike"],
-                    "expiry": leg["expiry"],
-                    "quantity": qty,
-                    "lots": lots,
-                    "entryOrderId": sell_result["order_id"],
-                    "slOrderId": sl_result["order_id"],
                     "entryPrice": fill_price,
                     "slPrice": sl_price,
-                    "status": "open",
-                    "isPaper": paper,
-                    "entryAt": _now_ist(),
-                    "exitAt": None,
-                    "exitPrice": None,
-                    "exitOrderId": None,
-                    "exitReason": None,
-                    "pnl": None,
-                })
+                    "quantity": order["qty"],
+                    "entryOrderId": sell_result["order_id"],
+                    "slOrderId": sl_result["order_id"],
+                },
+            )
+            counters[0] += 1
 
-                _log(
-                    "order_placed",
-                    f"[{'PAPER ' if paper else ''}ENTRY] {symbol} | "
-                    f"SELL {qty}@₹{fill_price:.1f} | SL ₹{sl_price:.1f}",
-                    severity="success",
-                    date_str=today,
-                    user_id=dep.get("userId"),
-                    user_name=user_name,
-                    strategy_id=dep.get("strategyId"),
-                    position_id=pos_id,
-                    paper=paper,
-                    metadata={
-                        "symbol": symbol,
-                        "optionType": option_type,
-                        "entryPrice": fill_price,
-                        "slPrice": sl_price,
-                        "quantity": qty,
-                        "entryOrderId": sell_result["order_id"],
-                        "slOrderId": sl_result["order_id"],
-                    },
-                )
-                dep_placed += 1
+        except Exception as exc:  # noqa: BLE001
+            log.error("Entry (SL/persist) failed for %s %s: %s", dep["id"], option_type, exc)
+            counters[1] += 1
+            _log(
+                "order_failed",
+                f"Entry failed for {option_type} leg (SL/persist) — {exc}",
+                severity="error",
+                date_str=today,
+                user_id=item["user_id"],
+                user_name=item["user_name"],
+                strategy_id=dep.get("strategyId"),
+                paper=item["paper"],
+                metadata={"error": str(exc), "optionType": option_type},
+            )
 
-            except Exception as exc:  # noqa: BLE001
-                log.error("Entry (SL/persist) failed for %s %s: %s", dep["id"], option_type, exc)
-                dep_failed += 1
-                _log(
-                    "order_failed",
-                    f"Entry failed for {option_type} leg (SL/persist) — {exc}",
-                    severity="error",
-                    date_str=today,
-                    user_id=dep.get("userId"),
-                    user_name=user_name,
-                    strategy_id=dep.get("strategyId"),
-                    paper=paper,
-                    metadata={"error": str(exc), "optionType": option_type},
-                )
-
+    for dep_id, (dep_placed, dep_failed) in per_dep.items():
         placed += dep_placed
         failed += dep_failed
-
-        # Mark deployment status based on outcome
         if dep_placed > 0:
-            firebase_service.update_user_strategy_status(dep["id"], "trade_active")
+            firebase_service.update_user_strategy_status(dep_id, "trade_active")
         elif dep_failed > 0:
-            firebase_service.update_user_strategy_status(dep["id"], "enabled")  # will retry nothing
+            firebase_service.update_user_strategy_status(dep_id, "enabled")
 
-    # NOTE: Per-strategy benchmark simulation trades are created by each strategy's own entry
-    # job — the Nifty benchmark above (system_nifty_benchmark) and the BTC benchmark in
-    # execute_btc_entry (system_btc_benchmark). The previous generic loop here cloned Nifty
-    # market data for EVERY strategy, which (a) surfaced NIFTY trades on the BTC page and
-    # (b) doubled the Nifty page's trades. It has been removed.
+    # Pick the new legs up on the live feed straight away instead of waiting a cycle.
+    _refresh_live_feed()
 
     elapsed = round(time.monotonic() - t_start, 2)
-    summary = {"placed": placed, "failed": failed, "skipped": skipped, "elapsedSec": elapsed}
-    log.info("Entry complete in %.2fs: %s", elapsed, summary)
+    summary = {
+        "placed": placed,
+        "failed": failed,
+        "skipped": skipped,
+        "elapsedSec": elapsed,
+        "firedAt": fired_at.isoformat(),
+        "latencySec": round((fired_at - target).total_seconds(), 3),
+    }
+    log.info("Entry complete: %s", summary)
     return summary
+
+
+def _refresh_live_feed() -> None:
+    """Ask the websocket feed to re-read the open-position set. Never raises."""
+    try:
+        from services import live_feed_service
+        live_feed_service.refresh_subscriptions()
+    except Exception as exc:  # noqa: BLE001
+        log.debug("Live feed subscription refresh skipped: %s", exc)
 
 
 # ── 15:29 — Execute exit ──────────────────────────────────────────────────────
@@ -646,7 +697,7 @@ async def execute_exit() -> dict:
     # This is the 15:29 EOD exit for intraday (Nifty) strategies only.
     # BTC exits at 17:29 via execute_btc_exit — never square it off here.
     open_positions = [
-        p for p in position_service.get_open_positions_for_date(today)
+        p for p in position_service.get_exitable_positions_for_date(today)
         if p.get("strategyCode") != "BTC_OPTION_SELLING"
     ]
     accounts = _accounts_by_id()
@@ -661,7 +712,10 @@ async def execute_exit() -> dict:
     closed_deployment_ids: set[str] = set()
 
     for pos in open_positions:
-        if pos.get("status") != "open":
+        # Take exclusive ownership before any broker call — a manual square-off or a
+        # second /trigger-exit could otherwise be closing this same leg right now.
+        if not position_service.claim_position_for_exit(pos["id"]):
+            log.info("EOD exit: position %s is already being closed — skipping.", pos["id"])
             continue
 
         # Use the position's own paper flag (set per-user at entry), not the global one.
@@ -780,6 +834,9 @@ async def execute_exit() -> dict:
         except Exception as exc:  # noqa: BLE001
             log.error("Exit failed for position %s: %s", pos["id"], exc)
             failed += 1
+            # Give the claim back so a retry or manual square-off can pick this leg up
+            # immediately rather than waiting out the staleness window.
+            position_service.release_position_claim(pos["id"])
             _log(
                 "exit_error",
                 f"Exit failed for {pos.get('symbol')} — {exc}",
@@ -845,12 +902,39 @@ def eod_cleanup() -> dict:
     return {"positions": len(positions), "users": len(user_pnl), "totalPnl": round(total_pnl, 2)}
 
 
+# One in-flight manual square-off per deployment. A double-clicked button sends the
+# request two or three times; without this they interleave and each places its own BUY.
+# The Firestore claim below is the authoritative guard (it also covers multiple backend
+# instances) — this lock just makes the duplicates wait instead of racing.
+_squareoff_locks: dict[str, asyncio.Lock] = {}
+
+
+def _squareoff_lock(user_strategy_id: str) -> asyncio.Lock:
+    lock = _squareoff_locks.get(user_strategy_id)
+    if lock is None:
+        lock = _squareoff_locks[user_strategy_id] = asyncio.Lock()
+    return lock
+
+
 async def square_off_single_deployment(user_strategy_id: str) -> dict:
-    """Square off open positions for a single userStrategy deployment immediately."""
+    """Square off open positions for a single userStrategy deployment immediately.
+
+    Safe to call concurrently: duplicate requests serialise on the deployment lock and
+    then find every position already claimed, so they close nothing and return closed=0.
+    """
+    async with _squareoff_lock(user_strategy_id):
+        return await _square_off_single_deployment(user_strategy_id)
+
+
+async def _square_off_single_deployment(user_strategy_id: str) -> dict:
     today = _today()
     paper = firebase_service.is_paper_trading()
     all_positions = position_service.get_open_positions_for_user_strategy(user_strategy_id, today)
-    open_positions = [p for p in all_positions if p.get("status") == "open"]
+    # "closing" is included so an exit abandoned by a crashed request can be retried.
+    open_positions = [
+        p for p in all_positions
+        if p.get("status") in ("open", position_service.CLOSING_STATUS)
+    ]
     accounts = _accounts_by_id()
 
     if not open_positions:
@@ -858,8 +942,14 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
         firebase_service.update_user_strategy_status(user_strategy_id, "disabled_today")
         return {"closed": 0, "status": "disabled_today"}
 
-    closed = 0
+    closed = skipped = 0
     for pos in open_positions:
+        # Take exclusive ownership of this exit before any broker call.
+        if not position_service.claim_position_for_exit(pos["id"]):
+            log.info("Square-off: position %s is already being closed — skipping.", pos["id"])
+            skipped += 1
+            continue
+
         account = accounts.get(pos.get("brokerAccountId", ""))
         pos_paper = pos.get("isPaper", paper)  # per-position paper flag, not the global one
         access_token = _get_token(account) if not pos_paper else "paper_token"
@@ -880,14 +970,21 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
 
         # 1. Cancel the SL-M and CONFIRM it can't fill, before squaring off.
         sl_order_id = pos.get("slOrderId", "")
-        sl_state = await order_service.cancel_and_confirm_sl(
-            access_token=access_token,
-            order_id=sl_order_id,
-            paper=pos_paper,
-            broker=broker,
-            delta_creds=delta_creds,
-            product_id=pos.get("instrumentKey"),
-        )
+        try:
+            sl_state = await order_service.cancel_and_confirm_sl(
+                access_token=access_token,
+                order_id=sl_order_id,
+                paper=pos_paper,
+                broker=broker,
+                delta_creds=delta_creds,
+                product_id=pos.get("instrumentKey"),
+            )
+        except Exception as exc:  # noqa: BLE001
+            log.error("Manual exit: SL cancel raised for %s — releasing claim: %s", pos["id"], exc)
+            position_service.release_position_claim(pos["id"])
+            skipped += 1
+            continue
+
         if sl_state["state"] == "unknown":
             # Can't confirm the SL is gone — skip this leg to avoid a double-fill; leave it open.
             log.error("Manual exit: SL %s not confirmed cancelled for %s — skipping square-off.", sl_order_id, pos["id"])
@@ -903,6 +1000,9 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
                 paper=pos_paper,
                 metadata={"slOrderId": sl_order_id},
             )
+            # Hand the position back so the next attempt (or the EOD job) can retry it.
+            position_service.release_position_claim(pos["id"])
+            skipped += 1
             continue
 
         if sl_state["state"] == "filled":
@@ -912,18 +1012,39 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
             exit_reason = "sl_hit"
         else:
             # 2. Get current LTP + place BUY MARKET to close (SL confirmed cancelled).
-            current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
-            tag = f"SQ_MAN_{pos['id'][:6].upper()}"
-            buy_result = await order_service.place_buy_market(
-                access_token=access_token,
-                instrument_key=pos["instrumentKey"],
-                quantity=pos["quantity"],
-                tag=tag,
-                paper=pos_paper,
-                ltp=current_ltp,
-                broker=broker,
-                delta_creds=delta_creds,
-            )
+            #    The SL is already cancelled here, so a failure must NOT release the claim
+            #    silently without saying so — log loudly and leave it for the EOD job.
+            try:
+                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+                tag = f"SQ_MAN_{pos['id'][:6].upper()}"
+                buy_result = await order_service.place_buy_market(
+                    access_token=access_token,
+                    instrument_key=pos["instrumentKey"],
+                    quantity=pos["quantity"],
+                    tag=tag,
+                    paper=pos_paper,
+                    ltp=current_ltp,
+                    broker=broker,
+                    delta_creds=delta_creds,
+                )
+            except Exception as exc:  # noqa: BLE001
+                log.error("Manual exit: square-off BUY failed for %s: %s", pos["id"], exc)
+                _log(
+                    "exit_error",
+                    f"Square-off failed for {pos.get('symbol')} — {exc}. "
+                    f"The stop-loss was cancelled; this leg needs attention.",
+                    severity="error",
+                    date_str=today,
+                    user_id=pos.get("userId"),
+                    user_name=user_name,
+                    strategy_id=pos.get("strategyId"),
+                    position_id=pos["id"],
+                    paper=pos_paper,
+                    metadata={"error": str(exc)},
+                )
+                position_service.release_position_claim(pos["id"])
+                skipped += 1
+                continue
             exit_price = buy_result["fill_price"] or current_ltp
             exit_order_id = buy_result["order_id"]
             exit_reason = "manual_exit"
@@ -963,7 +1084,7 @@ async def square_off_single_deployment(user_strategy_id: str) -> dict:
 
     # Set status to disabled_today so that EOD job does not process it again and it does not re-enter today
     firebase_service.update_user_strategy_status(user_strategy_id, "disabled_today")
-    return {"closed": closed, "status": "disabled_today"}
+    return {"closed": closed, "skipped": skipped, "status": "disabled_today"}
 
 
 async def sync_order_statuses() -> dict:
@@ -1015,6 +1136,9 @@ async def sync_order_statuses() -> dict:
                 if current_ltp > 0:
                     # 1. Check if SL hit (LTP >= current SL price)
                     if current_ltp >= pos["slPrice"]:
+                        if not position_service.claim_position_for_exit(pos["id"]):
+                            log.info("Sync: %s is already being closed — skipping SL exit.", pos["id"])
+                            continue
                         exit_price_usd = current_ltp
                         exit_price_inr = delta_service.usd_to_inr(exit_price_usd, usd_inr_rate)
                         pnl_usd = round((pos["entryPrice"] - exit_price_usd) * pos["quantity"], 6)
@@ -1065,6 +1189,9 @@ async def sync_order_statuses() -> dict:
 
                     # 2. Check if Target Profit Hit (Option premium decays to <= $0.50 USD)
                     elif current_ltp <= getattr(get_strategy("BTC_OPTION_SELLING"), "TARGET_PRICE_USD", 0.50):
+                        if not position_service.claim_position_for_exit(pos["id"]):
+                            log.info("Sync: %s is already being closed — skipping target exit.", pos["id"])
+                            continue
                         exit_price_usd = current_ltp
                         exit_price_inr = delta_service.usd_to_inr(exit_price_usd, usd_inr_rate)
                         pnl_usd = round((pos["entryPrice"] - exit_price_usd) * pos["quantity"], 6)
@@ -1198,6 +1325,9 @@ async def sync_order_statuses() -> dict:
             try:
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
                 if current_ltp >= pos["slPrice"]:
+                    if not position_service.claim_position_for_exit(pos["id"]):
+                        log.info("Sync: %s is already being closed — skipping paper SL.", pos["id"])
+                        continue
                     pnl = (pos["entryPrice"] - pos["slPrice"]) * pos["quantity"]
                     position_service.update_position(pos["id"], {
                         "status": "sl_hit",
@@ -1254,6 +1384,9 @@ async def sync_order_statuses() -> dict:
                         exit_price = float(latest.get("averageprice") or latest.get("stopPrice") or pos["slPrice"])
 
             if is_hit:
+                if not position_service.claim_position_for_exit(pos["id"]):
+                    log.info("Sync: %s is already being closed — skipping SL reconcile.", pos["id"])
+                    continue
                 pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
                 position_service.update_position(pos["id"], {
                     "status": "sl_hit",
@@ -1282,109 +1415,33 @@ async def sync_order_statuses() -> dict:
 
 
 
-# ── 17:01 — Execute BTC entry (Delta Exchange) ────────────────────────────────
+# ── 17:01 — Execute BTC entry (job runs at 17:00:45, orders fire at 17:01:00) ─
 
-async def execute_btc_entry() -> dict:
-    """Place BTC option entry orders via Delta Exchange for all 'ready' BTC deployments.
+BTC_ENTRY_TIME = "17:01"
 
-    For each BTC_OPTION_SELLING deployment:
-      1. Fetch ATM data from Delta Exchange (spot, CE/PE product IDs, LTPs).
-      2. For each leg (CE + PE):
-         a. Place SELL MARKET → get fill price (in USD).
-         b. Place BUY Stop-Market at fill_price × 2.0 (100% SL).
-         c. Write position doc to Firestore (USD + INR PnL fields).
-      3. Set userStrategy.status = 'trade_active'.
+
+async def execute_btc_entry(entry_time: str = BTC_ENTRY_TIME) -> dict:
+    """Enter BTC option shorts via Delta Exchange at `entry_time` sharp.
+
+    Same pre-stage timeline as `execute_entry`: deployments, Delta API credentials and
+    user names are resolved during the lead window, the ATM snapshot is taken a few
+    seconds out, and the SELL orders fire on the entry second. Then per leg:
+      a. SELL MARKET → fill price (USD).
+      b. BUY stop-market at fill × 2.0 (100% SL). Delta honours true stop-market orders,
+         so no SL-limit downgrade applies here.
+      c. Write the position doc (USD + INR fields).
     """
     from services import delta_service
     from utils import token_store
 
     today = _today()
+    target = entry_target_dt(entry_time)
+    usd_inr_rate = float(getattr(settings, "usd_to_inr_rate", 85.0))
     placed = failed = skipped = 0
+
+    # ── Stage 1 (T-lead): deployments, credentials, user names ──────────────────
     accounts = _accounts_by_id()
     users = _users_by_id()
-    usd_inr_rate = getattr(__import__("config", fromlist=["settings"]).settings, "usd_to_inr_rate", 85.0)
-
-    # 1. Fetch BTC ATM data once
-    try:
-        atm_data = await delta_service.get_atm_data()
-    except Exception as exc:
-        log.error("Delta ATM data fetch failed at 17:01 entry: %s", exc)
-        _log("entry_error", f"Delta ATM data fetch failed: {exc}", "error", date_str=today)
-        return {"placed": 0, "failed": 1, "skipped": 0}
-
-    log.info(
-        "BTC entry: spot=%.2f ATM=%d expiry=%s CE_id=%d PE_id=%d CE_ltp=%.4f PE_ltp=%.4f",
-        atm_data["spot"], atm_data["atm_strike"], atm_data["expiry"],
-        atm_data["ce_product_id"], atm_data["pe_product_id"],
-        atm_data["ce_ltp"], atm_data["pe_ltp"],
-    )
-
-    # ── 2. Always Execute System Benchmark Simulation Trade (userId="system") ─
-    try:
-        sys_existing = position_service.get_open_positions_for_user_strategy("system_btc_benchmark", today)
-        if not sys_existing:
-            sys_strategy = get_strategy("BTC_OPTION_SELLING")
-            sys_dep = {
-                "id": "system_btc_benchmark",
-                "userId": "system",
-                "strategyId": "btc-option-selling",
-                "strategyCode": "BTC_OPTION_SELLING",
-                "multiplier": 1,
-            }
-            sys_legs = sys_strategy.get_entry_legs(sys_dep, atm_data["atm_strike"], atm_data["expiry"], 1)
-            leg_map_sys = {
-                "CE": (str(atm_data["ce_product_id"]), atm_data["ce_symbol"], atm_data["ce_ltp"]),
-                "PE": (str(atm_data["pe_product_id"]), atm_data["pe_symbol"], atm_data["pe_ltp"]),
-            }
-            for leg in sys_legs:
-                option_type = leg["optionType"]
-                qty = leg["quantity"]
-                prod_id, symbol, ltp = leg_map_sys[option_type]
-                sl_usd = sys_strategy.calculate_sl_price(ltp)
-                sl_inr = delta_service.usd_to_inr(sl_usd, usd_inr_rate)
-                entry_inr = delta_service.usd_to_inr(ltp, usd_inr_rate)
-
-                pos_doc = {
-                    "userId": "system",
-                    "userStrategyId": "system_btc_benchmark",
-                    "strategyId": "btc-option-selling",
-                    "strategyCode": "BTC_OPTION_SELLING",
-                    "symbol": symbol,
-                    "instrumentKey": prod_id,
-                    "optionType": option_type,
-                    "strike": leg["strike"],
-                    "expiry": leg["expiry"],
-                    "quantity": qty,
-                    "entryPrice": ltp,
-                    "entryPriceInr": entry_inr,
-                    "currency": "USD",
-                    "usdToInrRate": usd_inr_rate,
-                    "slPrice": sl_usd,
-                    "slPriceInr": sl_inr,
-                    "slOrderId": f"SYS_SL_{int(__import__('time').time()*1000)}",
-                    "status": "open",
-                    "isPaper": True,
-                    "broker": "delta",
-                    "date": today,
-                    "createdAt": _now_ist(),
-                }
-                position_service.create_position(pos_doc)
-
-            log.info("System benchmark BTC simulation trade created for %s.", today)
-            _log(
-                "entry_executed",
-                f"[SYSTEM BENCHMARK] BTC {atm_data['atm_strike']} CE+PE sold @ ${atm_data['ce_ltp']:.2f} & ${atm_data['pe_ltp']:.2f}",
-                severity="success",
-                date_str=today,
-                user_id="system",
-                strategy_id="btc-option-selling",
-                paper=True,
-            )
-            placed += 1
-    except Exception as sys_exc:
-        log.error("Failed to create system benchmark BTC trade: %s", sys_exc)
-
-    # ── 3. Process User Deployments ───────────────────────────────────────────
     all_ready = firebase_service.list_deployments_by_status("ready")
     all_enabled = firebase_service.list_deployments_by_status("enabled")
     deployments = [
@@ -1392,29 +1449,19 @@ async def execute_btc_entry() -> dict:
         if d.get("strategyCode") == "BTC_OPTION_SELLING" and not d.get("pausedByAdmin")
     ]
 
+    staged: list[dict] = []
     for dep in deployments:
-        # Idempotency
-        existing = position_service.get_open_positions_for_user_strategy(dep["id"], today)
-        if existing:
+        if position_service.get_open_positions_for_user_strategy(dep["id"], today):
             log.warning("BTC deployment %s already has positions today — skipping.", dep["id"])
             skipped += 1
             continue
 
-        account = accounts.get(dep.get("brokerAccountId", ""))
         user_id = dep.get("userId")
-        user_doc = users.get(user_id, {})
+        user_doc = users.get(user_id, {}) or {}
         paper = user_doc.get("paperTrading", True)
-        lots = dep.get("multiplier", 1)
+        user_name = user_doc.get("username") or user_doc.get("email") or "User"
+        account = accounts.get(dep.get("brokerAccountId", ""))
 
-        user_name = "User"
-        try:
-            ud = firebase_service.get_db().collection("users").document(user_id).get()
-            if ud.exists:
-                user_name = ud.to_dict().get("username") or ud.to_dict().get("email") or "User"
-        except Exception:
-            pass
-
-        # Get Delta API credentials
         api_key = api_secret = None
         if not paper and account:
             tokens = token_store.get_tokens(account["id"])
@@ -1434,8 +1481,6 @@ async def execute_btc_entry() -> dict:
                 failed += 1
                 continue
 
-        delta_creds = {"api_key": api_key, "api_secret": api_secret} if not paper else {}
-
         try:
             strategy = get_strategy("BTC_OPTION_SELLING")
         except ValueError as exc:
@@ -1443,16 +1488,60 @@ async def execute_btc_entry() -> dict:
             failed += 1
             continue
 
-        legs = strategy.get_entry_legs(dep, atm_data["atm_strike"], atm_data["expiry"], lots)
+        staged.append({
+            "dep": dep,
+            "strategy": strategy,
+            "paper": paper,
+            "user_id": user_id,
+            "user_name": user_name,
+            "lots": dep.get("multiplier", 1),
+            "delta_creds": {"api_key": api_key, "api_secret": api_secret} if not paper else {},
+        })
 
-        leg_map = {
-            "CE": (str(atm_data["ce_product_id"]), atm_data["ce_symbol"], atm_data["ce_ltp"]),
-            "PE": (str(atm_data["pe_product_id"]), atm_data["pe_symbol"], atm_data["pe_ltp"]),
-        }
+    if not staged:
+        log.info("BTC entry: no eligible deployments (%d skipped, %d failed).", skipped, failed)
+        return {"placed": 0, "failed": failed, "skipped": skipped}
 
+    # ── Stage 2 (T-6s): Delta ATM snapshot ──────────────────────────────────────
+    md_lead = max(0, int(getattr(settings, "entry_marketdata_lead_seconds", 6)))
+    await _sleep_until(target - timedelta(seconds=md_lead), "btc-entry:market-data")
+    try:
+        atm_data = await delta_service.get_atm_data()
+    except Exception as exc:
+        log.error("Delta ATM data fetch failed at %s entry: %s", entry_time, exc)
+        _log("entry_error", f"Delta ATM data fetch failed: {exc}", "error", date_str=today)
+        return {"placed": 0, "failed": failed + 1, "skipped": skipped}
+
+    log.info(
+        "BTC entry: spot=%.2f ATM=%d expiry=%s CE_id=%d PE_id=%d CE_ltp=%.4f PE_ltp=%.4f — %d deployment(s)",
+        atm_data["spot"], atm_data["atm_strike"], atm_data["expiry"],
+        atm_data["ce_product_id"], atm_data["pe_product_id"],
+        atm_data["ce_ltp"], atm_data["pe_ltp"], len(staged),
+    )
+
+    leg_map = {
+        "CE": (str(atm_data["ce_product_id"]), atm_data["ce_symbol"], atm_data["ce_ltp"]),
+        "PE": (str(atm_data["pe_product_id"]), atm_data["pe_symbol"], atm_data["pe_ltp"]),
+    }
+    for item in staged:
+        item["legs"] = item["strategy"].get_entry_legs(
+            item["dep"], atm_data["atm_strike"], atm_data["expiry"], item["lots"]
+        )
+
+    # ── Stage 3: fire at exactly T0 ─────────────────────────────────────────────
+    await _sleep_until(target, "btc-entry")
+    fired_at = _now_ist()
+
+    for item in staged:
+        dep = item["dep"]
+        paper = item["paper"]
+        user_id = item["user_id"]
+        user_name = item["user_name"]
+        delta_creds = item["delta_creds"]
+        strategy = item["strategy"]
         dep_placed = dep_failed = 0
 
-        for leg in legs:
+        for leg in item["legs"]:
             option_type = leg["optionType"]
             qty = leg["quantity"]
             product_id_str, symbol, ltp = leg_map[option_type]
@@ -1502,7 +1591,7 @@ async def execute_btc_entry() -> dict:
                     "strike": leg["strike"],
                     "expiry": leg["expiry"],
                     "quantity": qty,
-                    "lots": lots,
+                    "lots": item["lots"],
                     "entryOrderId": sell_result["order_id"],
                     "slOrderId": sl_result["order_id"],
                     "entryPrice": fill_price_usd,       # USD
@@ -1513,7 +1602,7 @@ async def execute_btc_entry() -> dict:
                     "usdToInrRate": usd_inr_rate,
                     "status": "open",
                     "isPaper": paper,
-                    "entryAt": _now_ist(),
+                    "entryAt": fired_at,
                     "exitAt": None,
                     "exitPrice": None,
                     "exitPriceInr": None,
@@ -1570,7 +1659,15 @@ async def execute_btc_entry() -> dict:
         elif dep_failed > 0:
             firebase_service.update_user_strategy_status(dep["id"], "enabled")
 
-    summary = {"placed": placed, "failed": failed, "skipped": skipped}
+    _refresh_live_feed()
+
+    summary = {
+        "placed": placed,
+        "failed": failed,
+        "skipped": skipped,
+        "firedAt": fired_at.isoformat(),
+        "latencySec": round((fired_at - target).total_seconds(), 3),
+    }
     log.info("BTC entry complete: %s", summary)
     return summary
 
@@ -1591,7 +1688,7 @@ async def execute_btc_exit() -> dict:
 
     today = _today()
     paper = firebase_service.is_paper_trading()
-    all_open = position_service.get_open_positions_for_date(today)
+    all_open = position_service.get_exitable_positions_for_date(today)
     # Filter to BTC positions only
     open_positions = [p for p in all_open if p.get("strategyCode") == "BTC_OPTION_SELLING"]
     accounts = _accounts_by_id()
@@ -1607,7 +1704,10 @@ async def execute_btc_exit() -> dict:
     closed_deployment_ids: set[str] = set()
 
     for pos in open_positions:
-        if pos.get("status") != "open":
+        # Take exclusive ownership before any broker call, so a manual square-off or a
+        # second /trigger-btc-exit can't close this same leg concurrently.
+        if not position_service.claim_position_for_exit(pos["id"]):
+            log.info("BTC exit: position %s is already being closed — skipping.", pos["id"])
             continue
 
         account = accounts.get(pos.get("brokerAccountId", ""))
@@ -1745,6 +1845,8 @@ async def execute_btc_exit() -> dict:
         except Exception as exc:  # noqa: BLE001
             log.error("BTC exit failed for position %s: %s", pos["id"], exc)
             failed += 1
+            # Release so a retry or manual square-off can take this leg straight away.
+            position_service.release_position_claim(pos["id"])
             _log(
                 "exit_error",
                 f"BTC exit failed for {pos.get('symbol')} — {exc}",

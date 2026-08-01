@@ -116,16 +116,15 @@
   }
 
   <!-- Confirmation Dialog -->
-  <p-dialog [(visible)]="showConfirm" [modal]="true" [header]="confirmTitle" [style]="{ width: '450px', maxWidth: '95vw' }" styleClass="custom-confirm-dialog">
-    <div class="confirm-content" style="padding: 1rem 0; color: #8B95B0; font-size: 0.9rem; line-height: 1.5;">
-      {{ confirmMsg }}
-    </div>
-    <ng-template pTemplate="footer">
-      <div style="display: flex; gap: 0.5rem; justify-content: flex-end;">
-        <button class="btn-secondary" style="background: rgba(255,255,255,0.05); border: 1px solid rgba(255,255,255,0.1); color: #F0F4FF; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 600; cursor: pointer;" (click)="showConfirm = false">Cancel</button>
-        <button class="btn-primary" style="background: linear-gradient(135deg, #00C2E8, #00E5FF); border: none; color: #0D1526; padding: 0.5rem 1rem; border-radius: 8px; font-weight: 700; cursor: pointer;" (click)="executeAction()">{{ confirmBtnText }}</button>
-      </div>
-    </ng-template>
-  </p-dialog>
+  <app-confirm-action-dialog
+    [(visible)]="showConfirm"
+    [title]="confirmTitle"
+    [message]="confirmMsg"
+    [confirmText]="confirmBtnText"
+    [runningText]="confirmRunningText"
+    [action]="actionToExecute"
+    (succeeded)="onActionSucceeded()"
+    (failed)="onActionFailed($event)"
+  ></app-confirm-action-dialog>
 </div>
 

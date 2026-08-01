@@ -1,7 +1,7 @@
 import { Component, OnInit, OnDestroy, inject } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { DialogModule } from 'primeng/dialog';
+import { ConfirmActionDialogComponent } from '../../shared/components/confirm-action-dialog/confirm-action-dialog.component';
 import { Auth, user } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { StrategyService } from '../../core/services/strategy.service';
@@ -13,7 +13,7 @@ import { TradzoUser } from '../../models/user.model';
 @Component({
   selector: 'app-dashboard',
   standalone: true,
-  imports: [CommonModule, FormsModule, DialogModule],
+  imports: [CommonModule, FormsModule, ConfirmActionDialogComponent],
   templateUrl: './dashboard.component.html',
   styleUrl: './dashboard.component.scss'
 })
@@ -35,7 +35,8 @@ export class DashboardComponent implements OnInit, OnDestroy {
   confirmTitle = '';
   confirmMsg = '';
   confirmBtnText = 'Confirm';
-  private actionToExecute: (() => Promise<void>) | null = null;
+  confirmRunningText = 'Processing…';
+  actionToExecute: (() => Promise<void>) | null = null;
 
   get currentUser(): TradzoUser | null {
     return this.authService.currentUserValue;
@@ -52,6 +53,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
       ? 'Are you sure you want to switch your account to Simulation Mode? All future entry orders placed by the system on your deployments will be paper trades.'
       : 'Are you sure you want to switch your account to Live Orders Mode? All future entry orders placed by the system on your deployments will execute real trades on your connected broker account.';
     this.confirmBtnText = paper ? 'Switch to Simulation' : 'Switch to Live';
+    this.confirmRunningText = 'Switching…';
     this.actionToExecute = async () => {
       await this.authService.toggleUserTradingMode(this.currentUser!.uid, !paper);
     };
@@ -115,7 +117,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.totalLots = this.deployedStrategies.reduce((sum, d) => sum + (d.multiplier || 0), 0);
 
     // Positions P&L sum — prefer the INR-equivalent so mixed-settlement positions add up in one currency.
-    this.runningPnl = this.positions.reduce((sum, p) => sum + ((p.pnlInr ?? p.pnl) || 0), 0);
+    this.runningPnl = this.positions.reduce((sum, p) => sum + this.effectivePnl(p, true), 0);
   }
 
   private resetData() {
@@ -133,6 +135,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.confirmTitle = 'Disable Strategy';
     this.confirmMsg = 'Are you sure you want to disable this strategy? It will not execute orders for any future days until you enable it again.';
     this.confirmBtnText = 'Disable';
+    this.confirmRunningText = 'Disabling…';
     this.actionToExecute = async () => {
       await this.strategyService.pauseUserStrategy(id);
     };
@@ -143,6 +146,7 @@ export class DashboardComponent implements OnInit, OnDestroy {
     this.confirmTitle = 'Enable Strategy';
     this.confirmMsg = 'Are you sure you want to enable this strategy? It will start executing orders automatically on future trading days.';
     this.confirmBtnText = 'Enable';
+    this.confirmRunningText = 'Enabling…';
     this.actionToExecute = async () => {
       await this.strategyService.resumeUserStrategy(id);
     };
@@ -150,17 +154,13 @@ export class DashboardComponent implements OnInit, OnDestroy {
   }
 
 
-  async executeAction() {
-    if (this.actionToExecute) {
-      try {
-        await this.actionToExecute();
-      } catch (err) {
-        console.error('Failed to execute action:', err);
-      } finally {
-        this.actionToExecute = null;
-        this.showConfirm = false;
-      }
-    }
+  onActionSucceeded() {
+    this.actionToExecute = null;
+  }
+
+  onActionFailed(err: Error) {
+    this.actionToExecute = null;
+    console.error('Failed to execute action:', err);
   }
 
 
@@ -187,6 +187,22 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return pnl > 0 ? 'pnl-positive' : 'pnl-negative';
   }
 
+  /**
+   * P&L to show for a position: the booked `pnl` once it closes, otherwise the live
+   * mark-to-market the feed writes while it is open.
+   * `preferInr` picks the INR equivalent so mixed-settlement positions can be summed.
+   */
+  effectivePnl(pos: any, preferInr = false): number {
+    const pick = (base: string) => {
+      const inr = pos?.[`${base}Inr`];
+      if (preferInr && inr !== undefined && inr !== null) return inr;
+      return pos?.[base];
+    };
+    const booked = pick('pnl');
+    if (booked !== undefined && booked !== null) return booked;
+    return pick('unrealizedPnl') ?? 0;
+  }
+
   /** Currency shared by the user's deployments, or INR when mixed/absent. */
   get portfolioCurrency(): CurrencyCode {
     const currencies = new Set(this.deployedStrategies.map(d => d.currency).filter(Boolean));
@@ -204,9 +220,10 @@ export class DashboardComponent implements OnInit, OnDestroy {
     return formatMoney(pos?.[base], pos?.currency, { decimals: 2 });
   }
 
-  /** A position PnL, preferring the INR-equivalent field when present. */
+  /** A position PnL (booked, or live while open), preferring the INR-equivalent field. */
   posPnl(pos: any): string {
-    if (pos?.pnlInr !== undefined && pos?.pnlInr !== null) return formatMoney(pos.pnlInr, 'INR');
-    return formatMoney(pos?.pnl ?? 0, pos?.currency);
+    const hasInr = pos?.pnlInr != null || pos?.unrealizedPnlInr != null;
+    if (hasInr) return formatMoney(this.effectivePnl(pos, true), 'INR');
+    return formatMoney(this.effectivePnl(pos), pos?.currency);
   }
 }

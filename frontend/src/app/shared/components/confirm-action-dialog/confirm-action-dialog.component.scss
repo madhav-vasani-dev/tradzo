@@ -1,0 +1,83 @@
+.confirm-content {
+  padding: 1rem 0;
+  color: #8B95B0;
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
+
+.confirm-running {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.6rem 0.75rem;
+  margin-bottom: 0.25rem;
+  border-radius: 8px;
+  background: rgba(0, 194, 232, 0.08);
+  border: 1px solid rgba(0, 194, 232, 0.25);
+  color: #00C2E8;
+  font-size: 0.82rem;
+  font-weight: 600;
+}
+
+.confirm-actions {
+  display: flex;
+  gap: 0.5rem;
+  justify-content: flex-end;
+}
+
+.confirm-btn-secondary,
+.confirm-btn-primary {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  padding: 0.5rem 1rem;
+  border-radius: 8px;
+  cursor: pointer;
+  transition: opacity 0.15s ease;
+}
+
+.confirm-btn-secondary {
+  background: rgba(255, 255, 255, 0.05);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+  color: #F0F4FF;
+  font-weight: 600;
+}
+
+.confirm-btn-primary {
+  background: linear-gradient(135deg, #00C2E8, #00E5FF);
+  border: none;
+  color: #0D1526;
+  font-weight: 700;
+  // Keep the width stable when the label swaps to the running text.
+  min-width: 8.5rem;
+  justify-content: center;
+}
+
+.confirm-btn-secondary:disabled,
+.confirm-btn-primary:disabled {
+  opacity: 0.55;
+  cursor: not-allowed;
+}
+
+.confirm-spinner {
+  width: 0.85rem;
+  height: 0.85rem;
+  flex: none;
+  border: 2px solid rgba(0, 194, 232, 0.3);
+  border-top-color: #00C2E8;
+  border-radius: 50%;
+  animation: confirm-spin 0.7s linear infinite;
+
+  &.dark {
+    border-color: rgba(13, 21, 38, 0.3);
+    border-top-color: #0D1526;
+  }
+}
+
+@keyframes confirm-spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .confirm-spinner { animation-duration: 2s; }
+}

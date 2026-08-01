@@ -103,7 +103,9 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
   }
 
   async confirm() {
-    if (!this.selectedBroker || !this.strategy) return;
+    // Re-entrancy guard: a deployment creates a userStrategy that trades real money,
+    // so a second click must never emit a second `deployed`.
+    if (this.isDeploying || !this.selectedBroker || !this.strategy) return;
     this.isDeploying = true;
     await new Promise(r => setTimeout(r, 1200));
 
