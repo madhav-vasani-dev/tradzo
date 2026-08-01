@@ -42,6 +42,28 @@ class Settings(BaseSettings):
 
     # Scheduler
     enable_scheduler: bool = True
+    # Seconds before the strategy entry time that the pre-stage job runs. Everything
+    # slow (Firestore reads, token decryption, instrument resolution, market data) is
+    # done during this window so the SELL orders can fire exactly at the entry second.
+    entry_prestage_lead_seconds: int = 15
+    # How long before T0 the market snapshot is taken. Must be < entry_prestage_lead_seconds,
+    # and large enough to cover the option-chain fetch plus any broker instrument lookups.
+    entry_marketdata_lead_seconds: int = 6
+
+    # Orders
+    # Product code for equity/F&O legs. "delivery" = Upstox "D" / Jainam "NRML" (carry
+    # forward, no broker auto-square-off at 15:15). "intraday" = Upstox "I" / Jainam "MIS".
+    equity_product: str = "delivery"
+    # NSE discontinued SL-M in the F&O segment, so brokers silently downgrade an SL-M to
+    # a stop-LIMIT priced at the trigger — which does not fill through a gap. When that
+    # happens we repair the order to a stop-limit whose limit price sits this far past the
+    # trigger, so it still fills on a spike with a bounded worst price.
+    sl_limit_buffer_pct: float = 10.0
+
+    # Live market data feed (websocket) — drives live mark-to-market P&L on open positions.
+    enable_live_feed: bool = True
+    # How often the in-memory LTP cache is flushed to Firestore position docs.
+    live_pnl_write_interval_seconds: float = 5.0
 
     @property
     def cors_origin_list(self) -> list[str]:

@@ -130,8 +130,7 @@ export class PnlComponent implements OnInit {
     this.totalLoss = 0;
 
     for (const pos of this.positions) {
-      // Prefer the INR-equivalent so the report totals in a single currency.
-      const pnl = (pos.pnlInr ?? pos.pnl) || 0;
+      const pnl = this.effectivePnl(pos, true);
       this.netPnl += pnl;
 
       if (pnl > 0) {
@@ -161,7 +160,7 @@ export class PnlComponent implements OnInit {
       p.entryPriceInr ?? p.entryPrice,
       (p.exitPriceInr ?? p.exitPrice) ?? '—',
       p.quantity,
-      (p.pnlInr ?? p.pnl) !== null && (p.pnlInr ?? p.pnl) !== undefined ? (p.pnlInr ?? p.pnl) : '—'
+      this.hasPnl(p) ? this.effectivePnl(p, true) : '—'
     ]);
 
     const csvContent = [
@@ -208,10 +207,34 @@ export class PnlComponent implements OnInit {
     return formatMoney(pos?.[base], pos?.currency, { decimals: 2 });
   }
 
-  /** A position PnL, preferring the INR-equivalent field when present. */
+  /** True when the position has any P&L to report — booked, or live while it is open. */
+  hasPnl(pos: any): boolean {
+    return pos?.pnl != null || pos?.pnlInr != null
+        || pos?.unrealizedPnl != null || pos?.unrealizedPnlInr != null;
+  }
+
+  /**
+   * P&L for a position: the booked `pnl` once it closes, otherwise the live
+   * mark-to-market written while it is open.
+   * `preferInr` picks the INR equivalent so mixed-settlement rows total in one currency.
+   */
+  effectivePnl(pos: any, preferInr = false): number {
+    const pick = (base: string) => {
+      const inr = pos?.[`${base}Inr`];
+      if (preferInr && inr !== undefined && inr !== null) return inr;
+      return pos?.[base];
+    };
+    const booked = pick('pnl');
+    if (booked !== undefined && booked !== null) return booked;
+    return pick('unrealizedPnl') ?? 0;
+  }
+
+  /** A position PnL (booked, or live while open), preferring the INR-equivalent field. */
   posPnl(pos: any): string {
-    if (pos?.pnlInr !== undefined && pos?.pnlInr !== null) return formatMoney(pos.pnlInr, 'INR', { decimals: 2 });
-    return formatMoney(pos?.pnl, pos?.currency, { decimals: 2 });
+    if (!this.hasPnl(pos)) return formatMoney(null, pos?.currency, { decimals: 2 });
+    const hasInr = pos?.pnlInr != null || pos?.unrealizedPnlInr != null;
+    if (hasInr) return formatMoney(this.effectivePnl(pos, true), 'INR', { decimals: 2 });
+    return formatMoney(this.effectivePnl(pos), pos?.currency, { decimals: 2 });
   }
 
   formatDate(dateStr: string): string {

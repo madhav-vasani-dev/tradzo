@@ -138,7 +138,11 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
     this.loadAccounts();
   }
 
+  disconnectingId: string | null = null;
+
   async disconnectBroker(account: BrokerAccount) {
+    if (this.disconnectingId) return;
+    this.disconnectingId = account.id;
     try {
       await this.brokerService.disconnectBroker(account.id);
       this.messageService.add({
@@ -154,6 +158,8 @@ export class BrokerAccountsComponent implements OnInit, OnDestroy {
         detail: 'Could not disconnect the account. Please try again.',
         life: 4000
       });
+    } finally {
+      this.disconnectingId = null;
     }
   }
 

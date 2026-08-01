@@ -44,10 +44,19 @@ export class AdminUserDetailComponent implements OnInit, OnDestroy {
 
   ngOnDestroy() { this.subs.forEach(s => s.unsubscribe()); }
 
+  togglingRole = false;
+
   async toggleAdmin() {
-    if (!this.user || this.user.isSuperUser) return;
-    await this.adminService.setAdminRole(this.user.uid, !this.user.isAdmin);
-    this.messageService.add({ severity: 'success', summary: 'Role updated', life: 3000 });
+    if (!this.user || this.user.isSuperUser || this.togglingRole) return;
+    this.togglingRole = true;
+    try {
+      await this.adminService.setAdminRole(this.user.uid, !this.user.isAdmin);
+      this.messageService.add({ severity: 'success', summary: 'Role updated', life: 3000 });
+    } catch {
+      this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Could not update role.' });
+    } finally {
+      this.togglingRole = false;
+    }
   }
 
   async pauseStrategy(us: UserStrategy) {

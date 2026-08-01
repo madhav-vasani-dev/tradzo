@@ -50,9 +50,14 @@
           <button
             class="role-toggle-btn"
             [class.danger]="user.isAdmin"
+            [disabled]="togglingRole"
             (click)="toggleAdmin()"
           >
-            <i class="pi" [class.pi-user-minus]="user.isAdmin" [class.pi-user-plus]="!user.isAdmin"></i>
+            @if (togglingRole) {
+              <span class="spinner-xs"></span>
+            } @else {
+              <i class="pi" [class.pi-user-minus]="user.isAdmin" [class.pi-user-plus]="!user.isAdmin"></i>
+            }
             {{ user.isAdmin ? 'Remove Admin Role' : 'Grant Admin Role' }}
           </button>
         }

@@ -292,14 +292,4 @@ export class StrategyService {
     }
     return response.json();
   }
-
-  /** Stream simulated (system/paper) positions for a strategy */
-  getStrategySimulatedTrades(strategyId: string): Observable<any[]> {
-    const ref = query(
-      collection(this.firestore, 'positions'),
-      where('strategyId', '==', strategyId),
-      where('isPaper', '==', true)
-    );
-    return collectionData(ref, { idField: 'id' }) as Observable<any[]>;
-  }
 }

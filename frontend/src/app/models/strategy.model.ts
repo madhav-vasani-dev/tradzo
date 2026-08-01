@@ -122,9 +122,18 @@ export interface Position {
   exitOrderId: string | null;
   exitPrice: number | null;
   exitAt: any | null;
+  /** Booked P&L — only set once the position closes. Use `unrealizedPnl` while open. */
   pnl: number | null;
   entryAt: any;
   isPaper: boolean;
+  /** Last traded price, streamed from the broker websocket while the position is open. */
+  ltp?: number | null;
+  ltpInr?: number | null;
+  /** Mark-to-market P&L on an open position, refreshed every few seconds. */
+  unrealizedPnl?: number | null;
+  unrealizedPnlInr?: number | null;
+  /** When `unrealizedPnl` was last marked. */
+  pnlUpdatedAt?: any | null;
   /** Native settlement currency for prices/PnL on this position. Falls back to 'INR' when absent. */
   currency?: string;
   /** INR equivalents (populated for non-INR-settled instruments, e.g. crypto). Preferred for display. */

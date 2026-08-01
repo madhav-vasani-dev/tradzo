@@ -12,7 +12,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from config import settings
 from routers import broker, execution, health
 from scheduler import shutdown_scheduler, start_scheduler
-from services import firebase_service
+from services import firebase_service, live_feed_service
 
 logging.basicConfig(
     level=logging.INFO,
@@ -26,9 +26,13 @@ async def lifespan(app: FastAPI):
     # Startup
     firebase_service.init_firebase()
     start_scheduler()
+    # Long-lived websocket + mark-to-market loop; must live on the app's event loop
+    # (scheduler jobs run in worker threads with their own short-lived loops).
+    live_feed_service.start()
     log.info("Tradzo backend started on port %s.", settings.port)
     yield
     # Shutdown
+    await live_feed_service.stop()
     shutdown_scheduler()
     log.info("Tradzo backend stopped.")
 

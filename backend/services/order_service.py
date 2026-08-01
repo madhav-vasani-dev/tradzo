@@ -14,8 +14,24 @@ Paper mode fill prices
 SELL MARKET  → uses the `ltp` argument as the simulated fill price.
 SL-M         → no fill_price (order stays open until triggered).
 BUY MARKET   → uses the `ltp` argument as the simulated fill price.
+
+Product type
+------------
+Equity/F&O legs are placed with the product code from `settings.equity_product`
+("delivery" by default → Upstox "D" / Jainam "NRML"). Delivery/NRML positions are NOT
+auto-squared-off by the broker at 15:15 — the strategy owns its own exit. Delta Exchange
+has no product concept; crypto positions always carry forward.
+
+Stop-loss orders
+----------------
+Every SL is placed as a stop-MARKET. NSE discontinued SL-M in the F&O segment, so an
+Indian broker may silently downgrade it to a stop-LIMIT priced AT the trigger, which
+does not fill when the market gaps through. After placing, we read the order back and,
+if it was downgraded, repair the limit price to `trigger × (1 + sl_limit_buffer_pct)`
+so it still fills on a spike with a bounded worst price.
 """
 import logging
+import math
 import uuid
 
 import httpx
@@ -27,6 +43,42 @@ log = logging.getLogger("tradzo.orders")
 UPSTOX_BASE = "https://api.upstox.com/v2"
 PLACE_ORDER_URL = f"{UPSTOX_BASE}/order/place"
 CANCEL_ORDER_URL = f"{UPSTOX_BASE}/order/cancel"
+MODIFY_ORDER_URL = f"{UPSTOX_BASE}/order/modify"
+
+# NSE quotes options in 5-paise ticks; a limit price off-tick is rejected.
+NSE_TICK = 0.05
+
+
+# ── Product-type helpers ──────────────────────────────────────────────────────
+
+def _is_delivery() -> bool:
+    return str(getattr(settings, "equity_product", "delivery")).lower() != "intraday"
+
+
+def upstox_product() -> str:
+    """Upstox product code: "D" = delivery/carry-forward, "I" = intraday."""
+    return "D" if _is_delivery() else "I"
+
+
+def jainam_product() -> str:
+    """Jainam (XTS) product code: "NRML" = carry-forward, "MIS" = intraday."""
+    return "NRML" if _is_delivery() else "MIS"
+
+
+# ── Stop-loss price helpers ───────────────────────────────────────────────────
+
+def _round_up_tick(price: float, tick: float = NSE_TICK) -> float:
+    return round(math.ceil(price / tick) * tick, 2)
+
+
+def sl_limit_price(trigger_price: float) -> float:
+    """Protective limit price for a BUY stop order that must fill through a spike.
+
+    Sits `sl_limit_buffer_pct` ABOVE the trigger so the order behaves like a market
+    order once triggered, while capping the worst fill.
+    """
+    buffer_pct = float(getattr(settings, "sl_limit_buffer_pct", 10.0))
+    return _round_up_tick(trigger_price * (1 + buffer_pct / 100.0))
 
 
 # ── Paper-mode helpers ────────────────────────────────────────────────────────
@@ -50,6 +102,22 @@ async def _real_place(access_token: str, payload: dict) -> dict:
     if resp.status_code not in (200, 201):
         log.error("Upstox order failed %s: %s", resp.status_code, body)
         raise RuntimeError(body.get("errors", "order_placement_failed"))
+    return body
+
+
+async def _real_modify(access_token: str, payload: dict) -> dict:
+    """PUT to Upstox modify-order endpoint. Raises RuntimeError on failure."""
+    headers = {
+        "accept": "application/json",
+        "Content-Type": "application/json",
+        "Authorization": f"Bearer {access_token}",
+    }
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.put(MODIFY_ORDER_URL, json=payload, headers=headers)
+    body = resp.json() if resp.content else {}
+    if resp.status_code not in (200, 201):
+        log.error("Upstox modify failed %s: %s", resp.status_code, body)
+        raise RuntimeError(body.get("errors", "order_modify_failed"))
     return body
 
 
@@ -175,7 +243,7 @@ async def place_sell_market(
         payload = {
             "exchangeSegment": "NSEFO",
             "exchangeInstrumentID": int(instrument_key),
-            "productType": "MIS",
+            "productType": jainam_product(),
             "orderType": "Market",
             "orderSide": "SELL",
             "timeInForce": "DAY",
@@ -198,7 +266,7 @@ async def place_sell_market(
         "quantity": quantity,
         "order_type": "MARKET",
         "transaction_type": "SELL",
-        "product": "I",
+        "product": upstox_product(),
         "validity": "DAY",
         "price": 0,            # Upstox requires price=0 for MARKET orders (UDAPI1008 otherwise)
         "disclosed_quantity": 0,
@@ -262,42 +330,216 @@ async def place_sl_market(
         )
         return {"order_id": str(result.get("id", ""))}
 
-    if broker == "jainam":
-        payload = {
-            "exchangeSegment": "NSEFO",
-            "exchangeInstrumentID": int(instrument_key),
-            "productType": "MIS",
-            "orderType": "StopMarket",
-            "orderSide": "BUY",
-            "timeInForce": "DAY",
-            "disclosedQuantity": 0,
-            "orderQuantity": quantity,
-            "limitPrice": 0.0,
-            "stopPrice": trigger_price,
-            "orderUniqueIdentifier": tag,
-        }
-        from services import jainam_service
-        resp = await jainam_service.place_order(access_token, payload)
-        app_order_id = resp.get("result", {}).get("appOrderID")
-        if not app_order_id:
-            raise RuntimeError("Jainam SL-M order placement failed: no appOrderID returned")
-        return {"order_id": app_order_id}
+    protective_limit = sl_limit_price(trigger_price)
 
-    payload = {
-        "instrument_token": instrument_key,
-        "quantity": quantity,
-        "order_type": "SL-M",
-        "transaction_type": "BUY",
-        "product": "I",
-        "validity": "DAY",
-        "price": 0,            # SL-M becomes a MARKET order once triggered; Upstox requires price=0
-        "disclosed_quantity": 0,
-        "trigger_price": trigger_price,
-        "is_amo": False,
-        "tag": tag,
-    }
-    resp = await _real_place(access_token, payload)
-    return {"order_id": resp.get("data", {}).get("order_id", "")}
+    if broker == "jainam":
+        from services import jainam_service
+
+        async def _place_jainam_sl(order_type: str, limit: float) -> str:
+            resp = await jainam_service.place_order(access_token, {
+                "exchangeSegment": "NSEFO",
+                "exchangeInstrumentID": int(instrument_key),
+                "productType": jainam_product(),
+                "orderType": order_type,
+                "orderSide": "BUY",
+                "timeInForce": "DAY",
+                "disclosedQuantity": 0,
+                "orderQuantity": quantity,
+                "limitPrice": limit,
+                "stopPrice": trigger_price,
+                "orderUniqueIdentifier": tag,
+            })
+            oid = resp.get("result", {}).get("appOrderID")
+            if not oid:
+                raise RuntimeError(f"Jainam {order_type} SL placement failed: no appOrderID returned")
+            return str(oid)
+
+        try:
+            app_order_id = await _place_jainam_sl("StopMarket", 0.0)
+        except Exception as exc:  # noqa: BLE001 — NSE F&O rejects SL-M; fall back immediately.
+            log.warning("Jainam StopMarket SL rejected (%s); placing StopLimit @ %.2f (trigger %.2f).",
+                        exc, protective_limit, trigger_price)
+            return {"order_id": await _place_jainam_sl("StopLimit", protective_limit)}
+
+        repaired = await _repair_jainam_sl(
+            access_token, app_order_id, trigger_price, protective_limit, quantity, tag
+        )
+        return {"order_id": repaired}
+
+    async def _place_upstox_sl(order_type: str, price: float) -> str:
+        resp = await _real_place(access_token, {
+            "instrument_token": instrument_key,
+            "quantity": quantity,
+            "order_type": order_type,
+            "transaction_type": "BUY",
+            "product": upstox_product(),
+            "validity": "DAY",
+            "price": price,
+            "disclosed_quantity": 0,
+            "trigger_price": trigger_price,
+            "is_amo": False,
+            "tag": tag,
+        })
+        return resp.get("data", {}).get("order_id", "")
+
+    try:
+        # SL-M becomes a MARKET order once triggered; Upstox requires price=0 for it.
+        order_id = await _place_upstox_sl("SL-M", 0)
+    except Exception as exc:  # noqa: BLE001 — NSE F&O rejects SL-M; fall back immediately.
+        log.warning("Upstox SL-M rejected (%s); placing SL @ limit %.2f (trigger %.2f).",
+                    exc, protective_limit, trigger_price)
+        return {"order_id": await _place_upstox_sl("SL", protective_limit)}
+
+    repaired = await _repair_upstox_sl(
+        access_token, order_id, trigger_price, protective_limit, quantity,
+        instrument_key, tag,
+    )
+    return {"order_id": repaired}
+
+
+# ── SL downgrade repair ───────────────────────────────────────────────────────
+
+def _sl_limit_is_unsafe(limit: float, trigger: float, protective_limit: float) -> bool:
+    """True when a BUY stop-limit's limit price is too tight to fill through a spike.
+
+    A limit at (or below) the trigger is exactly the failure the user hit: price gaps
+    past the trigger and the resting buy never fills. Anything short of the protective
+    limit is treated as unsafe so it gets widened.
+    """
+    if limit <= 0:                     # limit 0 on a stop-LIMIT = unfillable
+        return True
+    return limit < min(protective_limit, trigger * 1.01)
+
+
+async def _repair_upstox_sl(
+    access_token: str,
+    order_id: str,
+    trigger_price: float,
+    protective_limit: float,
+    quantity: int,
+    instrument_key: str,
+    tag: str,
+) -> str:
+    """Widen an SL-M that Upstox downgraded to a stop-LIMIT at the trigger price.
+
+    Returns the order id that is actually protecting the position — the original one if
+    it was left alone or modified in place, or a replacement's id. Never raises: the
+    existing SL (however tight) is better than none.
+    """
+    if not order_id:
+        return order_id
+    try:
+        details = await get_order_details(access_token, order_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not read back SL %s to verify its type: %s", order_id, exc)
+        return order_id
+
+    order_type = str(details.get("order_type", "")).upper()
+    if order_type in ("SL-M", "SLM"):
+        return order_id  # honoured as a true stop-market — nothing to do.
+
+    limit = float(details.get("price") or 0.0)
+    if not _sl_limit_is_unsafe(limit, trigger_price, protective_limit):
+        return order_id
+
+    log.warning(
+        "Upstox downgraded SL-M to %s with limit %.2f at trigger %.2f — widening to %.2f.",
+        order_type or "SL", limit, trigger_price, protective_limit,
+    )
+    try:
+        await _real_modify(access_token, {
+            "order_id": order_id,
+            "quantity": quantity,
+            "validity": "DAY",
+            "price": protective_limit,
+            "order_type": "SL",
+            "disclosed_quantity": 0,
+            "trigger_price": trigger_price,
+        })
+        return order_id
+    except Exception as exc:  # noqa: BLE001
+        log.warning("SL modify failed for %s (%s) — replacing the order instead.", order_id, exc)
+
+    # Modify unavailable: place the wider SL FIRST so the short is never unprotected,
+    # then drop the tight one.
+    try:
+        resp = await _real_place(access_token, {
+            "instrument_token": instrument_key,
+            "quantity": quantity,
+            "order_type": "SL",
+            "transaction_type": "BUY",
+            "product": upstox_product(),
+            "validity": "DAY",
+            "price": protective_limit,
+            "disclosed_quantity": 0,
+            "trigger_price": trigger_price,
+            "is_amo": False,
+            "tag": tag,
+        })
+        new_id = resp.get("data", {}).get("order_id", "")
+        if not new_id:
+            raise RuntimeError("replacement SL returned no order_id")
+    except Exception as exc:  # noqa: BLE001
+        log.error("Could not replace tight SL %s; keeping it: %s", order_id, exc)
+        return order_id
+
+    try:
+        await _real_cancel(access_token, order_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Placed wider SL %s but could not cancel the tight one %s: %s",
+                    new_id, order_id, exc)
+    return new_id
+
+
+async def _repair_jainam_sl(
+    access_token: str,
+    app_order_id: str,
+    trigger_price: float,
+    protective_limit: float,
+    quantity: int,
+    tag: str,
+) -> str:
+    """Widen a StopMarket that Jainam (XTS) downgraded to StopLimit at the trigger price."""
+    from services import jainam_service
+
+    if not app_order_id:
+        return app_order_id
+    try:
+        history = await jainam_service.get_order_history(access_token, app_order_id)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not read back Jainam SL %s to verify its type: %s", app_order_id, exc)
+        return app_order_id
+    if not history:
+        return app_order_id
+
+    latest = history[-1]
+    order_type = str(latest.get("orderType") or latest.get("ordertype") or "").upper()
+    if order_type in ("STOPMARKET", "STOP_MARKET", "SL-M"):
+        return app_order_id
+
+    limit = float(latest.get("orderPrice") or latest.get("limitPrice") or 0.0)
+    if not _sl_limit_is_unsafe(limit, trigger_price, protective_limit):
+        return app_order_id
+
+    log.warning(
+        "Jainam downgraded StopMarket to %s with limit %.2f at trigger %.2f — widening to %.2f.",
+        order_type or "StopLimit", limit, trigger_price, protective_limit,
+    )
+    try:
+        await jainam_service.modify_order(access_token, {
+            "appOrderID": int(app_order_id),
+            "modifiedProductType": jainam_product(),
+            "modifiedOrderType": "StopLimit",
+            "modifiedOrderQuantity": quantity,
+            "modifiedDisclosedQuantity": 0,
+            "modifiedLimitPrice": protective_limit,
+            "modifiedStopPrice": trigger_price,
+            "modifiedTimeInForce": "DAY",
+            "orderUniqueIdentifier": tag,
+        })
+    except Exception as exc:  # noqa: BLE001
+        log.error("Could not widen Jainam SL %s; keeping the tight one: %s", app_order_id, exc)
+    return app_order_id
 
 
 async def place_buy_market(
@@ -341,7 +583,7 @@ async def place_buy_market(
         payload = {
             "exchangeSegment": "NSEFO",
             "exchangeInstrumentID": int(instrument_key),
-            "productType": "MIS",
+            "productType": jainam_product(),
             "orderType": "Market",
             "orderSide": "BUY",
             "timeInForce": "DAY",
@@ -364,7 +606,7 @@ async def place_buy_market(
         "quantity": quantity,
         "order_type": "MARKET",
         "transaction_type": "BUY",
-        "product": "I",
+        "product": upstox_product(),
         "validity": "DAY",
         "price": 0,            # Upstox requires price=0 for MARKET orders (UDAPI1008 otherwise)
         "disclosed_quantity": 0,

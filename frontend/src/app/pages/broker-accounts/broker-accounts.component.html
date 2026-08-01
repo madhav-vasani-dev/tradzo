@@ -125,9 +125,16 @@
                   <i class="pi pi-refresh"></i> Reconnect
                 }
               </button>
-              <button class="disconnect-btn" (click)="disconnectBroker(account!)">
-                <i class="pi pi-link-slash"></i>
-                Disconnect
+              <button
+                class="disconnect-btn"
+                (click)="disconnectBroker(account!)"
+                [disabled]="disconnectingId === account?.id"
+              >
+                @if (disconnectingId === account?.id) {
+                  <span class="spinner"></span> Disconnecting…
+                } @else {
+                  <i class="pi pi-link-slash"></i> Disconnect
+                }
               </button>
             </div>
           }
