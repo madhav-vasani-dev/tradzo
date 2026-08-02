@@ -17,6 +17,39 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   line-height: 1.6;
+
+  // PrimeNG 18 Aura Theme Dark Custom Properties
+  --p-select-background: #0E131F;
+  --p-select-color: #E2E8F0;
+  --p-select-border-color: rgba(255, 255, 255, 0.15);
+  --p-select-placeholder-color: #8B95B0;
+  --p-select-dropdown-color: #8B95B0;
+
+  --p-select-overlay-background: #121826;
+  --p-select-overlay-border-color: rgba(255, 255, 255, 0.12);
+  --p-select-overlay-color: #E2E8F0;
+  --p-select-option-color: #E2E8F0;
+  --p-select-option-focus-background: rgba(255, 255, 255, 0.08);
+  --p-select-option-focus-color: #FFFFFF;
+  --p-select-option-selected-background: rgba(0, 194, 232, 0.18);
+  --p-select-option-selected-color: #00C2E8;
+
+  --p-multiselect-background: #0E131F;
+  --p-multiselect-color: #E2E8F0;
+  --p-multiselect-border-color: rgba(255, 255, 255, 0.15);
+  --p-multiselect-overlay-background: #121826;
+  --p-multiselect-overlay-color: #E2E8F0;
+  --p-multiselect-option-color: #E2E8F0;
+
+  --p-selectbutton-background: #0E131F;
+  --p-selectbutton-border-color: rgba(255, 255, 255, 0.1);
+
+  --p-togglebutton-background: transparent;
+  --p-togglebutton-color: #8B95B0;
+  --p-togglebutton-hover-background: rgba(255, 255, 255, 0.05);
+  --p-togglebutton-hover-color: #FFFFFF;
+  --p-togglebutton-checked-background: rgba(0, 194, 232, 0.2);
+  --p-togglebutton-checked-color: #00C2E8;
 }
 
 // ── Typography ───────────────────────────────────────────────────────────────
@@ -190,6 +223,151 @@ a { text-decoration: none; color: inherit; }
     .p-dialog-content { padding: 1rem 1.25rem !important; }
     .p-dialog-footer { padding: 0.75rem 1.25rem !important; }
   }
+
+  // ── Global PrimeNG Dark Theme Overlays & Controls ──────────────────────────
+  .p-dropdown-panel,
+  .p-multiselect-panel,
+  .p-select-panel,
+  .p-select-overlay,
+  .p-popover,
+  .p-overlay,
+  .p-component-overlay {
+    z-index: 100000 !important;
+    background-color: #121826 !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 10px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6) !important;
+    color: #E2E8F0 !important;
+    min-width: var(--p-anchor-width, 100%) !important;
+    width: var(--p-anchor-width, auto) !important;
+
+    .p-dropdown-header,
+    .p-multiselect-header,
+    .p-select-header {
+      background-color: #1A2234 !important;
+      border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+      color: #E2E8F0 !important;
+      padding: 8px 12px !important;
+
+      .p-inputtext,
+      .p-iconfield input {
+        background: #0E131F !important;
+        border: 1px solid rgba(255, 255, 255, 0.15) !important;
+        color: #FFFFFF !important;
+        font-size: 0.8rem !important;
+        padding: 5px 8px !important;
+
+        &::placeholder {
+          color: #8B95B0 !important;
+        }
+      }
+    }
+
+    .p-dropdown-items,
+    .p-multiselect-items,
+    .p-select-list,
+    .p-option-list {
+      padding: 4px !important;
+      background-color: #121826 !important;
+    }
+
+    .p-dropdown-item,
+    .p-multiselect-item,
+    .p-dropdown-option,
+    .p-multiselect-option,
+    .p-select-option,
+    .p-option {
+      color: #E2E8F0 !important;
+      font-size: 0.82rem !important;
+      padding: 6px 10px !important;
+      border-radius: 6px !important;
+      transition: background 0.15s, color 0.15s !important;
+
+      &:hover,
+      &.p-focus,
+      &.p-option-focus {
+        background-color: rgba(255, 255, 255, 0.08) !important;
+        color: #FFFFFF !important;
+      }
+
+      &.p-highlight,
+      &.p-option-selected,
+      &[aria-selected="true"] {
+        background-color: rgba(0, 194, 232, 0.18) !important;
+        color: #00C2E8 !important;
+        font-weight: 600 !important;
+      }
+    }
+  }
+
+  // Dropdown & MultiSelect Main Triggers
+  .p-dropdown,
+  .p-multiselect,
+  .p-select {
+    background: #0E131F !important;
+    border: 1px solid rgba(255, 255, 255, 0.15) !important;
+    border-radius: 8px !important;
+    color: #E2E8F0 !important;
+    transition: border-color 0.2s !important;
+
+    &:hover {
+      border-color: rgba(0, 194, 232, 0.5) !important;
+    }
+
+    &.p-focus {
+      border-color: #00C2E8 !important;
+      box-shadow: 0 0 0 2px rgba(0, 194, 232, 0.2) !important;
+    }
+
+    .p-dropdown-label,
+    .p-multiselect-label,
+    .p-select-label {
+      color: #E2E8F0 !important;
+      font-size: 0.82rem !important;
+      padding: 6px 10px !important;
+    }
+
+    .p-dropdown-trigger,
+    .p-multiselect-trigger,
+    .p-select-dropdown {
+      color: #8B95B0 !important;
+      width: 2rem !important;
+    }
+  }
+
+  // SelectButton (Monthly, Weekly, Daily, 5Y, 10Y, etc.)
+  .p-selectbutton {
+    background: #0E131F !important;
+    border: 1px solid rgba(255, 255, 255, 0.1) !important;
+    border-radius: 8px !important;
+    padding: 2px !important;
+
+    .p-button,
+    .p-togglebutton {
+      background: transparent !important;
+      border: none !important;
+      color: #8B95B0 !important;
+      font-size: 0.78rem !important;
+      font-weight: 500 !important;
+      padding: 4px 10px !important;
+      border-radius: 6px !important;
+      transition: all 0.2s !important;
+
+      &:hover {
+        color: #FFFFFF !important;
+        background: rgba(255, 255, 255, 0.05) !important;
+      }
+
+      &.p-highlight,
+      &.p-togglebutton-checked,
+      &[aria-pressed="true"] {
+        background: rgba(0, 194, 232, 0.2) !important;
+        color: #00C2E8 !important;
+        font-weight: 700 !important;
+        box-shadow: 0 0 10px rgba(0, 194, 232, 0.15) !important;
+      }
+    }
+  }
 }
 
 // ── Responsive utilities ───────────────────────────────────────────────────────
@@ -224,9 +402,16 @@ a { text-decoration: none; color: inherit; }
   animation: fadeIn 0.3s ease both;
 }
 
-// ── Staggered animation delays for card grids ─────────────────────────────────
-@for $i from 1 through 12 {
-  .anim-delay-#{$i} {
-    animation-delay: #{($i - 1) * 0.06}s;
+// ── Global Button Spinner for PrimeNG 18 ─────────────────────────────────────────
+.btn-spinner,
+.p-progressspinner.btn-spinner {
+  width: 16px !important;
+  height: 16px !important;
+  display: inline-block !important;
+
+  svg,
+  .p-progressspinner-svg {
+    width: 16px !important;
+    height: 16px !important;
   }
 }

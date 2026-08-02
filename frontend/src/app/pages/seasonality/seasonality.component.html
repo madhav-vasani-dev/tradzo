@@ -1,0 +1,361 @@
+<p-toast></p-toast>
+
+<div class="seasonality-page animate-fade-in-up">
+
+  <!-- ── Page header ─────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div class="header-left">
+      <div class="header-icon">
+        <i class="pi pi-calendar"></i>
+      </div>
+      <div>
+        <h1 class="page-title">Seasonality Analysis</h1>
+        <p class="page-subtitle">Discover repeatable seasonal patterns and upcoming high-probability trades</p>
+      </div>
+    </div>
+
+    <div class="header-right">
+      <!-- Saved configs dropdown -->
+      @if (savedConfigs.length > 0) {
+        <div class="saved-configs-group">
+          <span class="section-label">Saved</span>
+          <div class="config-chips">
+            @for (cfg of savedConfigs; track cfg.id) {
+              <div class="config-chip">
+                <span (click)="loadConfig(cfg)">{{ cfg.name }}</span>
+                <i class="pi pi-times" (click)="deleteConfig(cfg.id!)"></i>
+              </div>
+            }
+          </div>
+        </div>
+      }
+
+      <!-- UI toggles -->
+      <div class="toggle-group">
+        <button class="toggle-btn" [class.active]="heatMapEnabled" (click)="heatMapEnabled = !heatMapEnabled"
+                pTooltip="Toggle Heat-Map View" tooltipPosition="bottom">
+          <i class="pi pi-th-large"></i>
+          <span>Heat Map</span>
+        </button>
+        <button class="toggle-btn" [class.active]="benchmarkEnabled" (click)="benchmarkEnabled = !benchmarkEnabled"
+                pTooltip="Compare with Nifty 50 benchmark" tooltipPosition="bottom">
+          <i class="pi pi-chart-line"></i>
+          <span>Benchmark</span>
+        </button>
+        <button class="toggle-btn" [class.active]="confidenceBandsEnabled" (click)="confidenceBandsEnabled = !confidenceBandsEnabled"
+                pTooltip="Show ±1σ confidence bands" tooltipPosition="bottom">
+          <i class="pi pi-minus-circle"></i>
+          <span>±1σ Bands</span>
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Filter Panel ────────────────────────────────────────────────────── -->
+  <div class="filter-panel glass-card">
+
+    <!-- Top Row: Stock selector, View mode, Year range -->
+    <div class="filter-row filter-row--top">
+
+      <!-- Stock selector -->
+      <div class="filter-group filter-group--stocks">
+        <label class="filter-label">Stocks</label>
+        <div class="stock-selector-row">
+          <p-multiSelect
+            id="stock-selector"
+            [options]="stockOptions"
+            [(ngModel)]="selectedSymbols"
+            (ngModelChange)="onSymbolsChange()"
+            placeholder="Search and select stocks…"
+            [filter]="true"
+            filterPlaceholder="Search…"
+            [showClear]="true"
+            [maxSelectedLabels]="2"
+            selectedItemsLabel="{0} stocks selected"
+            styleClass="stock-multiselect"
+            panelStyleClass="stock-multiselect-panel"
+            appendTo="body"
+          ></p-multiSelect>
+          <button class="all-stocks-btn"
+                  [class.active]="allStocksSelected"
+                  (click)="toggleAllStocks()">
+            <i class="pi" [class.pi-check-square]="allStocksSelected" [class.pi-stop]="!allStocksSelected"></i>
+            All Stocks
+          </button>
+        </div>
+      </div>
+
+      <!-- View mode -->
+      <div class="filter-group filter-group--mode">
+        <label class="filter-label">View Mode</label>
+        <p-selectButton
+          [options]="viewModeOptions"
+          [(ngModel)]="selectedViewMode"
+          optionLabel="label"
+          optionValue="value"
+          [allowEmpty]="false"
+          styleClass="mode-select"
+        ></p-selectButton>
+      </div>
+
+      <!-- Year range -->
+      <div class="filter-group filter-group--years">
+        <label class="filter-label">Year Range</label>
+        <p-selectButton
+          [options]="yearOptions"
+          [(ngModel)]="selectedYears"
+          optionLabel="label"
+          optionValue="value"
+          [allowEmpty]="false"
+          styleClass="year-select"
+        ></p-selectButton>
+      </div>
+
+    </div>
+
+    <!-- Bottom Row: Probability threshold, Upcoming window, Run & Save Actions -->
+    <div class="filter-row filter-row--bottom">
+
+      <!-- Probability threshold -->
+      <div class="filter-group filter-group--prob">
+        <label class="filter-label">
+          Min Probability
+          <span class="threshold-badge" [style.background]="getProbabilityColor() + '22'" [style.color]="getProbabilityColor()">
+            {{ getThresholdLabel() }}
+          </span>
+        </label>
+        <div class="slider-row">
+          <span class="slider-min">50%</span>
+          <p-slider
+            [(ngModel)]="probabilityThreshold"
+            [min]="50" [max]="100" [step]="5"
+            styleClass="prob-slider"
+          ></p-slider>
+          <span class="slider-max">100%</span>
+        </div>
+      </div>
+
+      <!-- Lookahead window -->
+      <div class="filter-group filter-group--lookahead">
+        <label class="filter-label">Upcoming Window</label>
+        <p-dropdown
+          [options]="lookaheadOptions"
+          [(ngModel)]="lookaheadDays"
+          optionLabel="label"
+          optionValue="value"
+          styleClass="lookahead-dropdown"
+          panelStyleClass="lookahead-dropdown-panel"
+          appendTo="body"
+        ></p-dropdown>
+      </div>
+
+      <!-- Action buttons -->
+      <div class="filter-group filter-group--actions">
+        <button class="btn-run" [disabled]="isRunning" (click)="runAnalysis()" id="run-analysis-btn">
+          @if (isRunning) {
+            <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner>
+            <span>Running Analysis…</span>
+          } @else {
+            <i class="pi pi-play-circle"></i>
+            <span>Run Analysis</span>
+          }
+        </button>
+
+        <button class="btn-save" (click)="showSaveDialog = true" pTooltip="Save current filter configuration" tooltipPosition="top">
+          <i class="pi pi-bookmark"></i>
+          <span>Save Config</span>
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ── Empty / initial state ───────────────────────────────────────────── -->
+  @if (!hasRunAnalysis && !isRunning) {
+    <div class="empty-state glass-card animate-fade-in-up">
+      <div class="empty-icon">
+        <i class="pi pi-calendar-times"></i>
+      </div>
+      <h3>No Analysis Yet</h3>
+      <p>Select your stocks, configure the filters above, and click <strong>Run Analysis</strong> to see seasonal patterns.</p>
+      <div class="empty-steps">
+        <div class="step"><span class="step-num">1</span>Select stocks</div>
+        <div class="step-arrow"><i class="pi pi-arrow-right"></i></div>
+        <div class="step"><span class="step-num">2</span>Set filters</div>
+        <div class="step-arrow"><i class="pi pi-arrow-right"></i></div>
+        <div class="step"><span class="step-num">3</span>Run Analysis</div>
+        <div class="step-arrow"><i class="pi pi-arrow-right"></i></div>
+        <div class="step"><span class="step-num">4</span>View patterns</div>
+      </div>
+    </div>
+  }
+
+  <!-- ── Results sections ────────────────────────────────────────────────── -->
+  @if (hasRunAnalysis) {
+
+    <!-- Section 1: Raw Returns Table -->
+    <div class="results-section animate-fade-in-up anim-delay-1">
+      <div class="section-header" (click)="section1Open = !section1Open">
+        <div class="section-title-group">
+          <div class="section-num">01</div>
+          <div>
+            <h2 class="section-title">Returns Data Table</h2>
+            <p class="section-desc">Year × Period returns grid for each selected stock</p>
+          </div>
+        </div>
+        <div class="section-meta">
+          @if (results.length > 0) {
+            <span class="meta-badge">{{ results.length }} stocks</span>
+          }
+          <i class="pi section-chevron" [class.pi-chevron-up]="section1Open" [class.pi-chevron-down]="!section1Open"></i>
+        </div>
+      </div>
+
+      @if (section1Open) {
+        <div class="section-body">
+          @if (results.length === 0) {
+            <div class="no-data-msg">
+              <i class="pi pi-database"></i>
+              <p>No cached results found. Ask an admin to run the full analysis first.</p>
+            </div>
+          } @else {
+            <p-accordion [multiple]="true" styleClass="stocks-accordion">
+              @for (result of results; track result.id) {
+                <p-accordionTab [header]="result.symbol">
+                  <ng-template pTemplate="header">
+                    <div class="accordion-header">
+                      <span class="symbol-name">{{ result.symbol }}</span>
+                      <span class="symbol-meta">{{ result.years === 'max' ? 'Max' : result.years + 'Y' }} · {{ result.viewMode | titlecase }}</span>
+                    </div>
+                  </ng-template>
+                  <app-seasonality-data-table
+                    [result]="result"
+                    [probabilityThreshold]="probabilityThreshold"
+                    [heatMapEnabled]="heatMapEnabled"
+                    [confidenceBandsEnabled]="confidenceBandsEnabled"
+                  ></app-seasonality-data-table>
+                </p-accordionTab>
+              }
+            </p-accordion>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Section 2: Analysis Results -->
+    <div class="results-section animate-fade-in-up anim-delay-2">
+      <div class="section-header" (click)="section2Open = !section2Open">
+        <div class="section-title-group">
+          <div class="section-num">02</div>
+          <div>
+            <h2 class="section-title">Analysis Results</h2>
+            <p class="section-desc">High-probability seasonal setups filtered by your threshold</p>
+          </div>
+        </div>
+        <div class="section-meta">
+          @if (results.length > 0) {
+            <span class="meta-badge meta-badge--cyan">≥ {{ probabilityThreshold }}% probability</span>
+          }
+          <i class="pi section-chevron" [class.pi-chevron-up]="section2Open" [class.pi-chevron-down]="!section2Open"></i>
+        </div>
+      </div>
+
+      @if (section2Open) {
+        <div class="section-body">
+          @if (results.length === 0) {
+            <div class="no-data-msg">
+              <i class="pi pi-chart-bar"></i>
+              <p>Analysis results will appear here after running the analysis.</p>
+            </div>
+          } @else {
+            <p-accordion [multiple]="true" styleClass="stocks-accordion">
+              @for (result of results; track result.id) {
+                <p-accordionTab>
+                  <ng-template pTemplate="header">
+                    <div class="accordion-header">
+                      <span class="symbol-name">{{ result.symbol }}</span>
+                      <span class="symbol-meta">{{ result.viewMode | titlecase }} · {{ result.years === 'max' ? 'Max' : result.years + 'Y' }}</span>
+                    </div>
+                  </ng-template>
+                  <app-seasonality-analysis-results
+                    [result]="result"
+                    [probabilityThreshold]="probabilityThreshold"
+                    [benchmarkEnabled]="benchmarkEnabled"
+                    [confidenceBandsEnabled]="confidenceBandsEnabled"
+                  ></app-seasonality-analysis-results>
+                </p-accordionTab>
+              }
+            </p-accordion>
+          }
+        </div>
+      }
+    </div>
+
+    <!-- Section 3: Upcoming Trades -->
+    <div class="results-section animate-fade-in-up anim-delay-3">
+      <div class="section-header" (click)="section3Open = !section3Open">
+        <div class="section-title-group">
+          <div class="section-num">03</div>
+          <div>
+            <h2 class="section-title">Upcoming Trades</h2>
+            <p class="section-desc">Seasonal setups approaching within your lookahead window</p>
+          </div>
+        </div>
+        <div class="section-meta">
+          @if (upcomingTrades.length > 0) {
+            <span class="meta-badge meta-badge--gold">{{ upcomingTrades.length }} trades</span>
+          }
+          <i class="pi section-chevron" [class.pi-chevron-up]="section3Open" [class.pi-chevron-down]="!section3Open"></i>
+        </div>
+      </div>
+
+      @if (section3Open) {
+        <div class="section-body">
+          @if (upcomingTrades.length === 0) {
+            <div class="no-data-msg">
+              <i class="pi pi-calendar-clock"></i>
+              <p>No upcoming trades matching your criteria in the next {{ lookaheadDays }} days.</p>
+            </div>
+          } @else {
+            <app-seasonality-upcoming-trades
+              [trades]="upcomingTrades"
+              [lookaheadDays]="lookaheadDays"
+            ></app-seasonality-upcoming-trades>
+          }
+        </div>
+      }
+    </div>
+
+  }
+
+</div>
+
+<!-- ── Save Config Dialog ─────────────────────────────────────────────────── -->
+<p-dialog
+  [(visible)]="showSaveDialog"
+  header="Save Analysis Config"
+  [modal]="true"
+  [closable]="true"
+  [style]="{ width: '420px' }"
+>
+  <div class="save-dialog-body">
+    <label class="filter-label">Config Name</label>
+    <input
+      type="text"
+      class="config-name-input"
+      [(ngModel)]="newConfigName"
+      placeholder="e.g. Nifty Monthly 10Y"
+      (keydown.enter)="saveConfig()"
+    />
+    <p class="save-dialog-hint">
+      Saves: {{ selectedSymbols.length || 'All' }} stocks · {{ selectedViewMode }} · {{ selectedYears }}Y · ≥{{ probabilityThreshold }}%
+    </p>
+  </div>
+  <ng-template pTemplate="footer">
+    <button class="btn-cancel" (click)="showSaveDialog = false">Cancel</button>
+    <button class="btn-run" (click)="saveConfig()">
+      <i class="pi pi-save"></i> Save
+    </button>
+  </ng-template>
+</p-dialog>

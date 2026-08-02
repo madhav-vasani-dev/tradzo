@@ -65,6 +65,11 @@ class Settings(BaseSettings):
     # How often the in-memory LTP cache is flushed to Firestore position docs.
     live_pnl_write_interval_seconds: float = 5.0
 
+    # Google Drive — used by seasonality analysis to store/retrieve 1-min OHLCV CSVs.
+    # Share the Drive folder with the service-account email for write access.
+    gdrive_service_account_path: str = "./gdrive-service-account.json"
+    gdrive_folder_id: str = ""  # Drive folder ID (from the folder's URL)
+
     @property
     def cors_origin_list(self) -> list[str]:
         return [o.strip() for o in self.cors_origins.split(",") if o.strip()]

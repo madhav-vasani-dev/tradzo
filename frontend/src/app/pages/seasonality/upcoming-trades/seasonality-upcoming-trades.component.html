@@ -1,0 +1,117 @@
+<p-toast></p-toast>
+
+<div class="upcoming-wrapper">
+
+  <!-- Timeline strip -->
+  <div class="timeline-strip">
+    <div class="timeline-label">Now</div>
+    <div class="timeline-track">
+      <div class="timeline-fill" [style.width]="'0%'"></div>
+      @for (trade of trades.slice(0, 8); track trade.symbol + trade.period) {
+        <div class="timeline-dot"
+             [style.left]="getUrgencyBarWidth(trade.daysAway)"
+             [class]="'dot-' + trade.direction.toLowerCase()"
+             [pTooltip]="trade.symbol + ' ' + trade.period + ' · ' + getCountdownLabel(trade.daysAway)"
+             tooltipPosition="top">
+        </div>
+      }
+    </div>
+    <div class="timeline-label">+{{ lookaheadDays }}d</div>
+  </div>
+
+  <!-- Accordion per symbol -->
+  <div class="symbols-list">
+    @for (group of groupedTrades; track group.symbol) {
+      <div class="symbol-group">
+        <div class="symbol-group-header">
+          <span class="symbol-name">{{ group.symbol }}</span>
+          <span class="symbol-count">{{ group.trades.length }} trade{{ group.trades.length !== 1 ? 's' : '' }}</span>
+        </div>
+
+        <div class="trades-list">
+          @for (trade of group.trades; track trade.period) {
+            <div class="trade-card" [class.bull]="trade.direction === 'BULL'" [class.bear]="trade.direction === 'BEAR'">
+
+              <!-- Urgency sidebar -->
+              <div class="urgency-bar" [class]="getCountdownClass(trade.daysAway)">
+                <div class="urgency-fill" [style.width]="getUrgencyBarWidth(trade.daysAway)"></div>
+              </div>
+
+              <!-- Trade info -->
+              <div class="trade-info">
+                <div class="trade-top">
+                  <!-- Direction -->
+                  <div class="direction-chip" [class.bull]="trade.direction === 'BULL'" [class.bear]="trade.direction === 'BEAR'">
+                    <i class="pi" [class.pi-trending-up]="trade.direction === 'BULL'" [class.pi-trending-down]="trade.direction === 'BEAR'"></i>
+                    {{ trade.direction }}
+                  </div>
+
+                  <!-- Period -->
+                  <span class="trade-period">{{ trade.period }}</span>
+
+                  <!-- View mode -->
+                  <span class="trade-mode">{{ trade.viewMode }}</span>
+                </div>
+
+                <div class="trade-dates">
+                  <div class="date-item">
+                    <span class="date-label">Entry</span>
+                    <span class="date-val">{{ formatDate(trade.entryDate) }}</span>
+                  </div>
+                  @if (trade.exitDate) {
+                    <i class="pi pi-arrow-right date-arrow"></i>
+                    <div class="date-item">
+                      <span class="date-label">Exit</span>
+                      <span class="date-val">{{ formatDate(trade.exitDate) }}</span>
+                    </div>
+                  }
+                </div>
+
+                <div class="trade-stats">
+                  <div class="trade-stat">
+                    <span class="stat-label">Win Rate</span>
+                    <span class="stat-val" [style.color]="trade.posProb >= 80 ? '#22C55E' : trade.posProb >= 65 ? '#F4B942' : '#00C2E8'">
+                      {{ formatProb(trade.posProb) }}
+                    </span>
+                  </div>
+                  <div class="trade-stat">
+                    <span class="stat-label">Avg Return</span>
+                    <span class="stat-val" [class.positive]="(trade.avgReturn ?? 0) >= 0" [class.negative]="(trade.avgReturn ?? 0) < 0">
+                      {{ formatPct(trade.avgReturn) }}
+                    </span>
+                  </div>
+                  @if (trade.streak !== 0) {
+                    <div class="trade-stat">
+                      <span class="stat-label">Streak</span>
+                      <span class="stat-val" [class.positive]="trade.streak > 0" [class.negative]="trade.streak < 0">
+                        {{ trade.streak > 0 ? '+' : '' }}{{ trade.streak }}yr
+                      </span>
+                    </div>
+                  }
+                </div>
+              </div>
+
+              <!-- Countdown + actions -->
+              <div class="trade-right">
+                <div class="countdown-chip" [class]="getCountdownClass(trade.daysAway)">
+                  @if (trade.daysAway <= 3) {
+                    <span class="pulse-dot"></span>
+                  }
+                  {{ getCountdownLabel(trade.daysAway) }}
+                </div>
+
+                <button class="bookmark-btn"
+                        [class.bookmarked]="isBookmarked(trade)"
+                        (click)="bookmarkTrade(trade)"
+                        [pTooltip]="isBookmarked(trade) ? 'Bookmarked' : 'Add to watchlist'"
+                        tooltipPosition="left">
+                  <i class="pi" [class.pi-bookmark-fill]="isBookmarked(trade)" [class.pi-bookmark]="!isBookmarked(trade)"></i>
+                </button>
+              </div>
+            </div>
+          }
+        </div>
+      </div>
+    }
+  </div>
+</div>

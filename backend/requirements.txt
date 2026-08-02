@@ -10,3 +10,12 @@ websockets==16.1
 cryptography==44.0.0
 python-dotenv==1.0.1
 pytz==2024.2
+
+# Seasonality analysis
+pandas==2.2.3
+numpy==2.2.4
+openpyxl==3.1.5
+google-api-python-client==2.151.0
+google-auth==2.38.0
+google-auth-httplib2==0.2.0
+python-multipart==0.0.20

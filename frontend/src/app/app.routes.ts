@@ -38,6 +38,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/pnl/pnl.component').then(m => m.PnlComponent),
     canActivate: [authGuard]
   },
+  {
+    path: 'seasonality',
+    loadComponent: () => import('./pages/seasonality/seasonality.component').then(m => m.SeasonalityComponent),
+    canActivate: [authGuard]
+  },
 
   // ── Admin routes (authGuard + adminGuard) ────────────────────────────────
   {
@@ -58,6 +63,11 @@ export const routes: Routes = [
   {
     path: 'admin/activity',
     loadComponent: () => import('./pages/admin/admin-activity/admin-activity.component').then(m => m.AdminActivityComponent),
+    canActivate: [authGuard, adminGuard]
+  },
+  {
+    path: 'admin/seasonality',
+    loadComponent: () => import('./pages/admin/admin-seasonality/admin-seasonality.component').then(m => m.AdminSeasonalityComponent),
     canActivate: [authGuard, adminGuard]
   },
 

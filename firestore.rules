@@ -86,6 +86,41 @@ service cloud.firestore {
       allow read:  if isSignedIn();
       allow write: if isAdmin();
     }
+
+    // ── seasonalityStocks ─────────────────────────────────────────────────────
+    // Admin-managed list of stocks available for seasonality analysis.
+    // Any signed-in user can read; only admins/backend can write.
+    match /seasonalityStocks/{symbol} {
+      allow read:  if isSignedIn();
+      allow write: if isAdmin();
+    }
+
+    // ── seasonalityResults ────────────────────────────────────────────────────
+    // Pre-computed cached results written by the backend Admin SDK.
+    // Any signed-in user can read; browser clients cannot write.
+    match /seasonalityResults/{id} {
+      allow read:  if isSignedIn();
+      allow write: if false;   // backend Admin SDK bypasses rules
+    }
+
+    // ── userSeasonalityConfigs ────────────────────────────────────────────────
+    // Per-user saved analysis filter configurations.
+    // Users can only read/write their own configs.
+    match /userSeasonalityConfigs/{id} {
+      allow read:   if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow update: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+    }
+
+    // ── userSeasonalityWatchlist ──────────────────────────────────────────────
+    // Per-user bookmarked seasonal trade setups.
+    match /userSeasonalityWatchlist/{id} {
+      allow read:   if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow create: if isSignedIn() && request.resource.data.uid == request.auth.uid;
+      allow delete: if isSignedIn() && resource.data.uid == request.auth.uid;
+      allow update: if false;
+    }
   }
 }
 

@@ -1,0 +1,267 @@
+@use '../../../../theme/theme-variables' as *;
+
+.analysis-results-wrapper { }
+
+// ── No results ─────────────────────────────────────────────────────────────────
+.no-setups {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 2.5rem;
+  text-align: center;
+  color: $text-muted;
+
+  i { font-size: 1.8rem; margin-bottom: 0.25rem; }
+  p { font-size: 0.9rem; color: $text-secondary; }
+  .hint { font-size: 0.78rem; }
+}
+
+// ── Header ─────────────────────────────────────────────────────────────────────
+.results-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.75rem;
+  margin-bottom: 0.75rem;
+  border-bottom: 1px solid $border-default;
+}
+
+.results-count {
+  font-size: 0.82rem;
+  font-weight: 600;
+  color: $primary-cyan;
+}
+
+.results-hint {
+  font-size: 0.75rem;
+  color: $text-muted;
+}
+
+// ── Setup cards ────────────────────────────────────────────────────────────────
+.setups-list {
+  display: flex;
+  flex-direction: column;
+  gap: 0.5rem;
+}
+
+.setup-card {
+  border-radius: 10px;
+  border: 1px solid $border-default;
+  background: rgba(255,255,255,0.02);
+  overflow: hidden;
+  cursor: pointer;
+  transition: border-color 0.2s, background 0.2s;
+
+  &:hover {
+    border-color: $border-hover;
+    background: rgba(255,255,255,0.04);
+  }
+
+  &.expanded {
+    border-color: rgba(0,194,232,0.3);
+  }
+}
+
+.setup-main {
+  display: flex;
+  align-items: center;
+  gap: 1.25rem;
+  padding: 0.875rem 1rem;
+  flex-wrap: wrap;
+}
+
+// Direction badge
+.direction-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 5px 12px;
+  border-radius: 100px;
+  font-size: 0.75rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  min-width: 70px;
+  justify-content: center;
+
+  &.bull {
+    background: rgba(34,197,94,0.15);
+    color: #22C55E;
+    border: 1px solid rgba(34,197,94,0.3);
+  }
+
+  &.bear {
+    background: rgba(239,68,68,0.15);
+    color: #EF4444;
+    border: 1px solid rgba(239,68,68,0.3);
+  }
+
+  i { font-size: 0.85rem; }
+}
+
+// Period label
+.setup-period {
+  font-size: 1rem;
+  font-weight: 700;
+  color: $text-primary;
+  min-width: 48px;
+}
+
+// Stat block
+.setup-stat {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-width: 70px;
+}
+
+.stat-label {
+  font-size: 0.68rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  color: $text-muted;
+}
+
+.stat-val {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: $text-primary;
+  font-variant-numeric: tabular-nums;
+
+  &.positive { color: #22C55E; }
+  &.negative { color: #EF4444; }
+  &.stat-val--muted { color: $text-secondary; font-weight: 500; }
+}
+
+// Probability bar
+.setup-prob {
+  flex: 1;
+  min-width: 140px;
+  display: flex;
+  flex-direction: column;
+  gap: 5px;
+}
+
+.prob-label-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.prob-val {
+  font-size: 0.9rem;
+  font-weight: 800;
+  font-variant-numeric: tabular-nums;
+}
+
+.prob-bar-track {
+  height: 5px;
+  border-radius: 100px;
+  background: rgba(255,255,255,0.06);
+  overflow: hidden;
+}
+
+.prob-bar-fill {
+  height: 100%;
+  border-radius: 100px;
+  transition: width 0.6s cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+// Streak badge
+.streak-badge {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  padding: 4px 10px;
+  border-radius: 100px;
+  font-size: 0.72rem;
+  font-weight: 600;
+
+  &.streak-bull {
+    background: rgba(34,197,94,0.1);
+    color: #22C55E;
+    border: 1px solid rgba(34,197,94,0.2);
+  }
+
+  &.streak-bear {
+    background: rgba(239,68,68,0.1);
+    color: #EF4444;
+    border: 1px solid rgba(239,68,68,0.2);
+  }
+
+  i { font-size: 0.75rem; }
+}
+
+// Expand icon
+.expand-icon {
+  margin-left: auto;
+  color: $text-muted;
+  font-size: 0.9rem;
+  transition: color 0.2s;
+  .setup-card:hover & { color: $text-secondary; }
+}
+
+// ── Expanded breakdown ─────────────────────────────────────────────────────────
+.setup-breakdown {
+  padding: 1rem 1rem 1.25rem;
+  border-top: 1px solid $border-default;
+  background: rgba(0,0,0,0.15);
+  animation: fadeInUp 0.2s ease both;
+}
+
+.breakdown-title {
+  font-size: 0.78rem;
+  color: $text-muted;
+  margin-bottom: 0.875rem;
+
+  strong { color: $text-secondary; }
+}
+
+.breakdown-bars {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.yr-bar-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  font-size: 0.78rem;
+}
+
+.yr-label {
+  min-width: 40px;
+  color: $text-muted;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+}
+
+.yr-bar-track {
+  flex: 1;
+  height: 14px;
+  border-radius: 4px;
+  background: rgba(255,255,255,0.04);
+  overflow: hidden;
+}
+
+.yr-bar {
+  height: 100%;
+  border-radius: 4px;
+  max-width: 100%;
+  transition: width 0.4s ease;
+
+  &.yr-bar--pos { background: rgba(34,197,94,0.45); }
+  &.yr-bar--neg { background: rgba(239,68,68,0.45); }
+}
+
+.yr-val {
+  min-width: 60px;
+  text-align: right;
+  font-weight: 600;
+  font-variant-numeric: tabular-nums;
+
+  &.positive { color: #22C55E; }
+  &.negative { color: #EF4444; }
+}

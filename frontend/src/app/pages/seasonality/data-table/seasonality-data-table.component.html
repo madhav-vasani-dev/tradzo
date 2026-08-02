@@ -1,0 +1,114 @@
+<div class="data-table-wrapper">
+  <!-- Export button -->
+  <div class="table-toolbar">
+    <div class="table-info">
+      <span>{{ years.length }} years · {{ periods.length }} {{ result.viewMode === 'monthly' ? 'months' : result.viewMode === 'weekly' ? 'weeks' : 'days' }}</span>
+      @if (heatMapEnabled) {
+        <span class="mode-tag mode-tag--heatmap"><i class="pi pi-th-large"></i> Heat Map</span>
+      }
+    </div>
+    <button class="export-btn" (click)="exportCsv()" pTooltip="Export as CSV" tooltipPosition="left">
+      <i class="pi pi-download"></i> Export CSV
+    </button>
+  </div>
+
+  <div class="table-scroll">
+    <table class="returns-table">
+      <thead>
+        <tr>
+          <th class="col-year sticky-col">Year</th>
+          @for (period of periods; track period) {
+            <th class="col-period" [class.col-highlighted]="isPeriodHighlighted(period)"
+                [pTooltip]="getStreakText(period)" tooltipPosition="top">
+              {{ period }}
+              @if (isPeriodHighlighted(period)) {
+                <span class="highlight-dot"></span>
+              }
+            </th>
+          }
+          <th class="col-total">Total %</th>
+        </tr>
+      </thead>
+
+      <tbody>
+        @for (year of years; track year) {
+          <tr class="data-row">
+            <td class="col-year sticky-col year-label">{{ year }}</td>
+
+            @for (period of periods; track period) {
+              <td class="data-cell"
+                  [class]="gridData[year] && gridData[year][period] ? gridData[year][period].colorClass : ''"
+                  [class.col-highlighted]="isPeriodHighlighted(period)"
+                  [style]="gridData[year] && gridData[year][period] ? gridData[year][period].bgStyle : null"
+                  [pTooltip]="gridData[year] && gridData[year][period] ? gridData[year][period].tooltipText : ''"
+                  tooltipPosition="top">
+                {{ formatPct(gridData[year] && gridData[year][period] ? gridData[year][period].value : undefined) }}
+              </td>
+            }
+
+            <td class="data-cell total-cell"
+                [class.cell-positive]="(getYearTotal(year) ?? 0) >= 0"
+                [class.cell-negative]="(getYearTotal(year) ?? 0) < 0">
+              {{ formatPct(getYearTotal(year)) }}
+            </td>
+          </tr>
+        }
+      </tbody>
+
+      <tfoot>
+        <!-- Avg Return row -->
+        <tr class="stat-row stat-row--avg">
+          <td class="col-year sticky-col stat-label">Avg Return</td>
+          @for (period of periods; track period) {
+            <td class="stat-cell"
+                [class]="result.stats[period] ? ((result.stats[period].avg ?? 0) >= 0 ? 'cell-positive' : 'cell-negative') : ''"
+                [style]="getStatBgStyle(period)"
+                [class.col-highlighted]="isPeriodHighlighted(period)">
+              {{ formatPct(result.stats[period] ? result.stats[period].avg : undefined) }}
+              @if (confidenceBandsEnabled && result.stats[period] && result.stats[period].sigma !== null && result.stats[period].sigma !== undefined) {
+                <span class="sigma-label">±{{ result.stats[period].sigma.toFixed(1) }}%</span>
+              }
+            </td>
+          }
+          <td class="stat-cell">—</td>
+        </tr>
+
+        <!-- Positive Probability -->
+        <tr class="stat-row stat-row--pos">
+          <td class="col-year sticky-col stat-label">
+            <span class="prob-label prob-label--pos">↑ Positive %</span>
+          </td>
+          @for (period of periods; track period) {
+            <td class="stat-cell" [class]="getProbClass(period)"
+                [class.col-highlighted]="isPeriodHighlighted(period)">
+              {{ formatProb(result.stats[period] ? (result.stats[period].posProb ?? result.stats[period].pos_prob) : undefined) }}
+            </td>
+          }
+          <td class="stat-cell">—</td>
+        </tr>
+
+        <!-- Negative Probability -->
+        <tr class="stat-row stat-row--neg">
+          <td class="col-year sticky-col stat-label">
+            <span class="prob-label prob-label--neg">↓ Negative %</span>
+          </td>
+          @for (period of periods; track period) {
+            <td class="stat-cell" [class.col-highlighted]="isPeriodHighlighted(period)">
+              {{ formatProb(result.stats[period] ? (result.stats[period].negProb ?? result.stats[period].neg_prob) : undefined) }}
+            </td>
+          }
+          <td class="stat-cell">—</td>
+        </tr>
+      </tfoot>
+    </table>
+  </div>
+
+  <!-- Legend -->
+  <div class="table-legend">
+    <div class="legend-item"><span class="legend-dot legend-dot--pos"></span>Positive return</div>
+    <div class="legend-item"><span class="legend-dot legend-dot--neg"></span>Negative return</div>
+    @if (isPeriodHighlighted(periods[0])) {
+      <div class="legend-item"><span class="highlight-dot"></span>Meets probability threshold ({{ probabilityThreshold }}%)</div>
+    }
+  </div>
+</div>

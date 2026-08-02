@@ -1,0 +1,115 @@
+<div class="analysis-results-wrapper">
+
+  @if (noResults) {
+    <div class="no-setups">
+      <i class="pi pi-filter-slash"></i>
+      <p>No setups with ≥ {{ probabilityThreshold }}% probability found for {{ result.symbol }}.</p>
+      <span class="hint">Try lowering the probability threshold in the filters.</span>
+    </div>
+  } @else {
+
+    <div class="results-header">
+      <span class="results-count">{{ filteredRows.length }} setup{{ filteredRows.length !== 1 ? 's' : '' }} found</span>
+      <span class="results-hint">Click a row to expand year-by-year breakdown</span>
+    </div>
+
+    <div class="setups-list">
+      @for (row of filteredRows; track row.period) {
+        <div class="setup-card" [class.expanded]="expandedPeriod === row.period"
+             (click)="toggleExpand(row.period)">
+
+          <!-- Main row -->
+          <div class="setup-main">
+
+            <!-- Direction badge -->
+            <div class="direction-badge" [class.bull]="row.direction === 'BULL'" [class.bear]="row.direction === 'BEAR'">
+              <i class="pi" [class.pi-arrow-up-right]="row.direction === 'BULL'" [class.pi-arrow-down-right]="row.direction === 'BEAR'"></i>
+              {{ row.direction }}
+            </div>
+
+            <!-- Period -->
+            <div class="setup-period">{{ row.period }}</div>
+
+            <!-- Avg Return -->
+            <div class="setup-stat">
+              <span class="stat-label">Avg Return</span>
+              <span class="stat-val" [class.positive]="(row.stats.avg ?? 0) >= 0" [class.negative]="(row.stats.avg ?? 0) < 0">
+                {{ formatPct(row.stats.avg) }}
+              </span>
+            </div>
+
+            @if (confidenceBandsEnabled && row.stats.sigma !== null && row.stats.sigma !== undefined) {
+              <div class="setup-stat">
+                <span class="stat-label">±1σ</span>
+                <span class="stat-val stat-val--muted">{{ row.stats.sigma.toFixed(1) }}%</span>
+              </div>
+            }
+
+            <!-- Probability bar -->
+            <div class="setup-prob">
+              <div class="prob-label-row">
+                <span class="stat-label">Win Rate</span>
+                <span class="prob-val" [style.color]="getProbColor(row.stats.posProb)">
+                  {{ formatProb(row.stats.posProb) }}
+                </span>
+              </div>
+              <div class="prob-bar-track">
+                <div class="prob-bar-fill"
+                     [style.width]="getProbBarWidth(row.stats.posProb)"
+                     [style.background]="getProbColor(row.stats.posProb)">
+                </div>
+              </div>
+            </div>
+
+            <!-- Sample count -->
+            <div class="setup-stat">
+              <span class="stat-label">Years</span>
+              <span class="stat-val">{{ row.stats.count }}</span>
+            </div>
+
+            <!-- Streak badge -->
+            @if (row.streakText) {
+              <div class="streak-badge" [class.streak-bull]="row.stats.streak > 0" [class.streak-bear]="row.stats.streak < 0">
+                <i class="pi pi-bolt"></i>
+                {{ row.streakText }}
+              </div>
+            }
+
+            <!-- Expand arrow -->
+            <div class="expand-icon">
+              <i class="pi" [class.pi-chevron-down]="expandedPeriod !== row.period" [class.pi-chevron-up]="expandedPeriod === row.period"></i>
+            </div>
+          </div>
+
+          <!-- Expanded year-by-year breakdown -->
+          @if (expandedPeriod === row.period) {
+            <div class="setup-breakdown" (click)="$event.stopPropagation()">
+              <div class="breakdown-title">Year-by-year returns for <strong>{{ row.period }}</strong></div>
+              <div class="breakdown-bars">
+                @for (yr of getYearValues(row.period); track yr.year) {
+                  <div class="yr-bar-row">
+                    <span class="yr-label">{{ yr.year }}</span>
+                    <div class="yr-bar-track">
+                      @if (yr.value !== null && yr.value >= 0) {
+                        <div class="yr-bar yr-bar--pos" [style.width]="getProbBarWidth(Math.abs(yr.value) * 3)">
+                        </div>
+                      }
+                      @if (yr.value !== null && yr.value < 0) {
+                        <div class="yr-bar yr-bar--neg" [style.width]="getProbBarWidth(Math.abs(yr.value) * 3)">
+                        </div>
+                      }
+                    </div>
+                    <span class="yr-val" [class.positive]="(yr.value ?? 0) >= 0" [class.negative]="(yr.value ?? 0) < 0">
+                      {{ formatPct(yr.value) }}
+                    </span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+
+        </div>
+      }
+    </div>
+  }
+</div>

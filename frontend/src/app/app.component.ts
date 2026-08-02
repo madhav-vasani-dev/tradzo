@@ -51,7 +51,11 @@ export class AppComponent implements OnInit, OnDestroy {
         if (!path) {
           this.pageTitle = 'Dashboard';
         } else {
-          this.pageTitle = path.charAt(0).toUpperCase() + path.slice(1);
+          // Convert kebab-case to Title Case (e.g., "broker-accounts" → "Broker Accounts")
+          this.pageTitle = path
+            .split('-')
+            .map(word => word.charAt(0).toUpperCase() + word.slice(1))
+            .join(' ');
         }
       }
     });

@@ -10,7 +10,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from config import settings
-from routers import broker, execution, health
+from routers import broker, execution, health, seasonality
 from scheduler import shutdown_scheduler, start_scheduler
 from services import firebase_service, live_feed_service
 
@@ -50,6 +50,7 @@ app.add_middleware(
 app.include_router(health.router)
 app.include_router(broker.router)
 app.include_router(execution.router)
+app.include_router(seasonality.router)
 
 
 @app.get("/")

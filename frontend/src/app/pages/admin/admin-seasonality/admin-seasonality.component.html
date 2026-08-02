@@ -1,0 +1,355 @@
+<p-toast></p-toast>
+
+<div class="admin-seasonality-page animate-fade-in-up">
+
+  <!-- Header -->
+  <div class="page-header">
+    <div class="header-left">
+      <div class="header-icon">
+        <i class="pi pi-database"></i>
+      </div>
+      <div>
+        <h1 class="page-title">Seasonality Data Management</h1>
+        <p class="page-subtitle">Manage stock watchlist, upload 1-min OHLCV data, and trigger analysis</p>
+      </div>
+    </div>
+    <div class="header-actions">
+      <button class="btn-sync" [disabled]="isSyncingFolder" (click)="syncDriveFolder()" id="sync-folder-btn">
+        @if (isSyncingFolder) { <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner> }
+        @else { <i class="pi pi-sync"></i> }
+        {{ isSyncingFolder ? 'Syncing…' : 'Sync Drive Folder' }}
+      </button>
+      <button class="btn-add" (click)="showAddDialog = true" id="add-stock-btn">
+        <i class="pi pi-plus"></i>
+        Add Stock
+      </button>
+    </div>
+  </div>
+
+  <div class="admin-grid">
+
+    <!-- ── Left: Stock Management ──────────────────────────────────────── -->
+    <div class="admin-card glass-card">
+      <div class="card-header">
+        <div class="card-title-group">
+          <h2 class="card-title">Stock Watchlist</h2>
+          <span class="card-badge">
+            @if (searchQuery.trim()) {
+              {{ filteredStocks.length }} / {{ stocks.length }} stocks
+            } @else {
+              {{ stocks.length }} stocks
+            }
+          </span>
+        </div>
+
+        <div class="search-box">
+          <i class="pi pi-search search-icon"></i>
+          <input
+            type="text"
+            class="search-input"
+            [(ngModel)]="searchQuery"
+            placeholder="Search stock symbol…"
+          />
+          @if (searchQuery) {
+            <i class="pi pi-times clear-icon" (click)="searchQuery = ''"></i>
+          }
+        </div>
+      </div>
+
+      @if (isLoadingStocks) {
+        <div class="loading-state">
+          <p-progressSpinner styleClass="sm-spinner" strokeWidth="4"></p-progressSpinner>
+          <span>Loading stocks…</span>
+        </div>
+      } @else if (stocks.length === 0) {
+        <div class="empty-table">
+          <i class="pi pi-inbox"></i>
+          <p>No stocks yet. Click "Add Stock" to get started.</p>
+        </div>
+      } @else if (filteredStocks.length === 0) {
+        <div class="empty-table">
+          <i class="pi pi-search"></i>
+          <p>No stocks matching "{{ searchQuery }}".</p>
+        </div>
+      } @else {
+        <div class="table-scroll">
+          <table class="stocks-table">
+            <thead>
+              <tr>
+                <th>Symbol</th>
+                <th>Drive Data</th>
+                <th>File Size</th>
+                <th>Last Updated</th>
+                <th>Last Analysis</th>
+                <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody>
+              @for (stock of filteredStocks; track stock.symbol) {
+                <tr>
+                  <td class="symbol-cell">
+                    <div class="symbol-cell-content">
+                      <span class="symbol-tag">{{ stock.symbol }}</span>
+                      @if (stock.displayName && stock.displayName !== stock.symbol) {
+                        <span class="display-name">{{ stock.displayName }}</span>
+                      }
+                    </div>
+                  </td>
+                  <td>
+                    @if (stock.driveFilePresent) {
+                      <span class="status-badge status-badge--ok">
+                        <i class="pi pi-check-circle"></i> Uploaded
+                      </span>
+                    } @else {
+                      <span class="status-badge status-badge--missing">
+                        <i class="pi pi-exclamation-circle"></i> Missing
+                      </span>
+                    }
+                  </td>
+                  <td class="muted-cell">{{ formatFileSize(stock.driveFileSizeBytes) }}</td>
+                  <td class="muted-cell">{{ formatDate(stock.driveFileModified) }}</td>
+                  <td class="muted-cell">{{ formatDate(stock.lastAnalysisAt) }}</td>
+                  <td>
+                    <div class="action-btns">
+                      <button class="action-btn action-btn--upload" (click)="openReupload(stock.symbol)"
+                              pTooltip="Re-upload data file" tooltipPosition="top">
+                        <i class="pi pi-upload"></i>
+                      </button>
+                      <button class="action-btn action-btn--delete" (click)="removeStock(stock.symbol)"
+                              pTooltip="Remove stock" tooltipPosition="top">
+                        <i class="pi pi-trash"></i>
+                      </button>
+                    </div>
+                  </td>
+                </tr>
+              }
+            </tbody>
+          </table>
+        </div>
+      }
+    </div>
+
+    <!-- ── Right: Analysis Trigger ─────────────────────────────────────── -->
+    <div class="admin-card glass-card">
+      <div class="card-header">
+        <h2 class="card-title">Run Seasonality Analysis</h2>
+      </div>
+
+      <!-- View modes -->
+      <div class="config-section">
+        <label class="config-label">View Modes to Compute</label>
+        <div class="option-chips">
+          @for (mode of viewModeOptions; track mode.value) {
+            <div class="option-chip" [class.selected]="isModeSelected(mode.value)"
+                 (click)="toggleMode(mode.value)">
+              <i class="pi" [class.pi-check]="isModeSelected(mode.value)" [class.pi-circle]="!isModeSelected(mode.value)"></i>
+              {{ mode.label }}
+            </div>
+          }
+        </div>
+      </div>
+
+      <!-- Year ranges -->
+      <div class="config-section">
+        <label class="config-label">Year Ranges to Compute</label>
+        <div class="option-chips">
+          @for (yr of yearRangeOptions; track yr.value) {
+            <div class="option-chip" [class.selected]="isYearSelected(yr.value)"
+                 (click)="toggleYearRange(yr.value)">
+              <i class="pi" [class.pi-check]="isYearSelected(yr.value)" [class.pi-circle]="!isYearSelected(yr.value)"></i>
+              {{ yr.label }}
+            </div>
+          }
+        </div>
+      </div>
+
+      <!-- Compute summary -->
+      <div class="compute-info">
+        <div class="compute-stat">
+          <span class="compute-num">{{ stocks.length }}</span>
+          <span class="compute-label">Stocks</span>
+        </div>
+        <span class="compute-op">×</span>
+        <div class="compute-stat">
+          <span class="compute-num">{{ selectedModes.length }}</span>
+          <span class="compute-label">Modes</span>
+        </div>
+        <span class="compute-op">×</span>
+        <div class="compute-stat">
+          <span class="compute-num">{{ selectedYearRanges.length }}</span>
+          <span class="compute-label">Year Ranges</span>
+        </div>
+        <span class="compute-op">=</span>
+        <div class="compute-stat compute-stat--total">
+          <span class="compute-num">{{ totalCombos }}</span>
+          <span class="compute-label">Total Combos</span>
+        </div>
+      </div>
+
+      <!-- Warning for large jobs -->
+      @if (totalCombos > 50) {
+        <div class="compute-warning">
+          <i class="pi pi-clock"></i>
+          This is a large computation ({{ totalCombos }} combos). The analysis will run synchronously and may take a few minutes.
+        </div>
+      }
+
+      <!-- Progress bar -->
+      @if (progress.running) {
+        <div class="progress-section">
+          <div class="progress-header">
+            <span class="progress-label">Computing…</span>
+            <span class="progress-pct">{{ progress.done }} / {{ progress.total }}</span>
+          </div>
+          <div class="progress-track">
+            <div class="progress-fill"
+                 [style.width]="progress.total > 0 ? (progress.done / progress.total * 100) + '%' : '0%'">
+            </div>
+          </div>
+        </div>
+      }
+
+      <!-- Result summary -->
+      @if (progress.summary && !progress.running) {
+        <div class="result-summary" [class.has-errors]="progress.summary.errors > 0">
+          <div class="result-row">
+            <i class="pi pi-check-circle result-icon result-icon--ok"></i>
+            <span>{{ progress.summary.success }} computed successfully</span>
+          </div>
+          @if (progress.summary.errors > 0) {
+            <div class="result-row">
+              <i class="pi pi-times-circle result-icon result-icon--err"></i>
+              <span>{{ progress.summary.errors }} errors</span>
+            </div>
+          }
+        </div>
+      }
+
+      <!-- Run button -->
+      <button class="btn-run-analysis"
+              [disabled]="progress.running || stocks.length === 0 || selectedModes.length === 0 || selectedYearRanges.length === 0"
+              (click)="runAnalysis()"
+              id="run-full-analysis-btn">
+        @if (progress.running) {
+          <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner>
+          Running Analysis…
+        } @else {
+          <i class="pi pi-bolt"></i>
+          Run Full Analysis
+        }
+      </button>
+    </div>
+
+  </div>
+</div>
+
+<!-- ── Add Stock Dialog ────────────────────────────────────────────────────── -->
+<p-dialog
+  [(visible)]="showAddDialog"
+  header="Add New Stock"
+  [modal]="true"
+  [closable]="true"
+  [style]="{ width: '520px' }">
+
+  <div class="dialog-form">
+    <div class="form-group">
+      <label class="form-label">Stock Symbol *</label>
+      <input type="text" class="form-input" [(ngModel)]="newSymbol"
+             placeholder="e.g. RELIANCE, NIFTY50"
+             (input)="newSymbol = newSymbol.toUpperCase()"/>
+    </div>
+    <div class="form-group">
+      <label class="form-label">Display Name (optional)</label>
+      <input type="text" class="form-input" [(ngModel)]="newDisplayName"
+             placeholder="e.g. Reliance Industries"/>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">Public Google Drive Share Link / CSV URL</label>
+      <input type="text" class="form-input" [(ngModel)]="newDataUrl"
+             placeholder="https://drive.google.com/file/d/.../view"/>
+      <span class="field-hint">Paste a shareable Google Drive link ("Anyone with the link") or direct HTTP CSV URL.</span>
+    </div>
+
+    <div class="or-divider">
+      <span>OR SELECT LOCAL FILE</span>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">1-Min OHLCV CSV File</label>
+      <div class="file-upload-area" (click)="fileInput.click()">
+        <input #fileInput type="file" accept=".csv,.xlsx,.xls" style="display:none"
+               (change)="onFileSelected($event)"/>
+        @if (selectedFile) {
+          <div class="file-selected">
+            <i class="pi pi-file-excel"></i>
+            <span>{{ selectedFile.name }}</span>
+            <span class="file-size">({{ (selectedFile.size / 1024).toFixed(0) }} KB)</span>
+          </div>
+        } @else {
+          <div class="file-placeholder">
+            <i class="pi pi-cloud-upload"></i>
+            <span>Click to select CSV or Excel file</span>
+            <span class="file-hint">Columns: datetime, open, high, low, close, volume</span>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  <ng-template pTemplate="footer">
+    <button class="btn-cancel-dialog" (click)="showAddDialog = false">Cancel</button>
+    <button class="btn-confirm-dialog" [disabled]="isAdding || (!newDataUrl.trim() && !selectedFile)" (click)="addStock()">
+      @if (isAdding) { <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner> }
+      @else { <i class="pi pi-plus"></i> }
+      {{ isAdding ? 'Adding…' : 'Add Stock' }}
+    </button>
+  </ng-template>
+</p-dialog>
+
+<!-- ── Re-upload Dialog ────────────────────────────────────────────────────── -->
+<p-dialog
+  [(visible)]="showReuploadDialog"
+  [header]="'Update Data for ' + reuploadSymbol"
+  [modal]="true"
+  [closable]="true"
+  [style]="{ width: '480px' }">
+
+  <div class="dialog-form">
+    <div class="form-group">
+      <label class="form-label">New Public Google Drive Share Link / CSV URL</label>
+      <input type="text" class="form-input" [(ngModel)]="reuploadUrl"
+             placeholder="https://drive.google.com/file/d/.../view"/>
+    </div>
+
+    <div class="or-divider">
+      <span>OR SELECT LOCAL FILE</span>
+    </div>
+
+    <div class="form-group">
+      <label class="form-label">New 1-Min CSV File</label>
+      <div class="file-upload-area" (click)="reuploadFileInput.click()">
+        <input #reuploadFileInput type="file" accept=".csv,.xlsx,.xls" style="display:none"
+               (change)="onReuploadFileSelected($event)"/>
+        @if (reuploadFile) {
+          <div class="file-selected">
+            <i class="pi pi-file-excel"></i>
+            <span>{{ reuploadFile.name }}</span>
+          </div>
+        } @else {
+          <div class="file-placeholder">
+            <i class="pi pi-cloud-upload"></i>
+            <span>Click to select file</span>
+          </div>
+        }
+      </div>
+    </div>
+  </div>
+
+  <ng-template pTemplate="footer">
+    <button class="btn-cancel-dialog" (click)="showReuploadDialog = false">Cancel</button>
+    <button class="btn-confirm-dialog" [disabled]="!reuploadFile && !reuploadUrl.trim()" (click)="reuploadFile_do()">
+      <i class="pi pi-upload"></i> Update Data
+    </button>
+  </ng-template>
+</p-dialog>
