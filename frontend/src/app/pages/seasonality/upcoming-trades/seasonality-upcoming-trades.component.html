@@ -70,8 +70,8 @@
                 <div class="trade-stats">
                   <div class="trade-stat">
                     <span class="stat-label">Win Rate</span>
-                    <span class="stat-val" [style.color]="trade.posProb >= 80 ? '#22C55E' : trade.posProb >= 65 ? '#F4B942' : '#00C2E8'">
-                      {{ formatProb(trade.posProb) }}
+                    <span class="stat-val" [style.color]="getWinRateColor(trade)">
+                      {{ formatProb(getWinRate(trade)) }}
                     </span>
                   </div>
                   <div class="trade-stat">

@@ -39,15 +39,34 @@ export class SeasonalityAnalysisResultsComponent implements OnChanges {
   private buildRows(): void {
     if (!this.result?.stats) return;
 
-    this.filteredRows = Object.entries(this.result.stats)
-      .filter(([, stats]) => (stats.posProb ?? 0) >= this.probabilityThreshold)
-      .map(([period, stats]) => ({
+    const rows: AnalysisRow[] = [];
+
+    for (const [period, stats] of Object.entries(this.result.stats)) {
+      const posP = stats.posProb ?? stats.pos_prob ?? 0;
+      const negP = stats.negProb ?? stats.neg_prob ?? 0;
+
+      const isBull = posP >= this.probabilityThreshold;
+      const isBear = negP >= this.probabilityThreshold;
+
+      if (!isBull && !isBear) continue;
+
+      const direction: 'BULL' | 'BEAR' = posP >= negP ? 'BULL' : 'BEAR';
+
+      rows.push({
         period,
         stats,
-        direction: this.getDirection(stats),
+        direction,
         streakText: this.buildStreakText(stats.streak),
-      }))
-      .sort((a, b) => (b.stats.posProb ?? 0) - (a.stats.posProb ?? 0));
+      });
+    }
+
+    this.filteredRows = rows.sort((a, b) => this.getWinRate(b) - this.getWinRate(a));
+  }
+
+  getWinRate(row: AnalysisRow): number {
+    const posP = row.stats.posProb ?? row.stats.pos_prob ?? 0;
+    const negP = row.stats.negProb ?? row.stats.neg_prob ?? 0;
+    return row.direction === 'BEAR' ? negP : posP;
   }
 
   private getDirection(stats: PeriodStats): 'BULL' | 'BEAR' | 'NEUTRAL' {
@@ -78,10 +97,17 @@ export class SeasonalityAnalysisResultsComponent implements OnChanges {
     return `${Math.min(prob ?? 0, 100)}%`;
   }
 
-  getProbColor(prob: number | null): string {
-    if ((prob ?? 0) >= 80) return '#22C55E';
-    if ((prob ?? 0) >= 65) return '#F4B942';
-    return '#00C2E8';
+  getProbColor(prob: number | null, direction: string = 'BULL'): string {
+    const rate = prob ?? 0;
+    if (direction === 'BEAR') {
+      if (rate >= 80) return '#EF4444';
+      if (rate >= 65) return '#F97316';
+      return '#00C2E8';
+    } else {
+      if (rate >= 80) return '#22C55E';
+      if (rate >= 65) return '#F4B942';
+      return '#00C2E8';
+    }
   }
 
   formatPct(val: number | null | undefined): string {

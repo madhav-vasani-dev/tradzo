@@ -71,6 +71,26 @@ export class SeasonalityUpcomingTradesComponent {
     return this.watchlistedIds.has(`${trade.symbol}_${trade.period}`);
   }
 
+  getWinRate(trade: UpcomingTrade): number {
+    if (trade.direction === 'BEAR') {
+      return trade.negProb ?? (100 - (trade.posProb ?? 0));
+    }
+    return trade.posProb ?? 0;
+  }
+
+  getWinRateColor(trade: UpcomingTrade): string {
+    const rate = this.getWinRate(trade);
+    if (trade.direction === 'BEAR') {
+      if (rate >= 80) return '#EF4444';
+      if (rate >= 65) return '#F97316';
+      return '#00C2E8';
+    } else {
+      if (rate >= 80) return '#22C55E';
+      if (rate >= 65) return '#F4B942';
+      return '#00C2E8';
+    }
+  }
+
   formatDate(isoDate: string | null): string {
     if (!isoDate) return '—';
     const d = new Date(isoDate);
