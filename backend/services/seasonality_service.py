@@ -218,11 +218,14 @@ def compute_returns_grid(
     # Build per-period stats
     stats: dict[str, dict[str, Any]] = {}
     for lbl in periods_ordered:
-        values = [
+        raw_values = [
             grid[yr][lbl]
             for yr in [str(y) for y in all_years]
             if grid[yr].get(lbl) is not None
         ]
+        # Exclude 0.0% (untraded / flat holiday periods) so probability is based only on traded years
+        values = [v for v in raw_values if v != 0.0]
+
         if not values:
             stats[lbl] = {
                 "avg": None, "sigma": None,
@@ -240,7 +243,7 @@ def compute_returns_grid(
         recent = [
             grid[str(y)][lbl]
             for y in all_years
-            if grid[str(y)].get(lbl) is not None
+            if grid[str(y)].get(lbl) is not None and grid[str(y)].get(lbl) != 0.0
         ]
         streak = _compute_streak(recent)
 

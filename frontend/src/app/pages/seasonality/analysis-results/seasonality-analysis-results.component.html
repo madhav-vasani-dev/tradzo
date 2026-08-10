@@ -49,14 +49,14 @@
             <div class="setup-prob">
               <div class="prob-label-row">
                 <span class="stat-label">Win Rate</span>
-                <span class="prob-val" [style.color]="getProbColor(row.stats.posProb)">
-                  {{ formatProb(row.stats.posProb) }}
+                <span class="prob-val" [style.color]="getProbColor(getWinRate(row), row.direction)">
+                  {{ formatProb(getWinRate(row)) }}
                 </span>
               </div>
               <div class="prob-bar-track">
                 <div class="prob-bar-fill"
-                     [style.width]="getProbBarWidth(row.stats.posProb)"
-                     [style.background]="getProbColor(row.stats.posProb)">
+                     [style.width]="getProbBarWidth(getWinRate(row))"
+                     [style.background]="getProbColor(getWinRate(row), row.direction)">
                 </div>
               </div>
             </div>
