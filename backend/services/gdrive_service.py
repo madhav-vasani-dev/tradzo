@@ -43,6 +43,9 @@ def scrape_public_drive_folder(folder_url_or_id: str = DEFAULT_PUBLIC_FOLDER_ID)
     """
     Scrape a public Google Drive folder page and return a dict mapping:
     SYMBOL -> {"symbol": SYMBOL, "filename": filename, "file_id": file_id, "download_url": url}
+
+    Uses Google Drive API v3 if GOOGLE_API_KEY is configured in backend/config.py or .env (supports up to 1000+ files per page).
+    Otherwise, uses multi-sort sweep scanning on public HTML pages to discover all files.
     """
     if "drive.google.com" in folder_url_or_id:
         match = re.search(r"folders/([\w-]+)", folder_url_or_id)
@@ -50,33 +53,107 @@ def scrape_public_drive_folder(folder_url_or_id: str = DEFAULT_PUBLIC_FOLDER_ID)
     else:
         folder_id = folder_url_or_id.strip()
 
-    url = f"https://drive.google.com/drive/folders/{folder_id}"
+    from config import settings
+    api_key = (settings.google_api_key or os.getenv("GOOGLE_API_KEY", "")).strip()
+    results = {}
+
+    # Method 1: Direct Google Drive API v3 (if GOOGLE_API_KEY is provided in .env)
+    if api_key:
+        try:
+            session = requests.Session()
+            page_token = None
+            while True:
+                params = {
+                    "q": f"'{folder_id}' in parents and trashed = false",
+                    "fields": "nextPageToken, files(id, name)",
+                    "pageSize": 1000,
+                    "key": api_key,
+                }
+                if page_token:
+                    params["pageToken"] = page_token
+
+                resp = session.get("https://www.googleapis.com/drive/v3/files", params=params, timeout=30)
+                if resp.status_code == 200:
+                    data = resp.json()
+                    for f in data.get("files", []):
+                        fname = f.get("name", "")
+                        if fname.lower().endswith(".csv"):
+                            clean_fid = f.get("id")
+                            symbol = fname.replace(".csv", "").strip().upper()
+                            results[symbol] = {
+                                "symbol": symbol,
+                                "filename": fname,
+                                "file_id": clean_fid,
+                                "download_url": f"https://docs.google.com/uc?export=download&id={clean_fid}",
+                            }
+                    page_token = data.get("nextPageToken")
+                    if not page_token:
+                        break
+                else:
+                    logger.warning("Google Drive API v3 returned status %d", resp.status_code)
+                    break
+            if results:
+                logger.info("Fetched %d files from Google Drive API v3.", len(results))
+                return results
+        except Exception as exc:
+            logger.warning("Google Drive API v3 query failed: %s. Falling back to multi-sort scraping.", exc)
+
+    # Method 2: Multi-sort web scraping sweep across sorting rules
     session = requests.Session()
     session.headers.update(
         {
             "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
         }
     )
-    resp = session.get(url, timeout=30)
-    if resp.status_code != 200:
-        raise RuntimeError(f"Could not load Google Drive folder (HTTP {resp.status_code})")
 
-    text = resp.text
-    matches = re.findall(r'aria-label="([\w\.-]+\.csv)[^"]*"\s+[^>]*ssk=\'\d+:\w+:([\w-]+)', text)
-    if not matches:
-        matches = re.findall(r'ssk=\'\d+:\w+:([\w-]+)[^\']*\'[^>]*aria-label="([\w\.-]+\.csv)', text)
-        matches = [(m[1], m[0]) for m in matches]
+    sort_rules = [
+        (13, 1), (13, 2),  # Name A-Z, Z-A
+        (7, 1), (7, 2),    # Date Modified ASC, DESC
+        (10, 1), (10, 2),  # Size ASC, DESC
+        (1, 1), (1, 2),
+        (2, 1), (2, 2),
+        (3, 1), (3, 2),
+        (4, 1), (4, 2),
+        (5, 1), (5, 2),
+        (6, 1), (6, 2),
+        (8, 1), (8, 2),
+        (9, 1), (9, 2),
+        (11, 1), (11, 2),
+        (12, 1), (12, 2),
+        (19, 1), (19, 2),
+    ]
 
-    results = {}
-    for fname, raw_file_id in matches:
-        clean_file_id = raw_file_id.split("-0-")[0] if "-0-" in raw_file_id else raw_file_id
-        symbol = fname.replace(".csv", "").strip().upper()
-        results[symbol] = {
-            "symbol": symbol,
-            "filename": fname,
-            "file_id": clean_file_id,
-            "download_url": f"https://docs.google.com/uc?export=download&id={clean_file_id}",
-        }
+    for s, d in sort_rules:
+        url = f"https://drive.google.com/drive/folders/{folder_id}?sort={s}&direction={d}"
+        try:
+            resp = session.get(url, timeout=15)
+            if resp.status_code != 200:
+                continue
+            text = resp.text
+
+            matches = re.findall(r'aria-label="([\w\.-]+\.csv)[^"]*"\s+[^>]*ssk=\'\d+:\w+:([\w-]+)', text)
+            if not matches:
+                matches = re.findall(r'ssk=\'\d+:\w+:([\w-]+)[^\']*\'[^>]*aria-label="([\w\.-]+\.csv)', text)
+                matches = [(m[1], m[0]) for m in matches]
+
+            dt_matches = re.findall(r'data-id="([a-zA-Z0-9_-]{25,45})"[^>]*data-tooltip="([^"]+\.csv)', text)
+            for fid, fname in dt_matches:
+                matches.append((fname, fid))
+
+            for fname, raw_file_id in matches:
+                clean_file_id = raw_file_id.split("-0-")[0] if "-0-" in raw_file_id else raw_file_id
+                symbol = fname.replace(".csv", "").strip().upper()
+                if symbol not in results:
+                    results[symbol] = {
+                        "symbol": symbol,
+                        "filename": fname,
+                        "file_id": clean_file_id,
+                        "download_url": f"https://docs.google.com/uc?export=download&id={clean_file_id}",
+                    }
+        except Exception as exc:
+            logger.warning("Error fetching folder sort=%d&direction=%d: %s", s, d, exc)
+
+    logger.info("Scraped %d files from public Google Drive folder using multi-sort sweep.", len(results))
     return results
 
 

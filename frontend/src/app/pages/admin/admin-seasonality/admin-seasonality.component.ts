@@ -47,6 +47,8 @@ export class AdminSeasonalityComponent implements OnInit, OnDestroy {
   stocks: SeasonalityStock[] = [];
   isLoadingStocks = true;
   searchQuery = '';
+  isSyncingFolder = false;
+  isSyncingNifty500 = false;
 
   get filteredStocks(): SeasonalityStock[] {
     if (!this.searchQuery.trim()) {
@@ -67,7 +69,6 @@ export class AdminSeasonalityComponent implements OnInit, OnDestroy {
   newDataUrl = '';
   selectedFile: File | null = null;
   isAdding = false;
-  isSyncingFolder = false;
 
   // Analysis settings
   selectedModes: ViewMode[] = ['monthly'];
@@ -194,6 +195,28 @@ export class AdminSeasonalityComponent implements OnInit, OnDestroy {
     }
   }
 
+  async syncNifty500List(): Promise<void> {
+    this.isSyncingNifty500 = true;
+    try {
+      const res = await this.seasonalityService.syncNifty500List();
+      this.messageService.add({
+        severity: 'success',
+        summary: 'Nifty 500 Watchlist Imported',
+        detail: `Imported ${res.stocks_added} new stocks, updated ${res.stocks_updated}. Matched ${res.total_drive_files_matched} Drive files.`,
+        life: 6000,
+      });
+      this.loadStocks();
+    } catch (err: any) {
+      this.messageService.add({
+        severity: 'error',
+        summary: 'Import Failed',
+        detail: err.message || 'Failed to import Nifty 500 list.',
+      });
+    } finally {
+      this.isSyncingNifty500 = false;
+    }
+  }
+
   async removeStock(symbol: string): Promise<void> {
     if (!confirm(`Remove ${symbol}? This will delete the stock and its data file.`)) return;
     try {
@@ -267,7 +290,21 @@ export class AdminSeasonalityComponent implements OnInit, OnDestroy {
     this.progress = { running: true, current: 'Initializing…', done: 0, total: this.totalCombos, summary: null };
 
     try {
-      const summary = await this.seasonalityService.triggerAnalysis(this.selectedModes, this.selectedYearRanges);
+      const summary = await this.seasonalityService.triggerAnalysis(
+        this.selectedModes,
+        this.selectedYearRanges,
+        (event) => {
+          if (event.type === 'start') {
+            this.progress = { ...this.progress, total: event.total, current: 'Starting…' };
+          } else if (event.type === 'stock_start') {
+            this.progress = { ...this.progress, current: `Processing ${event['symbol']}…` };
+          } else if (event.type === 'combo') {
+            this.progress = { ...this.progress, done: event.done, total: event.total };
+          } else if (event.type === 'done') {
+            this.progress = { ...this.progress, done: event.done, total: event.total, current: 'Finalizing…' };
+          }
+        }
+      );
       this.progress = { running: false, current: 'Done', done: summary.totalCombos, total: summary.totalCombos, summary };
       this.messageService.add({
         severity: summary.errors > 0 ? 'warn' : 'success',

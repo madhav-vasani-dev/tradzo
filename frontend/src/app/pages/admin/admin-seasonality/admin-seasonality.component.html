@@ -14,6 +14,11 @@
       </div>
     </div>
     <div class="header-actions">
+      <button class="btn-sync btn-nifty" [disabled]="isSyncingNifty500" (click)="syncNifty500List()" id="sync-nifty500-btn" pTooltip="Import all 500 Nifty stocks from ind_nifty500list.csv" tooltipPosition="bottom">
+        @if (isSyncingNifty500) { <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner> }
+        @else { <i class="pi pi-list"></i> }
+        {{ isSyncingNifty500 ? 'Importing…' : 'Import Nifty 500' }}
+      </button>
       <button class="btn-sync" [disabled]="isSyncingFolder" (click)="syncDriveFolder()" id="sync-folder-btn">
         @if (isSyncingFolder) { <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner> }
         @else { <i class="pi pi-sync"></i> }

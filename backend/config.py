@@ -69,6 +69,7 @@ class Settings(BaseSettings):
     # Share the Drive folder with the service-account email for write access.
     gdrive_service_account_path: str = "./gdrive-service-account.json"
     gdrive_folder_id: str = ""  # Drive folder ID (from the folder's URL)
+    google_api_key: str = ""  # Optional Google API Key for Drive API v3 bulk folder pagination
 
     @property
     def cors_origin_list(self) -> list[str]:
