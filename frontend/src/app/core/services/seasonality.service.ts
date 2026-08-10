@@ -381,17 +381,19 @@ export class SeasonalityService {
   // ── Private mappers ────────────────────────────────────────────────────────
 
   private _mapResult(r: any): SeasonalityResult {
+    const gridObj = r.grid || {};
+    const yearsArr = Array.isArray(r.years) ? r.years : (r.years_list && Array.isArray(r.years_list) ? r.years_list : Object.keys(gridObj));
     return {
       id: r.id || '',
       symbol: r.symbol || '',
       viewMode: r.viewMode || r.view_mode || 'monthly',
       years: r.years,
       computedAt: r.computedAt,
-      grid: r.grid || {},
+      grid: gridObj,
       stats: r.stats || {},
       yearTotals: r.year_totals || r.yearTotals || {},
       periodsOrdered: r.periods_ordered || r.periodsOrdered || [],
-      years_list: r.years || [],
+      years_list: yearsArr,
     };
   }
 
