@@ -147,13 +147,15 @@ export class SeasonalityService {
     symbols: string[],
     viewMode: ViewMode,
     years: YearRange,
+    returnBasis: 'open' | 'prev_close' = 'open',
   ): Observable<SeasonalityResult[]> {
     return from(
       this.authHeaders().then(headers => {
         let params = new HttpParams()
           .set('symbols', symbols.join(','))
           .set('view_mode', viewMode)
-          .set('years', String(years));
+          .set('years', String(years))
+          .set('return_basis', returnBasis);
         return firstValueFrom(
           this.http.get<any[]>(`${this.apiBase}/seasonality/results`, { headers, params })
         );
@@ -161,13 +163,16 @@ export class SeasonalityService {
     ).pipe(map(results => results.map(this._mapResult)));
   }
 
-  /** Fetch upcoming high-probability trades. */
+  /** Fetch upcoming high-probability trades (BULL and BEAR). */
   getUpcomingTrades(
     symbols: string[],
     viewMode: ViewMode,
     years: YearRange,
     probabilityThreshold: number,
     lookaheadDays: number,
+    returnBasis: 'open' | 'prev_close' = 'open',
+    avgReturnThreshold: number = 0,
+    directionFilter: 'ALL' | 'BULL' | 'BEAR' = 'ALL',
   ): Observable<UpcomingTrade[]> {
     return from(
       this.authHeaders().then(headers =>
@@ -180,6 +185,9 @@ export class SeasonalityService {
               years: years === 'max' ? 'max' : years,
               probability_threshold: probabilityThreshold,
               lookahead_days: lookaheadDays,
+              return_basis: returnBasis,
+              avg_return_threshold: avgReturnThreshold,
+              direction_filter: directionFilter,
             },
             { headers }
           )
@@ -240,24 +248,75 @@ export class SeasonalityService {
     );
   }
 
-  /** Trigger full seasonality analysis computation and caching. */
-  async triggerAnalysis(
-    viewModes: ViewMode[],
-    yearRanges: (number | string)[],
-  ): Promise<AnalysisRunSummary> {
+  /** Auto-import all 500+ stocks from ind_nifty500list.csv into watchlist. */
+  async syncNifty500List(): Promise<{ status: string; stocks_added: number; stocks_updated: number; total_drive_files_matched: number }> {
     const headers = await this.authHeaders();
-    const result = await firstValueFrom(
+    return firstValueFrom(
       this.http.post<any>(
-        `${this.apiBase}/seasonality/admin/run-analysis`,
-        { view_modes: viewModes, year_ranges: yearRanges },
+        `${this.apiBase}/seasonality/admin/sync-nifty500`,
+        {},
         { headers }
       )
     );
+  }
+
+  /** Trigger full seasonality analysis with live streaming progress. */
+  async triggerAnalysis(
+    viewModes: ViewMode[],
+    yearRanges: (number | string)[],
+    onProgress?: (event: { type: string; done: number; total: number; symbol?: string; status?: string }) => void,
+  ): Promise<AnalysisRunSummary> {
+    const user = this.auth.currentUser;
+    if (!user) throw new Error('Not authenticated');
+    const token = await user.getIdToken();
+
+    const response = await fetch(`${this.apiBase}/seasonality/admin/run-analysis/stream`, {
+      method: 'POST',
+      headers: {
+        'Authorization': `Bearer ${token}`,
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ view_modes: viewModes, year_ranges: yearRanges }),
+    });
+
+    if (!response.ok) {
+      const errText = await response.text();
+      throw new Error(`Analysis failed (HTTP ${response.status}): ${errText}`);
+    }
+
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    let buffer = '';
+    let lastEvent: any = { done: 0, total: 0 };
+    let success = 0;
+    let errors = 0;
+
+    while (true) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      buffer += decoder.decode(value, { stream: true });
+      const lines = buffer.split('\n');
+      buffer = lines.pop() ?? '';  // keep incomplete line
+
+      for (const line of lines) {
+        const trimmed = line.trim();
+        if (!trimmed) continue;
+        try {
+          const event = JSON.parse(trimmed);
+          lastEvent = event;
+          if (event.type === 'combo') {
+            if (event.status === 'ok') success++; else errors++;
+          }
+          if (onProgress) onProgress(event);
+        } catch { /* skip malformed lines */ }
+      }
+    }
+
     return {
-      totalCombos: result.total_combos,
-      success: result.success,
-      errors: result.errors,
-      details: result.details,
+      totalCombos: lastEvent.total ?? 0,
+      success,
+      errors,
+      details: {},
     };
   }
 

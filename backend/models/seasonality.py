@@ -30,6 +30,13 @@ class UpcomingTradesRequest(BaseModel):
     symbols: Optional[list[str]] = None
     view_mode: Optional[ViewMode] = None
     years: Optional[Any] = None
+    # Return basis: "open" = (close-open)/open, "prev_close" = (close-prevClose)/prevClose
+    return_basis: Literal["open", "prev_close"] = "open"
+    # Minimum |avg return| % required to surface a trade (e.g. 0.5 means ≥ 0.5%)
+    avg_return_threshold: float = Field(default=0.0, ge=0.0, le=20.0)
+    # Direction filter: ALL, BULL, or BEAR
+    direction_filter: Literal["ALL", "BULL", "BEAR"] = "ALL"
+
 
 
 # ── Response bodies ────────────────────────────────────────────────────────────

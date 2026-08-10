@@ -139,9 +139,16 @@ def compute_returns_grid(
     df_period: pd.DataFrame,
     mode: ViewMode,
     years: int | str = "max",
+    return_basis: str = "open",
 ) -> dict[str, Any]:
     """
     Build the seasonality grid.
+
+    Parameters
+    ----------
+    return_basis : "open" | "prev_close"
+        "open"       — (close - open) / open * 100  [intraday basis, default]
+        "prev_close" — (close - prev_close) / prev_close * 100  [carry basis]
 
     Returns
     -------
@@ -150,6 +157,7 @@ def compute_returns_grid(
         "stats": {period_label: {avg, sigma, pos_prob, neg_prob, count, streak}},
         "year_totals": {year_str: total_return_pct | None},
         "periods_ordered": [label, ...],  # chronologically sorted
+        "return_basis": "open" | "prev_close",
     }
     """
     df = df_period.copy()
@@ -157,8 +165,12 @@ def compute_returns_grid(
     df["year"] = df["period_end"].dt.year
     df["label"] = df["period_end"].apply(lambda t: _period_label(t, mode))
 
-    # Compute period return: (close - open) / open * 100
-    if "open" in df.columns and (df["open"] > 0).any():
+    # Compute period return based on selected basis
+    if return_basis == "prev_close":
+        # Carry basis: change relative to previous period's close
+        df["return_pct"] = df["close"].pct_change() * 100
+    elif "open" in df.columns and (df["open"] > 0).any():
+        # Intraday basis: change from open to close within the same period
         df["return_pct"] = ((df["close"] - df["open"]) / df["open"]) * 100
     else:
         df["return_pct"] = df["close"].pct_change() * 100
@@ -252,6 +264,7 @@ def compute_returns_grid(
         "year_totals": year_totals,
         "periods_ordered": periods_ordered,
         "years": [str(y) for y in all_years],
+        "return_basis": return_basis,
     }
 
 
@@ -281,17 +294,27 @@ def get_upcoming_trades(
     cached_results: list[dict],
     probability_threshold: float,
     lookahead_days: int = 30,
+    avg_return_threshold: float = 0.0,
+    direction_filter: str = "ALL",
 ) -> list[dict]:
     """
     From a list of cached seasonality result dicts (as stored in Firestore),
-    derive trades whose next occurrence falls within *lookahead_days* and whose
-    positive probability meets the threshold.
+    derive upcoming BULL and BEAR trades.
+
+    A period is surfaced as:
+    - BULL trade: pos_prob >= probability_threshold  AND  avg >= 0
+    - BEAR trade: neg_prob >= probability_threshold  AND  avg < 0
+
+    Additional filters:
+    - avg_return_threshold: minimum |avg return| % (e.g. 0.5 means |avg| >= 0.5%)
+    - direction_filter: "ALL" | "BULL" | "BEAR"
 
     Returns a list of trade dicts sorted by entry date ascending.
     """
     today = date.today()
     cutoff = today + timedelta(days=lookahead_days)
     trades = []
+    seen_keys: set[str] = set()  # prevent duplicate BULL+BEAR for same period
 
     for result in cached_results:
         symbol = result.get("symbol", "")
@@ -300,12 +323,35 @@ def get_upcoming_trades(
 
         for label, s in stats.items():
             pos_prob = s.get("pos_prob") or 0.0
-            if pos_prob < probability_threshold:
+            neg_prob = s.get("neg_prob") or 0.0
+            avg_return = s.get("avg") or 0.0
+
+            # Determine direction
+            is_bull = pos_prob >= probability_threshold and avg_return >= 0
+            is_bear = neg_prob >= probability_threshold and avg_return < 0
+
+            if not is_bull and not is_bear:
+                continue
+
+            direction = "BULL" if is_bull else "BEAR"
+
+            # Apply direction filter
+            if direction_filter != "ALL" and direction != direction_filter:
+                continue
+
+            # Apply |avg return| filter
+            if abs(avg_return) < avg_return_threshold:
                 continue
 
             entry, exit_ = _next_occurrence(label, mode, today)
             if entry is None or entry > cutoff:
                 continue
+
+            # Deduplicate
+            key = f"{symbol}_{label}_{direction}"
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
 
             days_away = (entry - today).days
             trades.append({
@@ -314,10 +360,10 @@ def get_upcoming_trades(
                 "period": label,
                 "entryDate": entry.isoformat(),
                 "exitDate": exit_.isoformat() if exit_ else None,
-                "direction": "BULL" if (s.get("avg") or 0) >= 0 else "BEAR",
+                "direction": direction,
                 "posProb": pos_prob,
-                "negProb": s.get("neg_prob"),
-                "avgReturn": s.get("avg"),
+                "negProb": neg_prob,
+                "avgReturn": avg_return,
                 "sigma": s.get("sigma"),
                 "streak": s.get("streak"),
                 "daysAway": days_away,
@@ -459,6 +505,7 @@ def compute_and_cache_stock(
     year_ranges: list[int | str],
     progress_callback=None,
     data_url: Optional[str] = None,
+    return_basis: str = "open",
 ) -> dict[str, int]:
     """
     Download the stock's CSV in-memory from Drive / URL, resample, compute for all requested
@@ -492,7 +539,7 @@ def compute_and_cache_stock(
         for yr in year_ranges:
             key = f"{symbol}_{mode}_{yr}"
             try:
-                result = compute_returns_grid(df_period, mode, yr)
+                result = compute_returns_grid(df_period, mode, yr, return_basis=return_basis)
                 save_result_to_firestore(symbol, mode, yr, result)
                 summary[key] = "ok"
                 if progress_callback:
@@ -544,6 +591,7 @@ def compute_single_stock_seasonality(
     symbol: str,
     mode: ViewMode,
     years: int | str,
+    return_basis: str = "open",
 ) -> Optional[dict]:
     """
     Compute seasonality for a single stock on-the-fly, save to Firestore cache, and return result.
@@ -566,7 +614,7 @@ def compute_single_stock_seasonality(
         raw_bytes = gdrive_service.download_stock_file(sym, data_url=data_url)
         df_1min = parse_csv(raw_bytes)
         df_period = resample_to_period(df_1min, mode)
-        grid_result = compute_returns_grid(df_period, mode, years)
+        grid_result = compute_returns_grid(df_period, mode, years, return_basis=return_basis)
 
         doc_payload = {
             "symbol": sym,

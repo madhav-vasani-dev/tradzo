@@ -86,6 +86,22 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
   ];
   lookaheadDays = 30;
 
+  // ── New filters ────────────────────────────────────────────────────────────
+  returnBasis: 'open' | 'prev_close' = 'open';
+  returnBasisOptions = [
+    { label: "Today's Open", value: 'open' },
+    { label: 'Prev Close', value: 'prev_close' },
+  ];
+
+  directionFilter: 'ALL' | 'BULL' | 'BEAR' = 'ALL';
+  directionOptions = [
+    { label: 'All', value: 'ALL' },
+    { label: 'Bull Only', value: 'BULL' },
+    { label: 'Bear Only', value: 'BEAR' },
+  ];
+
+  avgReturnThreshold = 0;  // minimum |avg %| to show a trade
+
   // ── Results state ──────────────────────────────────────────────────────────
   results: SeasonalityResult[] = [];
   upcomingTrades: UpcomingTrade[] = [];
@@ -177,14 +193,17 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
 
     // Fetch cached results
     this.subs.add(
-      this.seasonalityService.getCachedResults(symbols, this.selectedViewMode, this.selectedYears).subscribe({
+      this.seasonalityService.getCachedResults(
+        symbols, this.selectedViewMode, this.selectedYears, this.returnBasis
+      ).subscribe({
         next: (res) => {
           this.results = res;
 
           // Now fetch upcoming trades
           this.seasonalityService.getUpcomingTrades(
             symbols, this.selectedViewMode, this.selectedYears,
-            this.probabilityThreshold, this.lookaheadDays
+            this.probabilityThreshold, this.lookaheadDays,
+            this.returnBasis, this.avgReturnThreshold, this.directionFilter
           ).subscribe({
             next: (trades) => {
               this.upcomingTrades = trades;

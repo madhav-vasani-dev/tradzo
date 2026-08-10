@@ -45,30 +45,30 @@ def _require_admin(admin: dict = Depends(get_current_admin)) -> dict:
 
 @router.get("/stocks", summary="List all managed stocks")
 def list_stocks(user: dict = Depends(get_current_user)) -> list[StockInfo]:
-    """Return all stocks registered in ``seasonalityStocks`` with Drive file status."""
+    """
+    Return all stocks registered in ``seasonalityStocks`` with Drive file status.
+    Uses Firestore-stored dataUrl as the source of truth for file presence
+    (avoids slow Drive scrape on every page load).
+    """
     db = firebase_service.get_db()
     docs = db.collection("seasonalityStocks").stream()
-
-    # Build a symbol → Drive file info map (single API call)
-    try:
-        drive_files = {f["symbol"]: f for f in gdrive_service.list_stock_files()}
-    except Exception as exc:
-        logger.warning("Could not list Drive files: %s", exc)
-        drive_files = {}
 
     stocks: list[StockInfo] = []
     for d in docs:
         data = d.to_dict()
         sym = d.id
-        drive_info = drive_files.get(sym, {})
+        data_url = data.get("dataUrl") or ""
+        # A stock has a file if it has a registered dataUrl (set during sync/import)
+        has_file = bool(data_url.strip())
         last_analysis = data.get("lastAnalysisAt")
         stocks.append(
             StockInfo(
                 symbol=sym,
                 display_name=data.get("displayName"),
-                drive_file_present=bool(drive_info),
-                drive_file_size_bytes=drive_info.get("size_bytes"),
-                drive_file_modified=drive_info.get("modified"),
+                data_url=data_url or None,
+                drive_file_present=has_file,
+                drive_file_size_bytes=None,
+                drive_file_modified=None,
                 last_analysis_at=str(last_analysis) if last_analysis else None,
                 added_at=str(data.get("addedAt")) if data.get("addedAt") else None,
                 added_by=data.get("addedBy"),
@@ -83,6 +83,7 @@ def get_results(
     symbols: Optional[str] = None,      # comma-separated
     view_mode: Optional[str] = None,
     years: Optional[str] = None,
+    return_basis: Optional[str] = "open",
     user: dict = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """
@@ -96,6 +97,7 @@ def get_results(
 
     mode = view_mode if view_mode in ("daily", "weekly", "monthly") else "monthly"
     requested_years = yr if yr is not None else 10
+    basis = return_basis if return_basis in ("open", "prev_close") else "open"
 
     # If no specific symbols provided, get all stocks registered in Firestore
     if not symbol_list:
@@ -115,7 +117,7 @@ def get_results(
     if missing_symbols:
         logger.info("Computing on-the-fly for missing symbols: %s (%s / %s)", missing_symbols, mode, requested_years)
         for sym in missing_symbols:
-            computed = seasonality_service.compute_single_stock_seasonality(sym, mode, requested_years)  # type: ignore[arg-type]
+            computed = seasonality_service.compute_single_stock_seasonality(sym, mode, requested_years, return_basis=basis)  # type: ignore[arg-type]
             if computed:
                 results.append(computed)
 
@@ -128,12 +130,14 @@ def upcoming_trades(
     user: dict = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """
-    Derive upcoming trades from seasonality analysis. Computes on-the-fly if missing from cache.
+    Derive upcoming trades from seasonality analysis.
+    Surfaces both BULL and BEAR trades. Computes on-the-fly if missing from cache.
     """
     symbol_list = [s.upper() for s in body.symbols] if body.symbols else None
     yr: Any = body.years
     mode = body.view_mode if body.view_mode in ("daily", "weekly", "monthly") else "monthly"
     requested_years = yr if yr is not None else 10
+    basis = body.return_basis if body.return_basis in ("open", "prev_close") else "open"
 
     if not symbol_list:
         db = firebase_service.get_db()
@@ -151,7 +155,7 @@ def upcoming_trades(
 
     if missing_symbols:
         for sym in missing_symbols:
-            computed = seasonality_service.compute_single_stock_seasonality(sym, mode, requested_years)  # type: ignore[arg-type]
+            computed = seasonality_service.compute_single_stock_seasonality(sym, mode, requested_years, return_basis=basis)  # type: ignore[arg-type]
             if computed:
                 cached.append(computed)
 
@@ -159,6 +163,8 @@ def upcoming_trades(
         cached_results=cached,
         probability_threshold=body.probability_threshold,
         lookahead_days=body.lookahead_days,
+        avg_return_threshold=body.avg_return_threshold,
+        direction_filter=body.direction_filter,
     )
     return trades
 
@@ -254,6 +260,83 @@ async def sync_drive_folder(
         "stocks_added": added_count,
         "stocks_updated": updated_count,
         "symbols": sorted(list(folder_files.keys())),
+    }
+
+
+@router.post("/admin/sync-nifty500", summary="Import and register all Nifty 500 stocks from ind_nifty500list.csv")
+async def sync_nifty500_list(
+    admin: dict = Depends(_require_admin),
+) -> dict[str, Any]:
+    """
+    Import all 500+ stocks from ind_nifty500list.csv into seasonalityStocks.
+    Automatically links company names, industries, and matching Google Drive URLs.
+    """
+    import csv
+    import os
+    from datetime import datetime
+    import pytz
+
+    # Scrape current available Drive folder files
+    folder_files = {}
+    try:
+        folder_files = gdrive_service.scrape_public_drive_folder()
+    except Exception as exc:
+        logger.warning("Could not scrape Drive folder during Nifty 500 import: %s", exc)
+
+    # __file__ = backend/routers/seasonality.py → dirname×3 = Tradzo root
+    csv_path = os.path.join(
+        os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))),
+        "ind_nifty500list.csv"
+    )
+    if not os.path.exists(csv_path):
+        raise HTTPException(status_code=404, detail=f"ind_nifty500list.csv not found at: {csv_path}")
+
+    db = firebase_service.get_db()
+    now = datetime.now(pytz.timezone("Asia/Kolkata"))
+
+    added_count = 0
+    updated_count = 0
+
+    with open(csv_path, "r", encoding="utf-8") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            sym = row.get("Symbol", "").strip().upper()
+            company_name = row.get("Company Name", "").strip() or sym
+            industry = row.get("Industry", "").strip()
+
+            if not sym:
+                continue
+
+            doc_ref = db.collection("seasonalityStocks").document(sym)
+            snap = doc_ref.get()
+
+            # Check if matching Drive file URL exists
+            drive_meta = folder_files.get(sym)
+            data_url = drive_meta["download_url"] if drive_meta else None
+
+            payload = {
+                "symbol": sym,
+                "displayName": company_name,
+                "industry": industry,
+                "addedBy": admin.get("uid"),
+            }
+            if data_url:
+                payload["dataUrl"] = data_url
+
+            if not snap.exists:
+                payload["addedAt"] = now
+                payload["lastAnalysisAt"] = None
+                doc_ref.set(payload)
+                added_count += 1
+            else:
+                doc_ref.update(payload)
+                updated_count += 1
+
+    return {
+        "status": "success",
+        "stocks_added": added_count,
+        "stocks_updated": updated_count,
+        "total_drive_files_matched": len([s for s in folder_files if s in folder_files]),
     }
 
 
@@ -409,3 +492,69 @@ def run_analysis(
         errors=errors,
         details=details,
     )
+
+
+@router.post("/admin/run-analysis/stream", summary="Trigger full seasonality analysis with SSE progress stream")
+async def run_analysis_stream(
+    body: RunAnalysisRequest,
+    admin: dict = Depends(_require_admin),
+):
+    """
+    Same as run-analysis but streams per-stock JSON progress events via
+    Server-Sent Events so the frontend can show a live progress bar.
+    Each event is a JSON object on a single line.
+    """
+    import json
+    import asyncio
+    from datetime import datetime
+    import pytz
+    from fastapi.responses import StreamingResponse
+
+    year_ranges: list[Any] = []
+    for yr in body.year_ranges:
+        if yr == "max" or yr == 0:
+            year_ranges.append("max")
+        else:
+            year_ranges.append(int(yr))
+
+    db = firebase_service.get_db()
+    stock_docs = list(db.collection("seasonalityStocks").stream())
+    total_stocks = len(stock_docs)
+    modes = body.view_modes
+    total_combos = total_stocks * len(modes) * len(year_ranges)
+
+    async def event_stream():
+        done = 0
+        now = datetime.now(pytz.timezone("Asia/Kolkata"))
+
+        # Send initial metadata
+        yield json.dumps({"type": "start", "total": total_combos, "total_stocks": total_stocks}) + "\n"
+        await asyncio.sleep(0)  # flush
+
+        for doc in stock_docs:
+            symbol = doc.id
+            data = doc.to_dict()
+            data_url = data.get("dataUrl")
+
+            yield json.dumps({"type": "stock_start", "symbol": symbol}) + "\n"
+            await asyncio.sleep(0)
+
+            stock_summary = seasonality_service.compute_and_cache_stock(
+                symbol, modes, year_ranges, data_url=data_url
+            )
+
+            for combo_key, status in stock_summary.items():
+                done += 1
+                yield json.dumps({"type": "combo", "symbol": symbol, "key": combo_key, "status": status, "done": done, "total": total_combos}) + "\n"
+                await asyncio.sleep(0)
+
+            # Update Firestore lastAnalysisAt
+            try:
+                db.collection("seasonalityStocks").document(symbol).update({"lastAnalysisAt": now})
+            except Exception:
+                pass
+
+        # Final summary
+        yield json.dumps({"type": "done", "done": done, "total": total_combos}) + "\n"
+
+    return StreamingResponse(event_stream(), media_type="application/x-ndjson")
