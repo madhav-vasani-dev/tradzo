@@ -118,19 +118,23 @@ def _period_label(ts: pd.Timestamp, mode: ViewMode) -> str:
         return ts.strftime("%d-%b")       # 01-Jan, …
 
 
-def _period_sort_key(label: str, mode: ViewMode) -> int:
-    """Integer sort key so columns render chronologically."""
+def _period_sort_key(label: str, mode: ViewMode) -> tuple[int, int] | int:
+    """Sort key so periods order chronologically (01 Jan to 31 Dec, Jan to Dec, W01 to W53)."""
     if mode == "monthly":
-        months = ["Jan","Feb","Mar","Apr","May","Jun",
-                  "Jul","Aug","Sep","Oct","Nov","Dec"]
+        months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"]
         return months.index(label) if label in months else 999
     elif mode == "weekly":
-        return int(label[1:]) if label.startswith("W") else 999
-    else:
         try:
-            return int(label.split("-")[0])
+            return int(label[1:]) if label.startswith("W") else 999
         except Exception:
             return 999
+    else:  # daily ("DD-MMM")
+        months_map = {"Jan":1, "Feb":2, "Mar":3, "Apr":4, "May":5, "Jun":6, "Jul":7, "Aug":8, "Sep":9, "Oct":10, "Nov":11, "Dec":12}
+        try:
+            parts = label.split("-")
+            return (months_map.get(parts[1], 99), int(parts[0]))
+        except Exception:
+            return (99, 99)
 
 
 # ── Core computation ──────────────────────────────────────────────────────────
@@ -156,7 +160,7 @@ def compute_returns_grid(
         "grid":  {year_str: {period_label: return_pct | None}},
         "stats": {period_label: {avg, sigma, pos_prob, neg_prob, count, streak}},
         "year_totals": {year_str: total_return_pct | None},
-        "periods_ordered": [label, ...],  # chronologically sorted
+        "periods_ordered": [label, ...],  # chronologically sorted from Jan to Dec
         "return_basis": "open" | "prev_close",
     }
     """
@@ -181,15 +185,10 @@ def compute_returns_grid(
         df = df[df["year"] > cutoff_year]
 
     all_years = sorted(df["year"].unique())
-    all_labels_raw = df[["label", "period_end"]].drop_duplicates()
-    periods_ordered = (
-        all_labels_raw
-        .groupby("label")["period_end"]
-        .min()
-        .reset_index()
-        .sort_values("period_end")["label"]
-        .tolist()
-    )
+
+    # Build canonical periods_ordered (01 Jan -> 31 Dec, Jan -> Dec, W01 -> W53)
+    unique_labels = list(df["label"].unique())
+    periods_ordered = sorted(unique_labels, key=lambda lbl: _period_sort_key(lbl, mode))
 
     # Build grid
     grid: dict[str, dict[str, Any]] = {}
@@ -206,11 +205,13 @@ def compute_returns_grid(
             else:
                 grid[yr_str][lbl] = round(float(row.iloc[0]["return_pct"]), 2)
 
-        # Year total = compounded return
-        yr_close = yr_df["close"].dropna()
-        if len(yr_close) >= 2:
-            total = (yr_close.iloc[-1] / yr_close.iloc[0] - 1) * 100
-            year_totals[yr_str] = round(float(total), 2)
+        # Year total = compounded return of valid period returns in that year
+        yr_returns = yr_df["return_pct"].dropna().tolist()
+        if yr_returns:
+            compounded = 1.0
+            for r in yr_returns:
+                compounded *= (1.0 + r / 100.0)
+            year_totals[yr_str] = round((compounded - 1.0) * 100.0, 2)
         else:
             year_totals[yr_str] = None
 
@@ -236,7 +237,6 @@ def compute_returns_grid(
         neg = int(np.sum(arr < 0))
         count = len(arr)
 
-        # Streak: consecutive +/- at the tail of the sorted year list
         recent = [
             grid[str(y)][lbl]
             for y in all_years
@@ -302,8 +302,8 @@ def get_upcoming_trades(
     derive upcoming BULL and BEAR trades.
 
     A period is surfaced as:
-    - BULL trade: pos_prob >= probability_threshold  AND  avg >= 0
-    - BEAR trade: neg_prob >= probability_threshold  AND  avg < 0
+    - BULL trade: pos_prob >= probability_threshold
+    - BEAR trade: neg_prob >= probability_threshold
 
     Additional filters:
     - avg_return_threshold: minimum |avg return| % (e.g. 0.5 means |avg| >= 0.5%)
@@ -314,7 +314,7 @@ def get_upcoming_trades(
     today = date.today()
     cutoff = today + timedelta(days=lookahead_days)
     trades = []
-    seen_keys: set[str] = set()  # prevent duplicate BULL+BEAR for same period
+    seen_keys: set[str] = set()
 
     for result in cached_results:
         symbol = result.get("symbol", "")
@@ -327,13 +327,14 @@ def get_upcoming_trades(
             avg_return = s.get("avg") or 0.0
 
             # Determine direction
-            is_bull = pos_prob >= probability_threshold and avg_return >= 0
-            is_bear = neg_prob >= probability_threshold and avg_return < 0
+            is_bull = pos_prob >= probability_threshold
+            is_bear = neg_prob >= probability_threshold
 
             if not is_bull and not is_bear:
                 continue
 
-            direction = "BULL" if is_bull else "BEAR"
+            # If both satisfy (rare), pick the dominant direction
+            direction = "BULL" if pos_prob >= neg_prob else "BEAR"
 
             # Apply direction filter
             if direction_filter != "ALL" and direction != direction_filter:
@@ -344,7 +345,14 @@ def get_upcoming_trades(
                 continue
 
             entry, exit_ = _next_occurrence(label, mode, today)
-            if entry is None or entry > cutoff:
+            if entry is None or exit_ is None:
+                continue
+
+            # Calculate days away (0 if trade is active now)
+            days_away = max(0, (entry - today).days)
+
+            # Skip if trade entry is beyond lookahead window
+            if entry > cutoff:
                 continue
 
             # Deduplicate
@@ -353,7 +361,6 @@ def get_upcoming_trades(
                 continue
             seen_keys.add(key)
 
-            days_away = (entry - today).days
             trades.append({
                 "symbol": symbol,
                 "viewMode": mode,
@@ -383,11 +390,9 @@ def _next_occurrence(label: str, mode: ViewMode, from_date: date) -> tuple[Optio
         if label not in months:
             return None, None
         m = months.index(label) + 1
-        # Try this calendar year, then next
         for yr in (year, year + 1):
             try:
                 entry = date(yr, m, 1)
-                # Exit = last day of that month
                 if m == 12:
                     exit_ = date(yr, 12, 31)
                 else:
@@ -404,20 +409,35 @@ def _next_occurrence(label: str, mode: ViewMode, from_date: date) -> tuple[Optio
         except (ValueError, IndexError):
             return None, None
         for yr in (year, year + 1):
-            for day_offset in range(365):
-                d = date(yr, 1, 1) + timedelta(days=day_offset)
-                if d.isocalendar().week == week_num:
-                    # Week starts Monday, ends Friday
-                    monday = d - timedelta(days=d.weekday())
-                    friday = monday + timedelta(days=4)
-                    if friday >= from_date:
-                        return monday, friday
-                    break
+            try:
+                monday = date.fromisocalendar(yr, week_num, 1)
+                friday = date.fromisocalendar(yr, week_num, 5)
+                if friday >= from_date:
+                    return monday, friday
+            except ValueError:
+                continue
         return None, None
 
-    else:  # daily
-        # For daily, just use upcoming trading days — not trivial without a calendar.
-        # Return (today, today) as a placeholder if label matches today.
+    else:  # daily ("DD-MMM")
+        months = ["Jan","Feb","Mar","Apr","May","Jun",
+                  "Jul","Aug","Sep","Oct","Nov","Dec"]
+        try:
+            parts = label.split("-")
+            day = int(parts[0])
+            month_str = parts[1]
+            if month_str not in months:
+                return None, None
+            m = months.index(month_str) + 1
+        except Exception:
+            return None, None
+
+        for yr in (year, year + 1):
+            try:
+                d = date(yr, m, day)
+                if d >= from_date:
+                    return d, d
+            except ValueError:
+                continue
         return None, None
 
 
