@@ -36,6 +36,9 @@ class UpcomingTradesRequest(BaseModel):
     avg_return_threshold: float = Field(default=0.0, ge=0.0, le=20.0)
     # Direction filter: ALL, BULL, or BEAR
     direction_filter: Literal["ALL", "BULL", "BEAR"] = "ALL"
+    # Min count of traded years (5, 10, 15, 20, 25, or 'max')
+    min_years_traded: Optional[Any] = Field(default=None, description="Min count of traded years required")
+
 
 
 

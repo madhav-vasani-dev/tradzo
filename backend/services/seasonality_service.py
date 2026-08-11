@@ -299,6 +299,7 @@ def get_upcoming_trades(
     lookahead_days: int = 30,
     avg_return_threshold: float = 0.0,
     direction_filter: str = "ALL",
+    min_years_traded: Optional[int | str] = None,
 ) -> list[dict]:
     """
     From a list of cached seasonality result dicts (as stored in Firestore),
@@ -311,6 +312,7 @@ def get_upcoming_trades(
     Additional filters:
     - avg_return_threshold: minimum |avg return| % (e.g. 0.5 means |avg| >= 0.5%)
     - direction_filter: "ALL" | "BULL" | "BEAR"
+    - min_years_traded: minimum count of traded years (5, 10, 15, 20, 25, or 'max')
 
     Returns a list of trade dicts sorted by entry date ascending.
     """
@@ -328,6 +330,24 @@ def get_upcoming_trades(
             pos_prob = s.get("pos_prob") or 0.0
             neg_prob = s.get("neg_prob") or 0.0
             avg_return = s.get("avg") or 0.0
+            traded_count = s.get("count") or s.get("traded_count") or 0
+
+            # Fallback: compute traded count from grid if missing in stats dict
+            if not traded_count and "grid" in result:
+                grid_dict = result.get("grid") or {}
+                traded_count = sum(
+                    1 for yr_data in grid_dict.values()
+                    if isinstance(yr_data, dict) and yr_data.get(label) is not None and yr_data.get(label) != 0.0
+                )
+
+            # Filter by min years traded
+            if min_years_traded is not None and min_years_traded != "max" and min_years_traded != 0:
+                try:
+                    min_c = int(min_years_traded)
+                    if traded_count < min_c:
+                        continue
+                except (ValueError, TypeError):
+                    pass
 
             # Determine direction
             is_bull = pos_prob >= probability_threshold

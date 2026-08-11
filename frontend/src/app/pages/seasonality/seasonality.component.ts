@@ -27,6 +27,7 @@ import {
   YearRange,
   AnalysisFilters,
   UserSeasonalityConfig,
+  PeriodStats,
 } from '../../core/services/seasonality.service';
 
 import { SeasonalityDataTableComponent } from './data-table/seasonality-data-table.component';
@@ -101,6 +102,16 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
   ];
 
   avgReturnThreshold = 0;  // minimum |avg %| to show a trade
+
+  minYearsTradedOptions = [
+    { label: 'Max', value: 'max' },
+    { label: '5+ Years', value: 5 },
+    { label: '10+ Years', value: 10 },
+    { label: '15+ Years', value: 15 },
+    { label: '20+ Years', value: 20 },
+    { label: '25+ Years', value: 25 },
+  ];
+  selectedMinYearsTraded: number | string = 'max';
 
   // ── Results state ──────────────────────────────────────────────────────────
   results: SeasonalityResult[] = [];
@@ -200,10 +211,12 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
           this.results = res;
 
           // Now fetch upcoming trades
+          const minYears = this.selectedViewMode === 'daily' ? this.selectedMinYearsTraded : undefined;
           this.seasonalityService.getUpcomingTrades(
             symbols, this.selectedViewMode, this.selectedYears,
             this.probabilityThreshold, this.lookaheadDays,
-            this.returnBasis, this.avgReturnThreshold, this.directionFilter
+            this.returnBasis, this.avgReturnThreshold, this.directionFilter,
+            minYears
           ).subscribe({
             next: (trades) => {
               this.upcomingTrades = trades;
@@ -227,6 +240,27 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
         }
       })
     );
+  }
+
+
+  onFilterChange(): void {
+    if (!this.hasRunAnalysis || this.isRunning) return;
+    this.refreshUpcomingTrades();
+  }
+
+  refreshUpcomingTrades(): void {
+    const symbols = this.allStocksSelected ? [] : this.selectedSymbols;
+    const minYears = this.selectedViewMode === 'daily' ? this.selectedMinYearsTraded : undefined;
+
+    this.seasonalityService.getUpcomingTrades(
+      symbols, this.selectedViewMode, this.selectedYears,
+      this.probabilityThreshold, this.lookaheadDays,
+      this.returnBasis, this.avgReturnThreshold, this.directionFilter,
+      minYears
+    ).subscribe({
+      next: (trades) => this.upcomingTrades = trades,
+      error: () => {}
+    });
   }
 
   async saveConfig(): Promise<void> {

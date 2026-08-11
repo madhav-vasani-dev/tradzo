@@ -113,8 +113,8 @@
 
     </div>
 
-    <!-- Bottom Row: Probability threshold, Upcoming window, Run & Save Actions -->
-    <div class="filter-row filter-row--bottom">
+    <!-- Row 2: Signal & Threshold Filters -->
+    <div class="filter-row filter-row--middle">
 
       <!-- Probability threshold -->
       <div class="filter-group filter-group--prob">
@@ -128,6 +128,7 @@
           <span class="slider-min">50%</span>
           <p-slider
             [(ngModel)]="probabilityThreshold"
+            (ngModelChange)="onFilterChange()"
             [min]="50" [max]="100" [step]="5"
             styleClass="prob-slider"
           ></p-slider>
@@ -147,25 +148,12 @@
           <span class="slider-min">0%</span>
           <p-slider
             [(ngModel)]="avgReturnThreshold"
+            (ngModelChange)="onFilterChange()"
             [min]="0" [max]="5" [step]="0.5"
             styleClass="prob-slider"
           ></p-slider>
           <span class="slider-max">5%</span>
         </div>
-      </div>
-
-      <!-- Lookahead window -->
-      <div class="filter-group filter-group--lookahead">
-        <label class="filter-label">Upcoming Window</label>
-        <p-dropdown
-          [options]="lookaheadOptions"
-          [(ngModel)]="lookaheadDays"
-          optionLabel="label"
-          optionValue="value"
-          styleClass="lookahead-dropdown"
-          panelStyleClass="lookahead-dropdown-panel"
-          appendTo="body"
-        ></p-dropdown>
       </div>
 
       <!-- Return Basis toggle -->
@@ -174,6 +162,7 @@
         <p-selectButton
           [options]="returnBasisOptions"
           [(ngModel)]="returnBasis"
+          (ngModelChange)="onFilterChange()"
           optionLabel="label"
           optionValue="value"
           [allowEmpty]="false"
@@ -187,12 +176,52 @@
         <p-selectButton
           [options]="directionOptions"
           [(ngModel)]="directionFilter"
+          (ngModelChange)="onFilterChange()"
           optionLabel="label"
           optionValue="value"
           [allowEmpty]="false"
           styleClass="direction-select"
         ></p-selectButton>
       </div>
+
+    </div>
+
+    <!-- Row 3: Trade Alert Window & Actions -->
+    <div class="filter-row filter-row--bottom">
+
+      <!-- Lookahead window -->
+      <div class="filter-group filter-group--lookahead">
+        <label class="filter-label">Upcoming Window</label>
+        <p-dropdown
+          [options]="lookaheadOptions"
+          [(ngModel)]="lookaheadDays"
+          (ngModelChange)="onFilterChange()"
+          optionLabel="label"
+          optionValue="value"
+          styleClass="lookahead-dropdown"
+          panelStyleClass="lookahead-dropdown-panel"
+          appendTo="body"
+        ></p-dropdown>
+      </div>
+
+      <!-- Min Traded Years filter (visible only for Daily view mode) -->
+      @if (selectedViewMode === 'daily') {
+        <div class="filter-group filter-group--min-years">
+          <label class="filter-label" pTooltip="Minimum traded history required for daily setups" tooltipPosition="top">
+            Traded Years
+          </label>
+          <p-dropdown
+            [options]="minYearsTradedOptions"
+            [(ngModel)]="selectedMinYearsTraded"
+            (ngModelChange)="onFilterChange()"
+            optionLabel="label"
+            optionValue="value"
+            styleClass="lookahead-dropdown"
+            panelStyleClass="lookahead-dropdown-panel"
+            appendTo="body"
+          ></p-dropdown>
+        </div>
+      }
 
       <!-- Action buttons -->
       <div class="filter-group filter-group--actions">
