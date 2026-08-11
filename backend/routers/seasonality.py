@@ -165,6 +165,7 @@ def upcoming_trades(
         lookahead_days=body.lookahead_days,
         avg_return_threshold=body.avg_return_threshold,
         direction_filter=body.direction_filter,
+        min_years_traded=body.min_years_traded,
     )
     return trades
 

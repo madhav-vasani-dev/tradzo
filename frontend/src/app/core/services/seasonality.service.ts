@@ -173,6 +173,7 @@ export class SeasonalityService {
     returnBasis: 'open' | 'prev_close' = 'open',
     avgReturnThreshold: number = 0,
     directionFilter: 'ALL' | 'BULL' | 'BEAR' = 'ALL',
+    minYearsTraded?: number | string,
   ): Observable<UpcomingTrade[]> {
     return from(
       this.authHeaders().then(headers =>
@@ -188,6 +189,7 @@ export class SeasonalityService {
               return_basis: returnBasis,
               avg_return_threshold: avgReturnThreshold,
               direction_filter: directionFilter,
+              min_years_traded: minYearsTraded,
             },
             { headers }
           )
