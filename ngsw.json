@@ -1,6 +1,6 @@
 {
   "configVersion": 1,
-  "timestamp": 1786811790510,
+  "timestamp": 1786812350298,
   "index": "/tradzo/index.html",
   "assetGroups": [
     {
@@ -57,6 +57,7 @@
         "/tradzo/favicon.ico",
         "/tradzo/index.html",
         "/tradzo/main-TWRHVDPG.js",
+        "/tradzo/manifest.json",
         "/tradzo/manifest.webmanifest",
         "/tradzo/polyfills-B6TNHZQ6.js",
         "/tradzo/styles-44WFESNC.css"
@@ -147,9 +148,10 @@
     "/tradzo/icons/icon-512x512.png": "22affc9c53e1fe1ee8cc1d00bf2c1053ef36e6f8",
     "/tradzo/icons/icon-72x72.png": "2012e99d9d82afe87f4b8e492f433aa496706392",
     "/tradzo/icons/icon-96x96.png": "7fe45fdcc4d239491c1380428a1721844726c4e3",
-    "/tradzo/index.html": "5836e5d97b1129fd7dddd3a20d238e922dcc5e46",
+    "/tradzo/index.html": "b67cd64b0a92bf5c5d976048e8b1869961407308",
     "/tradzo/main-TWRHVDPG.js": "d87a33fa9a09da11ae32364f43c5e60881969db8",
-    "/tradzo/manifest.webmanifest": "cfe207c0e008af6f2f17dfa5f2d472c66ac09a08",
+    "/tradzo/manifest.json": "064c6b39163fcb0ee34afc519713a33338396dca",
+    "/tradzo/manifest.webmanifest": "064c6b39163fcb0ee34afc519713a33338396dca",
     "/tradzo/polyfills-B6TNHZQ6.js": "bf76ac291d7f51c1139b7edcf86b359a30c08c64",
     "/tradzo/styles-44WFESNC.css": "82bd1180f7151982e08305740497ce5785458516"
   },
