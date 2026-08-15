@@ -26,6 +26,7 @@ export class SidebarComponent {
     { label: 'Broker Accounts', icon: 'pi pi-building',       route: '/broker-accounts' },
     { label: 'P&L Report',      icon: 'pi pi-percentage',     route: '/pnl' },
     { label: 'Seasonality',     icon: 'pi pi-calendar',       route: '/seasonality' },
+    { label: 'Trade Scanner',   icon: 'pi pi-search',         route: '/trade-scanner' },
     { label: 'Profile',         icon: 'pi pi-user',           route: '/profile' },
   ];
 

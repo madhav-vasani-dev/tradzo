@@ -14,6 +14,7 @@ Admin endpoints (admin claim required):
 from __future__ import annotations
 
 import logging
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Optional
 
 from fastapi import APIRouter, Depends, File, Form, HTTPException, UploadFile
@@ -24,6 +25,7 @@ from models.seasonality import (
     AnalysisRunSummary,
     RunAnalysisRequest,
     StockInfo,
+    TradeScannerResult,
     UpcomingTradesRequest,
 )
 from services import firebase_service, gdrive_service, seasonality_service
@@ -168,6 +170,89 @@ def upcoming_trades(
         min_years_traded=body.min_years_traded,
     )
     return trades
+
+
+def _compute_missing_daily_data(missing_symbols: list[str]) -> None:
+    """
+    Compute daily/max seasonality for stocks that don't have it cached yet, in
+    parallel. Each stock is a Drive download + pandas resample — dominated by
+    network I/O, so threads (not processes) give a real speedup here.
+    Runs synchronously so the scan response is complete on the first call
+    instead of trickling in over later requests.
+    """
+    with ThreadPoolExecutor(max_workers=min(10, len(missing_symbols))) as pool:
+        futures = {
+            pool.submit(seasonality_service.compute_single_stock_seasonality, sym, "daily", "max"): sym  # type: ignore[arg-type]
+            for sym in missing_symbols
+        }
+        for future in as_completed(futures):
+            sym = futures[future]
+            try:
+                future.result()
+            except Exception:
+                logger.exception("Failed to compute daily/max for %s", sym)
+
+
+@router.get("/trade-scanner", summary="Scan all stocks for trade signals on a specific date")
+def trade_scanner(
+    date: str,                                  # ISO date string, e.g. "2026-08-12"
+    probability: float = 60.0,
+    avg_return: float = 0.0,
+    min_years: Optional[str] = None,            # "5","10","15","20","25","max"
+    direction: str = "ALL",
+    user: dict = Depends(get_current_user),
+) -> list[dict[str, Any]]:
+    """
+    Scan all stocks with cached daily seasonality data for the given date.
+
+    - Picks the highest available year range (max > 25 > 20 > 15 > 10 > 5) per stock.
+    - Applies probability, avg_return, min_years_traded, and direction filters.
+    - Stocks missing a daily/max result are computed in parallel before scanning,
+      so results are complete on the first call — but each stock is only ever
+      computed once (cached in Firestore after), so every scan after that is a
+      pure cache read with no compute at all.
+    - Returns results sorted by dominant probability descending.
+    """
+    from datetime import date as _date
+
+    # Parse date
+    try:
+        target_date = _date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid date format: {date!r}. Use ISO format YYYY-MM-DD.")
+
+    # Parse min_years
+    min_years_val: Any = None
+    if min_years and min_years.strip():
+        raw = min_years.strip().lower()
+        if raw == "max":
+            min_years_val = "max"
+        elif raw.isdigit():
+            min_years_val = int(raw)
+
+    db = firebase_service.get_db()
+    all_symbols = [d.id for d in db.collection("seasonalityStocks").stream()]
+
+    cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+    cached_symbols = {r.get("symbol") for r in cached_daily if r.get("symbol")}
+    missing_symbols = [s for s in all_symbols if s not in cached_symbols]
+
+    if missing_symbols:
+        logger.info("Trade scanner: computing daily/max in parallel for %d uncached stocks", len(missing_symbols))
+        _compute_missing_daily_data(missing_symbols)
+        # Re-fetch once to pick up what was just computed — scan_trades_by_date
+        # reuses this list instead of re-querying Firestore itself.
+        cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+
+    results = seasonality_service.scan_trades_by_date(
+        target_date=target_date,
+        probability_threshold=probability,
+        avg_return_threshold=avg_return,
+        min_years_traded=min_years_val,
+        direction_filter=direction,
+        cached_daily_results=cached_daily,
+    )
+    return results
 
 
 # ── Admin endpoints ────────────────────────────────────────────────────────────

@@ -1,7 +1,9 @@
 import { Component, OnInit, OnDestroy, inject, signal, computed } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
-import { Subscription } from 'rxjs';
+import { ActivatedRoute } from '@angular/router';
+import { Subject, Subscription } from 'rxjs';
+import { debounceTime } from 'rxjs/operators';
 
 // PrimeNG
 import { ButtonModule } from 'primeng/button';
@@ -14,9 +16,10 @@ import { AccordionModule } from 'primeng/accordion';
 import { ToastModule } from 'primeng/toast';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { DialogModule } from 'primeng/dialog';
+import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { TooltipModule } from 'primeng/tooltip';
 import { TagModule } from 'primeng/tag';
-import { MessageService } from 'primeng/api';
+import { MessageService, ConfirmationService } from 'primeng/api';
 
 import {
   SeasonalityService,
@@ -41,19 +44,22 @@ import { SeasonalityUpcomingTradesComponent } from './upcoming-trades/seasonalit
     CommonModule, FormsModule,
     ButtonModule, MultiSelectModule, SelectButtonModule, SliderModule,
     DropdownModule, PanelModule, AccordionModule, ToastModule,
-    ProgressSpinnerModule, DialogModule, TooltipModule, TagModule,
+    ProgressSpinnerModule, DialogModule, ConfirmDialogModule, TooltipModule, TagModule,
     SeasonalityDataTableComponent,
     SeasonalityAnalysisResultsComponent,
     SeasonalityUpcomingTradesComponent,
   ],
-  providers: [MessageService],
+  providers: [MessageService, ConfirmationService],
   templateUrl: './seasonality.component.html',
   styleUrl: './seasonality.component.scss',
 })
 export class SeasonalityComponent implements OnInit, OnDestroy {
   private seasonalityService = inject(SeasonalityService);
   private messageService = inject(MessageService);
+  private confirmationService = inject(ConfirmationService);
+  private route = inject(ActivatedRoute);
   private subs = new Subscription();
+  private filterChange$ = new Subject<void>();
 
   // ── Filter state ───────────────────────────────────────────────────────────
   availableStocks: SeasonalityStock[] = [];
@@ -119,21 +125,43 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
   isLoadingStocks = true;
   isRunning = false;
   hasRunAnalysis = false;
+  error: string | null = null;
+  upcomingTradesError = false;
 
   // ── Saved configs ──────────────────────────────────────────────────────────
   savedConfigs: UserSeasonalityConfig[] = [];
   showSaveDialog = false;
   newConfigName = '';
 
+  // ── Watchlist (bookmarked upcoming trades) ──────────────────────────────────
+  watchlist: any[] = [];
+  showWatchlistDialog = false;
+
   // ── UI toggles ─────────────────────────────────────────────────────────────
   heatMapEnabled = false;
   benchmarkEnabled = false;
   confidenceBandsEnabled = false;
 
+  // Mobile-only: Return Basis / Direction / Min Traded Years are collapsed behind this by default
+  advancedFiltersOpen = false;
+
   // Section collapse state
   section1Open = true;
   section2Open = true;
   section3Open = true;
+
+  // Per-stock accordion active tabs (Section 1 / Section 2)
+  section1ActiveIndexes: number[] = [];
+  section2ActiveIndexes: number[] = [];
+
+  toggleExpandAll(section: 1 | 2): void {
+    const all = this.results.map((_, i) => i);
+    if (section === 1) {
+      this.section1ActiveIndexes = this.section1ActiveIndexes.length === this.results.length ? [] : all;
+    } else {
+      this.section2ActiveIndexes = this.section2ActiveIndexes.length === this.results.length ? [] : all;
+    }
+  }
 
   get stockOptions() {
     return this.availableStocks.map(s => ({
@@ -153,6 +181,16 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
         error: () => {}
       })
     );
+    this.subs.add(
+      this.seasonalityService.getWatchlist().subscribe({
+        next: (items) => this.watchlist = items,
+        error: () => {}
+      })
+    );
+    // Slider-driven filters fire on every drag tick — debounce before hitting the API.
+    this.subs.add(
+      this.filterChange$.pipe(debounceTime(350)).subscribe(() => this.refreshUpcomingTrades())
+    );
   }
 
   ngOnDestroy(): void { this.subs.unsubscribe(); }
@@ -164,6 +202,7 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
         next: (stocks) => {
           this.availableStocks = stocks;
           this.isLoadingStocks = false;
+          this.applyDeepLinkSymbol();
         },
         error: (err) => {
           this.isLoadingStocks = false;
@@ -171,6 +210,17 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
         }
       })
     );
+  }
+
+  /** Trade Scanner's "Open in Seasonality" link passes ?symbol=X — honor it once stocks are loaded. */
+  private applyDeepLinkSymbol(): void {
+    const symbol = this.route.snapshot.queryParamMap.get('symbol');
+    if (!symbol) return;
+    const match = this.availableStocks.find(s => s.symbol === symbol.toUpperCase());
+    if (!match) return;
+    this.selectedSymbols = [match.symbol];
+    this.allStocksSelected = false;
+    this.runAnalysis();
   }
 
   toggleAllStocks(): void {
@@ -197,12 +247,16 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
     }
 
     this.isRunning = true;
+    this.error = null;
+    this.upcomingTradesError = false;
     this.results = [];
     this.upcomingTrades = [];
+    this.section1ActiveIndexes = [];
+    this.section2ActiveIndexes = [];
 
     const symbols = this.allStocksSelected ? [] : this.selectedSymbols;
 
-    // Fetch cached results
+    // Fetch cached results (computed on-the-fly server-side if missing)
     this.subs.add(
       this.seasonalityService.getCachedResults(
         symbols, this.selectedViewMode, this.selectedYears, this.returnBasis
@@ -231,11 +285,17 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
                 });
               }
             },
-            error: () => { this.isRunning = false; this.hasRunAnalysis = true; }
+            error: () => {
+              this.isRunning = false;
+              this.hasRunAnalysis = true;
+              this.upcomingTradesError = true;
+              this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Failed to fetch upcoming trades.' });
+            }
           });
         },
         error: (err) => {
           this.isRunning = false;
+          this.error = err?.error?.detail || 'Failed to fetch analysis results. Please try again.';
           this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Failed to fetch analysis results.' });
         }
       })
@@ -245,7 +305,7 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
 
   onFilterChange(): void {
     if (!this.hasRunAnalysis || this.isRunning) return;
-    this.refreshUpcomingTrades();
+    this.filterChange$.next();
   }
 
   refreshUpcomingTrades(): void {
@@ -258,13 +318,16 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
       this.returnBasis, this.avgReturnThreshold, this.directionFilter,
       minYears
     ).subscribe({
-      next: (trades) => this.upcomingTrades = trades,
-      error: () => {}
+      next: (trades) => { this.upcomingTrades = trades; this.upcomingTradesError = false; },
+      error: () => { this.upcomingTradesError = true; }
     });
   }
 
+  isSavingConfig = false;
+
   async saveConfig(): Promise<void> {
     if (!this.newConfigName.trim()) return;
+    this.isSavingConfig = true;
     try {
       await this.seasonalityService.saveUserConfig({
         name: this.newConfigName.trim(),
@@ -273,12 +336,18 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
         years: this.selectedYears,
         probabilityThreshold: this.probabilityThreshold,
         lookaheadDays: this.lookaheadDays,
+        returnBasis: this.returnBasis,
+        directionFilter: this.directionFilter,
+        avgReturnThreshold: this.avgReturnThreshold,
+        minYearsTraded: this.selectedMinYearsTraded,
       });
       this.showSaveDialog = false;
       this.newConfigName = '';
       this.messageService.add({ severity: 'success', summary: 'Saved', detail: 'Analysis config saved.' });
     } catch {
       this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Failed to save config.' });
+    } finally {
+      this.isSavingConfig = false;
     }
   }
 
@@ -288,20 +357,51 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
     this.selectedYears = config.years;
     this.probabilityThreshold = config.probabilityThreshold;
     this.lookaheadDays = config.lookaheadDays;
+    this.returnBasis = config.returnBasis ?? 'open';
+    this.directionFilter = config.directionFilter ?? 'ALL';
+    this.avgReturnThreshold = config.avgReturnThreshold ?? 0;
+    this.selectedMinYearsTraded = config.minYearsTraded ?? 'max';
     this.messageService.add({ severity: 'info', summary: 'Config Loaded', detail: config.name });
   }
 
-  async deleteConfig(configId: string): Promise<void> {
-    try {
-      await this.seasonalityService.deleteUserConfig(configId);
-      this.messageService.add({ severity: 'success', summary: 'Deleted', detail: 'Config removed.' });
-    } catch {
-      this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Failed to delete config.' });
-    }
+  deleteConfig(configId: string): void {
+    this.confirmationService.confirm({
+      header: 'Delete Saved Config',
+      message: 'This saved filter configuration will be permanently deleted. Continue?',
+      icon: 'pi pi-exclamation-triangle',
+      acceptLabel: 'Delete',
+      rejectLabel: 'Cancel',
+      accept: async () => {
+        try {
+          await this.seasonalityService.deleteUserConfig(configId);
+          this.messageService.add({ severity: 'success', summary: 'Deleted', detail: 'Config removed.' });
+        } catch {
+          this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Failed to delete config.' });
+        }
+      },
+    });
+  }
+
+  removeBookmark(watchlistId: string): void {
+    this.confirmationService.confirm({
+      header: 'Remove from Watchlist',
+      message: 'Remove this bookmarked trade from your watchlist?',
+      icon: 'pi pi-exclamation-triangle',
+      acceptLabel: 'Remove',
+      rejectLabel: 'Cancel',
+      accept: async () => {
+        try {
+          await this.seasonalityService.removeFromWatchlist(watchlistId);
+          this.messageService.add({ severity: 'success', summary: 'Removed', detail: 'Removed from watchlist.' });
+        } catch {
+          this.messageService.add({ severity: 'error', summary: 'Error', detail: 'Failed to remove bookmark.' });
+        }
+      },
+    });
   }
 
   getThresholdLabel(): string {
-    return `≥ ${this.probabilityThreshold}%`;
+    return `≥ ${this.probabilityThreshold.toFixed(1)}%`;
   }
 
   getProbabilityColor(): string {

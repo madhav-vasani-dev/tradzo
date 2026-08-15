@@ -10,9 +10,17 @@
 
     <div class="results-header">
       <span class="results-count">{{ filteredRows.length }} setup{{ filteredRows.length !== 1 ? 's' : '' }} found</span>
-      <span class="results-hint">Click a row to expand year-by-year breakdown</span>
+      <div class="view-toggle">
+        <button class="view-toggle-btn" [class.active]="displayMode === 'list'" (click)="displayMode = 'list'">
+          <i class="pi pi-list"></i> List
+        </button>
+        <button class="view-toggle-btn" [class.active]="displayMode === 'calendar'" (click)="displayMode = 'calendar'">
+          <i class="pi pi-calendar"></i> Calendar
+        </button>
+      </div>
     </div>
 
+    @if (displayMode === 'list') {
     <div class="setups-list">
       @for (row of filteredRows; track row.period) {
         <div class="setup-card" [class.expanded]="expandedPeriod === row.period"
@@ -83,33 +91,74 @@
 
           <!-- Expanded year-by-year breakdown -->
           @if (expandedPeriod === row.period) {
-            <div class="setup-breakdown" (click)="$event.stopPropagation()">
-              <div class="breakdown-title">Year-by-year returns for <strong>{{ row.period }}</strong></div>
-              <div class="breakdown-bars">
-                @for (yr of getYearValues(row.period); track yr.year) {
-                  <div class="yr-bar-row">
-                    <span class="yr-label">{{ yr.year }}</span>
-                    <div class="yr-bar-track">
-                      @if (yr.value !== null && yr.value >= 0) {
-                        <div class="yr-bar yr-bar--pos" [style.width]="getProbBarWidth(Math.abs(yr.value) * 3)">
-                        </div>
-                      }
-                      @if (yr.value !== null && yr.value < 0) {
-                        <div class="yr-bar yr-bar--neg" [style.width]="getProbBarWidth(Math.abs(yr.value) * 3)">
-                        </div>
-                      }
-                    </div>
-                    <span class="yr-val" [class.positive]="(yr.value ?? 0) >= 0" [class.negative]="(yr.value ?? 0) < 0">
-                      {{ formatPct(yr.value) }}
-                    </span>
-                  </div>
-                }
-              </div>
-            </div>
+            <ng-container *ngTemplateOutlet="breakdown; context: { period: row.period }"></ng-container>
           }
 
         </div>
       }
     </div>
+    } @else {
+      <div class="calendar-view">
+        @if (result.viewMode === 'daily') {
+          @for (group of calendarDailyGroups; track group.month) {
+            <div class="calendar-month-group">
+              <div class="calendar-month-label">{{ group.month }}</div>
+              <div class="calendar-grid calendar-grid--daily">
+                @for (cell of group.cells; track cell.period) {
+                  <div class="calendar-cell" [class.meets-threshold]="cell.meetsThreshold" [class.selected]="expandedPeriod === cell.period"
+                       [style.background]="cell.bgStyle" (click)="toggleExpand(cell.period)"
+                       [pTooltip]="cellTooltip(cell)" tooltipPosition="top">
+                    <span class="cell-label">{{ cell.shortLabel }}</span>
+                  </div>
+                }
+              </div>
+            </div>
+          }
+        } @else {
+          <div class="calendar-grid"
+               [class.calendar-grid--weekly]="result.viewMode === 'weekly'"
+               [class.calendar-grid--monthly]="result.viewMode === 'monthly'">
+            @for (cell of calendarCells; track cell.period) {
+              <div class="calendar-cell" [class.meets-threshold]="cell.meetsThreshold" [class.selected]="expandedPeriod === cell.period"
+                   [style.background]="cell.bgStyle" (click)="toggleExpand(cell.period)"
+                   [pTooltip]="cellTooltip(cell)" tooltipPosition="top">
+                <span class="cell-label">{{ cell.shortLabel }}</span>
+                <span class="cell-value" [class.positive]="(cell.avg ?? 0) >= 0" [class.negative]="(cell.avg ?? 0) < 0">
+                  {{ formatPct(cell.avg) }}
+                </span>
+              </div>
+            }
+          </div>
+        }
+
+        @if (expandedPeriod) {
+          <ng-container *ngTemplateOutlet="breakdown; context: { period: expandedPeriod }"></ng-container>
+        }
+      </div>
+    }
   }
 </div>
+
+<ng-template #breakdown let-period="period">
+  <div class="setup-breakdown" (click)="$event.stopPropagation()">
+    <div class="breakdown-title">Year-by-year returns for <strong>{{ period }}</strong></div>
+    <div class="breakdown-bars">
+      @for (yr of getYearValues(period); track yr.year) {
+        <div class="yr-bar-row">
+          <span class="yr-label">{{ yr.year }}</span>
+          <div class="yr-bar-track">
+            @if (yr.value !== null && yr.value >= 0) {
+              <div class="yr-bar yr-bar--pos" [style.width]="getProbBarWidth(Math.abs(yr.value) * 3)"></div>
+            }
+            @if (yr.value !== null && yr.value < 0) {
+              <div class="yr-bar yr-bar--neg" [style.width]="getProbBarWidth(Math.abs(yr.value) * 3)"></div>
+            }
+          </div>
+          <span class="yr-val" [class.positive]="(yr.value ?? 0) >= 0" [class.negative]="(yr.value ?? 0) < 0">
+            {{ formatPct(yr.value) }}
+          </span>
+        </div>
+      }
+    </div>
+  </div>
+</ng-template>

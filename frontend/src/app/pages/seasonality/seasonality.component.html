@@ -1,4 +1,5 @@
 <p-toast></p-toast>
+<p-confirmDialog></p-confirmDialog>
 
 <div class="seasonality-page animate-fade-in-up">
 
@@ -46,6 +47,11 @@
                 pTooltip="Show ±1σ confidence bands" tooltipPosition="bottom">
           <i class="pi pi-minus-circle"></i>
           <span>±1σ Bands</span>
+        </button>
+        <button class="toggle-btn" (click)="showWatchlistDialog = true"
+                pTooltip="View bookmarked trades" tooltipPosition="bottom">
+          <i class="pi pi-bookmark"></i>
+          <span>Watchlist{{ watchlist.length > 0 ? ' (' + watchlist.length + ')' : '' }}</span>
         </button>
       </div>
     </div>
@@ -129,7 +135,7 @@
           <p-slider
             [(ngModel)]="probabilityThreshold"
             (ngModelChange)="onFilterChange()"
-            [min]="50" [max]="100" [step]="5"
+            [min]="50" [max]="100" [step]="0.1"
             styleClass="prob-slider"
           ></p-slider>
           <span class="slider-max">100%</span>
@@ -149,7 +155,7 @@
           <p-slider
             [(ngModel)]="avgReturnThreshold"
             (ngModelChange)="onFilterChange()"
-            [min]="0" [max]="5" [step]="0.5"
+            [min]="0" [max]="5" [step]="0.1"
             styleClass="prob-slider"
           ></p-slider>
           <span class="slider-max">5%</span>
@@ -157,7 +163,7 @@
       </div>
 
       <!-- Return Basis toggle -->
-      <div class="filter-group filter-group--basis">
+      <div class="filter-group filter-group--basis" [class.collapsed-on-mobile]="!advancedFiltersOpen">
         <label class="filter-label" pTooltip="How % return is calculated per period" tooltipPosition="top">Return Basis</label>
         <p-selectButton
           [options]="returnBasisOptions"
@@ -171,7 +177,7 @@
       </div>
 
       <!-- Direction filter -->
-      <div class="filter-group filter-group--direction">
+      <div class="filter-group filter-group--direction" [class.collapsed-on-mobile]="!advancedFiltersOpen">
         <label class="filter-label">Direction</label>
         <p-selectButton
           [options]="directionOptions"
@@ -185,6 +191,16 @@
       </div>
 
     </div>
+
+    <button class="advanced-filters-toggle" (click)="advancedFiltersOpen = !advancedFiltersOpen">
+      <i class="pi" [class.pi-chevron-down]="!advancedFiltersOpen" [class.pi-chevron-up]="advancedFiltersOpen"></i>
+      <span>{{ advancedFiltersOpen ? 'Hide' : 'Show' }} Advanced Filters</span>
+    </button>
+
+    <p class="filter-hint">
+      <i class="pi pi-info-circle"></i>
+      Probability, return, direction &amp; window filters update Upcoming Trades instantly. Changing Stocks, View Mode or Year Range needs <strong>Run Analysis</strong>.
+    </p>
 
     <!-- Row 3: Trade Alert Window & Actions -->
     <div class="filter-row filter-row--bottom">
@@ -206,7 +222,7 @@
 
       <!-- Min Traded Years filter (visible only for Daily view mode) -->
       @if (selectedViewMode === 'daily') {
-        <div class="filter-group filter-group--min-years">
+        <div class="filter-group filter-group--min-years" [class.collapsed-on-mobile]="!advancedFiltersOpen">
           <label class="filter-label" pTooltip="Minimum traded history required for daily setups" tooltipPosition="top">
             Traded Years
           </label>
@@ -247,7 +263,7 @@
   </div>
 
   <!-- ── Empty / initial state ───────────────────────────────────────────── -->
-  @if (!hasRunAnalysis && !isRunning) {
+  @if (!hasRunAnalysis && !isRunning && !error) {
     <div class="empty-state glass-card animate-fade-in-up">
       <div class="empty-icon">
         <i class="pi pi-calendar-times"></i>
@@ -266,8 +282,33 @@
     </div>
   }
 
+  <!-- ── Loading state ─────────────────────────────────────────────────────── -->
+  @if (isRunning) {
+    <div class="empty-state glass-card animate-fade-in-up">
+      <div class="spinner-wrapper">
+        <p-progressSpinner strokeWidth="3" styleClass="main-spinner"></p-progressSpinner>
+      </div>
+      <p class="loading-text">Running Analysis…</p>
+      <p class="loading-hint">Computing seasonal patterns — first-time runs for uncached stocks can take a moment.</p>
+    </div>
+  }
+
+  <!-- ── Error state ────────────────────────────────────────────────────────── -->
+  @if (!isRunning && error) {
+    <div class="empty-state glass-card animate-fade-in-up">
+      <div class="empty-icon error-icon">
+        <i class="pi pi-exclamation-triangle"></i>
+      </div>
+      <h3>Analysis Failed</h3>
+      <p>{{ error }}</p>
+      <button class="btn-retry" (click)="runAnalysis()">
+        <i class="pi pi-refresh"></i> Retry
+      </button>
+    </div>
+  }
+
   <!-- ── Results sections ────────────────────────────────────────────────── -->
-  @if (hasRunAnalysis) {
+  @if (!isRunning && !error && hasRunAnalysis) {
 
     <!-- Section 1: Raw Returns Table -->
     <div class="results-section animate-fade-in-up anim-delay-1">
@@ -280,6 +321,11 @@
           </div>
         </div>
         <div class="section-meta">
+          @if (results.length > 1) {
+            <button class="expand-all-btn" (click)="$event.stopPropagation(); toggleExpandAll(1)">
+              {{ section1ActiveIndexes.length === results.length ? 'Collapse All' : 'Expand All' }}
+            </button>
+          }
           @if (results.length > 0) {
             <span class="meta-badge">{{ results.length }} stocks</span>
           }
@@ -292,10 +338,11 @@
           @if (results.length === 0) {
             <div class="no-data-msg">
               <i class="pi pi-database"></i>
-              <p>No cached results found. Ask an admin to run the full analysis first.</p>
+              <p>No data available for the selected stock(s). Verify the OHLCV file is uploaded in Admin.</p>
             </div>
           } @else {
-            <p-accordion [multiple]="true" styleClass="stocks-accordion">
+            <p-accordion [multiple]="true" styleClass="stocks-accordion"
+                         [activeIndex]="section1ActiveIndexes" (activeIndexChange)="section1ActiveIndexes = $any($event)">
               @for (result of results; track result.id) {
                 <p-accordionTab [header]="result.symbol">
                   <ng-template pTemplate="header">
@@ -329,6 +376,11 @@
           </div>
         </div>
         <div class="section-meta">
+          @if (results.length > 1) {
+            <button class="expand-all-btn" (click)="$event.stopPropagation(); toggleExpandAll(2)">
+              {{ section2ActiveIndexes.length === results.length ? 'Collapse All' : 'Expand All' }}
+            </button>
+          }
           @if (results.length > 0) {
             <span class="meta-badge meta-badge--cyan">≥ {{ probabilityThreshold }}% probability</span>
           }
@@ -344,7 +396,8 @@
               <p>Analysis results will appear here after running the analysis.</p>
             </div>
           } @else {
-            <p-accordion [multiple]="true" styleClass="stocks-accordion">
+            <p-accordion [multiple]="true" styleClass="stocks-accordion"
+                         [activeIndex]="section2ActiveIndexes" (activeIndexChange)="section2ActiveIndexes = $any($event)">
               @for (result of results; track result.id) {
                 <p-accordionTab>
                   <ng-template pTemplate="header">
@@ -389,8 +442,13 @@
         <div class="section-body">
           @if (upcomingTrades.length === 0) {
             <div class="no-data-msg">
-              <i class="pi pi-calendar-clock"></i>
-              <p>No upcoming trades matching your criteria in the next {{ lookaheadDays }} days.</p>
+              @if (upcomingTradesError) {
+                <i class="pi pi-exclamation-triangle"></i>
+                <p>Could not load upcoming trades. Try running the analysis again.</p>
+              } @else {
+                <i class="pi pi-calendar-clock"></i>
+                <p>No upcoming trades matching your criteria in the next {{ lookaheadDays }} days.</p>
+              }
             </div>
           } @else {
             <app-seasonality-upcoming-trades
@@ -428,9 +486,45 @@
     </p>
   </div>
   <ng-template pTemplate="footer">
-    <button class="btn-cancel" (click)="showSaveDialog = false">Cancel</button>
-    <button class="btn-run" (click)="saveConfig()">
-      <i class="pi pi-save"></i> Save
+    <button class="btn-cancel" [disabled]="isSavingConfig" (click)="showSaveDialog = false">Cancel</button>
+    <button class="btn-run" [disabled]="isSavingConfig || !newConfigName.trim()" (click)="saveConfig()">
+      @if (isSavingConfig) {
+        <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner>
+        <span>Saving…</span>
+      } @else {
+        <i class="pi pi-save"></i>
+        <span>Save</span>
+      }
     </button>
   </ng-template>
+</p-dialog>
+
+<!-- ── Watchlist Dialog ───────────────────────────────────────────────────── -->
+<p-dialog
+  [(visible)]="showWatchlistDialog"
+  header="My Watchlist"
+  [modal]="true"
+  [closable]="true"
+  [style]="{ width: '560px', maxHeight: '80vh' }"
+>
+  @if (watchlist.length === 0) {
+    <p class="save-dialog-hint">No bookmarked trades yet. Bookmark a trade from the Upcoming Trades section below.</p>
+  } @else {
+    <div class="watchlist-list">
+      @for (item of watchlist; track item.id) {
+        <div class="watchlist-row">
+          <span class="watchlist-direction" [class.bull]="item.direction === 'BULL'" [class.bear]="item.direction === 'BEAR'">
+            <i class="pi" [class.pi-trending-up]="item.direction === 'BULL'" [class.pi-trending-down]="item.direction === 'BEAR'"></i>
+          </span>
+          <div class="watchlist-info">
+            <span class="symbol-name">{{ item.symbol }}</span>
+            <span class="symbol-meta">{{ item.period }} · {{ item.viewMode | titlecase }}</span>
+          </div>
+          <button class="btn-cancel" (click)="removeBookmark(item.id)" pTooltip="Remove" tooltipPosition="left">
+            <i class="pi pi-trash"></i>
+          </button>
+        </div>
+      }
+    </div>
+  }
 </p-dialog>

@@ -76,3 +76,17 @@ class UpcomingTrade(BaseModel):
     sigma: Optional[float]
     streak: int
     days_away: int
+
+
+class TradeScannerResult(BaseModel):
+    symbol: str
+    display_name: Optional[str] = None
+    label: str                        # e.g. "12-Aug"
+    direction: Literal["BULL", "BEAR"]
+    pos_prob: float
+    neg_prob: float
+    avg_return: Optional[float] = None
+    sigma: Optional[float] = None
+    streak: Optional[int] = None
+    count: int                        # years traded on this day
+    year_range: Any                   # "max" or int

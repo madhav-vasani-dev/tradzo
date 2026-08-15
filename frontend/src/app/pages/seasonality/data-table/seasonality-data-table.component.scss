@@ -229,6 +229,27 @@ thead .col-total { z-index: 5; }
   animation: pulse-dot 1.5s ease-in-out infinite;
 }
 
+// Today marker — current calendar period, so you can orient at a glance
+.today-dot {
+  display: inline-block;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: $primary-gold;
+  margin-left: 4px;
+  vertical-align: middle;
+}
+
+th.col-today {
+  background: rgba(244,185,66,0.14) !important;
+  color: $primary-gold !important;
+}
+
+td.col-today {
+  border-left: 2px solid rgba(244,185,66,0.35);
+  border-right: 2px solid rgba(244,185,66,0.35);
+}
+
 // Probability highlight in stat cells
 .prob-highlight {
   color: $primary-cyan !important;
@@ -258,4 +279,18 @@ thead .col-total { z-index: 5; }
 
   &.legend-dot--pos { background: rgba(34,197,94,0.5); }
   &.legend-dot--neg { background: rgba(239,68,68,0.5); }
+}
+
+// ── Responsive ─────────────────────────────────────────────────────────────────
+@include mobile {
+  .returns-table {
+    font-size: 0.76rem;
+    th, td { padding: 6px 8px; min-width: 56px; }
+  }
+
+  .sticky-col { min-width: 76px; }
+  .col-total, .total-cell { min-width: 72px; }
+
+  .table-toolbar { flex-wrap: wrap; gap: 0.5rem; }
+  .table-legend { flex-wrap: wrap; gap: 0.5rem 1rem; }
 }

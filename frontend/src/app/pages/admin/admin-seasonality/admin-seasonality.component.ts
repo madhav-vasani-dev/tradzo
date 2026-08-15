@@ -9,8 +9,9 @@ import { CheckboxModule } from 'primeng/checkbox';
 import { TagModule } from 'primeng/tag';
 import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { DialogModule } from 'primeng/dialog';
+import { ConfirmDialogModule } from 'primeng/confirmdialog';
 import { TooltipModule } from 'primeng/tooltip';
-import { MessageService } from 'primeng/api';
+import { MessageService, ConfirmationService } from 'primeng/api';
 
 import {
   SeasonalityService,
@@ -33,15 +34,16 @@ interface AnalysisProgress {
   imports: [
     CommonModule, FormsModule,
     ButtonModule, TableModule, ToastModule, CheckboxModule,
-    TagModule, ProgressSpinnerModule, DialogModule, TooltipModule,
+    TagModule, ProgressSpinnerModule, DialogModule, ConfirmDialogModule, TooltipModule,
   ],
-  providers: [MessageService],
+  providers: [MessageService, ConfirmationService],
   templateUrl: './admin-seasonality.component.html',
   styleUrl: './admin-seasonality.component.scss',
 })
 export class AdminSeasonalityComponent implements OnInit, OnDestroy {
   private seasonalityService = inject(SeasonalityService);
   private messageService = inject(MessageService);
+  private confirmationService = inject(ConfirmationService);
   private subs = new Subscription();
 
   stocks: SeasonalityStock[] = [];
@@ -217,16 +219,26 @@ export class AdminSeasonalityComponent implements OnInit, OnDestroy {
     }
   }
 
-  async removeStock(symbol: string): Promise<void> {
-    if (!confirm(`Remove ${symbol}? This will delete the stock and its data file.`)) return;
-    try {
-      await this.seasonalityService.removeStock(symbol);
-      this.messageService.add({ severity: 'success', summary: 'Removed', detail: `${symbol} has been removed.` });
-      this.loadStocks();
-    } catch (err: any) {
-      this.messageService.add({ severity: 'error', summary: 'Error', detail: err.message });
-    }
+  removeStock(symbol: string): void {
+    this.confirmationService.confirm({
+      header: 'Remove Stock',
+      message: `Remove ${symbol}? This will delete the stock and its data file.`,
+      icon: 'pi pi-exclamation-triangle',
+      acceptLabel: 'Remove',
+      rejectLabel: 'Cancel',
+      accept: async () => {
+        try {
+          await this.seasonalityService.removeStock(symbol);
+          this.messageService.add({ severity: 'success', summary: 'Removed', detail: `${symbol} has been removed.` });
+          this.loadStocks();
+        } catch (err: any) {
+          this.messageService.add({ severity: 'error', summary: 'Error', detail: err.message });
+        }
+      },
+    });
   }
+
+  isReuploading = false;
 
   openReupload(symbol: string): void {
     this.reuploadSymbol = symbol;
@@ -237,13 +249,16 @@ export class AdminSeasonalityComponent implements OnInit, OnDestroy {
 
   async reuploadFile_do(): Promise<void> {
     if (!this.reuploadFile && !this.reuploadUrl.trim()) return;
+    this.isReuploading = true;
     try {
       await this.seasonalityService.uploadStockFile(this.reuploadSymbol, this.reuploadFile, this.reuploadUrl.trim() || undefined);
       this.showReuploadDialog = false;
       this.messageService.add({ severity: 'success', summary: 'Updated', detail: `${this.reuploadSymbol} data updated successfully.` });
       this.loadStocks();
     } catch (err: any) {
-      this.messageService.add({ severity: 'error', summary: 'Error', detail: err.message });
+      this.messageService.add({ severity: 'error', summary: 'Error', detail: err.message || 'Failed to update data file.' });
+    } finally {
+      this.isReuploading = false;
     }
   }
 
