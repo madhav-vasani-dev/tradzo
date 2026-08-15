@@ -1,21 +1,21 @@
-﻿<p-toast></p-toast>
+<p-toast></p-toast>
 
 <div class="seasonality-page animate-fade-in-up">
 
   <!-- ── Page header ─────────────────────────────────────────────────────── -->
-  <div class="page-header">
-    <div class="header-left">
-      <div class="header-icon">
+  <div class="page-hero-card">
+    <div class="hero-main">
+      <div class="hero-icon">
         <i class="pi pi-search"></i>
       </div>
-      <div>
-        <h1 class="page-title">Trade Scanner</h1>
-        <p class="page-subtitle">Find high-probability seasonality signals across all stocks for any calendar date</p>
+      <div class="hero-text">
+        <h1 class="hero-title">Trade Scanner</h1>
+        <p class="hero-description">Find high-probability seasonality signals across all stocks for any calendar date</p>
       </div>
     </div>
 
     @if (hasScanned && !isScanning) {
-      <div class="header-right">
+      <div class="hero-actions">
         <div class="scan-summary-badges">
           <span class="summary-badge bull-badge">
             <i class="pi pi-arrow-up"></i> {{ bullResults.length }} Bull

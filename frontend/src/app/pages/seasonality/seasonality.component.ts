@@ -119,7 +119,7 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
   ];
   selectedMinYearsTraded: number | string = 'max';
 
-  // ── Results state ──────────────────────────────────────────────────────────
+  // ── Results state & mobile 500-stock pagination ─────────────────────────────
   results: SeasonalityResult[] = [];
   upcomingTrades: UpcomingTrade[] = [];
   isLoadingStocks = true;
@@ -127,6 +127,28 @@ export class SeasonalityComponent implements OnInit, OnDestroy {
   hasRunAnalysis = false;
   error: string | null = null;
   upcomingTradesError = false;
+
+  resultSearchQuery = '';
+  displayLimit = 25;
+
+  get visibleResults(): SeasonalityResult[] {
+    let list = this.results || [];
+    if (this.resultSearchQuery && this.resultSearchQuery.trim()) {
+      const q = this.resultSearchQuery.toLowerCase().trim();
+      list = list.filter(r => r.symbol.toLowerCase().includes(q) || (r.companyName && r.companyName.toLowerCase().includes(q)));
+    }
+    return list.slice(0, this.displayLimit);
+  }
+
+  get totalFilteredResultsCount(): number {
+    if (!this.resultSearchQuery || !this.resultSearchQuery.trim()) return (this.results || []).length;
+    const q = this.resultSearchQuery.toLowerCase().trim();
+    return (this.results || []).filter(r => r.symbol.toLowerCase().includes(q) || (r.companyName && r.companyName.toLowerCase().includes(q))).length;
+  }
+
+  loadMoreResults(): void {
+    this.displayLimit += 25;
+  }
 
   // ── Saved configs ──────────────────────────────────────────────────────────
   savedConfigs: UserSeasonalityConfig[] = [];

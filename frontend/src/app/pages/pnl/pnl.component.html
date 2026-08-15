@@ -1,13 +1,17 @@
 <div class="pnl-page-container">
   
   <!-- ── Page Header ── -->
-  <div class="page-header no-print">
-    <div>
-      <div class="pnl-badge"><i class="pi pi-percentage"></i> Reports</div>
-      <h1 class="page-title">P&L Report</h1>
-      <p class="page-subtitle">Track your trading performance, analyze statistics, and export statements</p>
+  <div class="page-hero-card no-print">
+    <div class="hero-main">
+      <div class="hero-icon">
+        <i class="pi pi-chart-bar"></i>
+      </div>
+      <div class="hero-text">
+        <h1 class="hero-title">P&L Report</h1>
+        <p class="hero-description">Track your trading performance, analyze statistics, and export statements</p>
+      </div>
     </div>
-    <div class="header-actions">
+    <div class="hero-actions">
       <button class="export-btn csv" (click)="exportCSV()" [disabled]="positions.length === 0">
         <i class="pi pi-file-excel"></i> Export CSV
       </button>

@@ -3,20 +3,26 @@
 <div class="admin-page">
 
   <!-- ── Header ─────────────────────────────────────────────────────────── -->
-  <div class="page-header">
-    <div>
-      <div class="admin-badge"><i class="pi pi-shield"></i> Admin Panel</div>
-      <h1 class="page-title">Users</h1>
-      <p class="page-subtitle">Manage all registered users and their roles</p>
-    </div>
-    <div class="header-stats">
-      <div class="stat-pill">
-        <span class="stat-val">{{ totalUsers }}</span>
-        <span class="stat-lbl">Total Users</span>
+  <div class="page-hero-card">
+    <div class="hero-main">
+      <div class="hero-icon">
+        <i class="pi pi-users"></i>
       </div>
-      <div class="stat-pill accent">
-        <span class="stat-val">{{ totalAdmins }}</span>
-        <span class="stat-lbl">Admins</span>
+      <div class="hero-text">
+        <h1 class="hero-title">Users Management</h1>
+        <p class="hero-description">Manage all registered users, permissions, and administrative roles</p>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <div class="header-stats">
+        <div class="stat-pill">
+          <span class="stat-val">{{ totalUsers }}</span>
+          <span class="stat-lbl">Total Users</span>
+        </div>
+        <div class="stat-pill accent">
+          <span class="stat-val">{{ totalAdmins }}</span>
+          <span class="stat-lbl">Admins</span>
+        </div>
       </div>
     </div>
   </div>

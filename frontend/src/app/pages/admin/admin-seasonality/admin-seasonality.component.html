@@ -4,17 +4,17 @@
 <div class="admin-seasonality-page animate-fade-in-up">
 
   <!-- Header -->
-  <div class="page-header">
-    <div class="header-left">
-      <div class="header-icon">
+  <div class="page-hero-card">
+    <div class="hero-main">
+      <div class="hero-icon">
         <i class="pi pi-database"></i>
       </div>
-      <div>
-        <h1 class="page-title">Seasonality Data Management</h1>
-        <p class="page-subtitle">Manage stock watchlist, upload 1-min OHLCV data, and trigger analysis</p>
+      <div class="hero-text">
+        <h1 class="hero-title">Seasonality Data Management</h1>
+        <p class="hero-description">Manage stock watchlist, upload 1-min OHLCV data, and trigger analysis</p>
       </div>
     </div>
-    <div class="header-actions">
+    <div class="hero-actions">
       <button class="btn-sync btn-nifty" [disabled]="isSyncingNifty500" (click)="syncNifty500List()" id="sync-nifty500-btn" pTooltip="Import all 500 Nifty stocks from ind_nifty500list.csv" tooltipPosition="bottom">
         @if (isSyncingNifty500) { <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner> }
         @else { <i class="pi pi-list"></i> }

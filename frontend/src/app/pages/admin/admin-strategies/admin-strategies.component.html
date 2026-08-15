@@ -3,20 +3,26 @@
 <div class="admin-page">
 
   <!-- ── Header ─────────────────────────────────────────────────────────── -->
-  <div class="page-header">
-    <div>
-      <div class="admin-badge"><i class="pi pi-shield"></i> Admin Panel</div>
-      <h1 class="page-title">Strategy Management</h1>
-      <p class="page-subtitle">Control which strategies are visible to users</p>
-    </div>
-    <div class="header-stats">
-      <div class="stat-pill">
-        <span class="stat-val">{{ strategies.length }}</span>
-        <span class="stat-lbl">Total</span>
+  <div class="page-hero-card">
+    <div class="hero-main">
+      <div class="hero-icon">
+        <i class="pi pi-box"></i>
       </div>
-      <div class="stat-pill accent">
-        <span class="stat-val">{{ activeCount }}</span>
-        <span class="stat-lbl">Visible</span>
+      <div class="hero-text">
+        <h1 class="hero-title">Strategy Management</h1>
+        <p class="hero-description">Control which algorithms are published and visible to platform users</p>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <div class="header-stats">
+        <div class="stat-pill">
+          <span class="stat-val">{{ strategies.length }}</span>
+          <span class="stat-lbl">Total</span>
+        </div>
+        <div class="stat-pill accent">
+          <span class="stat-val">{{ activeCount }}</span>
+          <span class="stat-lbl">Visible</span>
+        </div>
       </div>
     </div>
   </div>

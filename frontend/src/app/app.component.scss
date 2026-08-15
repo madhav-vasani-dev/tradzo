@@ -84,16 +84,20 @@
 // ── Page Content ──────────────────────────────────────────────────────────────
 .page-content {
   flex: 1;
-  padding: 1.5rem;
+  padding: 1.25rem 1.5rem;
   overflow-y: auto;
+  overflow-x: hidden;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   background-color: $primary-black;
 
   @media (min-width: 1200px) {
-    padding: 2rem;
+    padding: 1.5rem 2rem;
   }
 
   @include mobile {
-    padding: 1rem;
+    padding: 0.85rem;
   }
 }
 

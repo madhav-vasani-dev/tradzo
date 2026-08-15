@@ -1,18 +1,29 @@
 <div class="data-table-wrapper">
-  <!-- Export button -->
+  <!-- Export & Collapse toolbar -->
   <div class="table-toolbar">
     <div class="table-info">
-      <span>{{ years.length }} years · {{ periods.length }} {{ result.viewMode === 'monthly' ? 'months' : result.viewMode === 'weekly' ? 'weeks' : 'days' }}</span>
+      <button class="table-toggle-btn" (click)="isTableCollapsed = !isTableCollapsed" [title]="isTableCollapsed ? 'Expand data table' : 'Collapse data table'">
+        <i class="pi" [class.pi-chevron-down]="!isTableCollapsed" [class.pi-chevron-right]="isTableCollapsed"></i>
+        <span>{{ isTableCollapsed ? 'Show Table' : 'Hide Table' }}</span>
+      </button>
+      <span class="toolbar-meta-text">{{ years.length }} years · {{ periods.length }} {{ result.viewMode === 'monthly' ? 'months' : result.viewMode === 'weekly' ? 'weeks' : 'days' }}</span>
       @if (heatMapEnabled) {
         <span class="mode-tag mode-tag--heatmap"><i class="pi pi-th-large"></i> Heat Map</span>
       }
     </div>
-    <button class="export-btn" (click)="exportCsv()" pTooltip="Export as CSV" tooltipPosition="left">
-      <i class="pi pi-download"></i> Export CSV
-    </button>
+    <div class="toolbar-actions">
+      <button class="export-btn" (click)="exportCsv()" pTooltip="Export as CSV" tooltipPosition="left">
+        <i class="pi pi-download"></i> Export CSV
+      </button>
+    </div>
   </div>
 
-  <div class="table-scroll">
+  @if (!isTableCollapsed) {
+    <div class="mobile-swipe-hint">
+      <i class="pi pi-arrows-h"></i> Swipe horizontally to view all {{ periods.length }} columns
+    </div>
+
+    <div class="table-scroll">
     <table class="returns-table">
       <thead>
         <tr>
@@ -115,4 +126,5 @@
       <div class="legend-item"><span class="highlight-dot"></span>Meets probability threshold ({{ probabilityThreshold }}%)</div>
     }
   </div>
+  }
 </div>

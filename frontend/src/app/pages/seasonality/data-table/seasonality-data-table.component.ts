@@ -24,6 +24,8 @@ export class SeasonalityDataTableComponent implements OnChanges {
   @Input() heatMapEnabled = false;
   @Input() confidenceBandsEnabled = false;
 
+  isTableCollapsed = false;
+
   years: string[] = [];
   periods: string[] = [];
   gridData: Record<string, Record<string, GridCell>> = {};

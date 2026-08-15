@@ -130,7 +130,94 @@ a { text-decoration: none; color: inherit; }
   margin-bottom: 1rem;
 }
 
-// ── Page header ──────────────────────────────────────────────────────────────
+// ── Page header & Premium Hero Card ─────────────────────────────────────────
+.page-hero-card {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1.25rem;
+  padding: 1.25rem 1.5rem;
+  background: linear-gradient(135deg, rgba(20, 28, 46, 0.85) 0%, rgba(11, 15, 25, 0.95) 100%);
+  border: 1px solid rgba(0, 194, 232, 0.22);
+  border-radius: 16px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.35), 0 0 20px rgba(0, 194, 232, 0.08);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+  margin-bottom: 1.5rem;
+  width: 100%;
+  box-sizing: border-box;
+
+  .hero-main {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    min-width: 0;
+    flex: 1;
+
+    .hero-icon {
+      width: 48px;
+      height: 48px;
+      border-radius: 14px;
+      background: linear-gradient(135deg, rgba(0, 194, 232, 0.22) 0%, rgba(244, 185, 66, 0.15) 100%);
+      border: 1px solid rgba(0, 194, 232, 0.35);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      flex-shrink: 0;
+      box-shadow: 0 0 16px rgba(0, 194, 232, 0.2);
+
+      i {
+        font-size: 1.35rem;
+        color: $primary-cyan;
+      }
+    }
+
+    .hero-text {
+      min-width: 0;
+      flex: 1;
+
+      .hero-title {
+        font-size: 1.45rem;
+        font-weight: 800;
+        color: $text-primary;
+        letter-spacing: -0.02em;
+        line-height: 1.25;
+
+        @include mobile {
+          font-size: 1.2rem;
+        }
+      }
+
+      .hero-description {
+        font-size: 0.85rem;
+        color: $text-secondary;
+        margin-top: 0.25rem;
+        line-height: 1.4;
+      }
+    }
+  }
+
+  .hero-actions {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    flex-wrap: wrap;
+    flex-shrink: 0;
+  }
+
+  @media (max-width: 768px) {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 1rem 1.15rem;
+    gap: 1rem;
+
+    .hero-actions {
+      width: 100%;
+      justify-content: flex-start;
+    }
+  }
+}
+
 .page-header {
   margin-bottom: 2rem;
   flex-wrap: wrap;
@@ -514,5 +601,36 @@ a { text-decoration: none; color: inherit; }
   .p-progressspinner-svg {
     width: 16px !important;
     height: 16px !important;
+  }
+}
+
+// ── PrimeNG Drawer / Sidebar Border & Outline Removal ──────────────────────
+.p-drawer,
+.p-sidebar,
+.mobile-drawer,
+.p-drawer-content,
+.p-sidebar-content,
+.p-drawer-header,
+.p-sidebar-header {
+  border: none !important;
+  border-right: none !important;
+  border-left: none !important;
+  outline: none !important;
+  box-shadow: 4px 0 30px rgba(0, 0, 0, 0.6) !important;
+
+  &:focus,
+  &:focus-visible,
+  &:active {
+    outline: none !important;
+    border: none !important;
+    box-shadow: 4px 0 30px rgba(0, 0, 0, 0.6) !important;
+  }
+
+  .p-drawer-close-button,
+  .p-sidebar-close-button,
+  .p-drawer-close-icon {
+    outline: none !important;
+    border: none !important;
+    box-shadow: none !important;
   }
 }

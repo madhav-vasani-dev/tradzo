@@ -8,6 +8,7 @@ import Aura from '@primeuix/themes/aura';
 import { MessageService } from 'primeng/api';
 import { routes } from './app.routes';
 import { errorDetailInterceptor } from './core/interceptors/error-detail.interceptor';
+import { cacheInterceptor } from './core/interceptors/cache.interceptor';
 
 import { provideFirebaseApp, initializeApp, getApp } from '@angular/fire/app';
 import { provideAuth, getAuth } from '@angular/fire/auth';
@@ -30,7 +31,7 @@ export const appConfig: ApplicationConfig = {
     provideZoneChangeDetection({ eventCoalescing: true }),
     provideRouter(routes),
     provideAnimationsAsync(),
-    provideHttpClient(withInterceptors([errorDetailInterceptor])),
+    provideHttpClient(withInterceptors([errorDetailInterceptor, cacheInterceptor])),
     provideServiceWorker('ngsw-worker.js', {
       enabled: !isDevMode(),
       registrationStrategy: 'registerWhenStable:30000'

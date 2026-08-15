@@ -4,18 +4,18 @@
 <div class="seasonality-page animate-fade-in-up">
 
   <!-- ── Page header ─────────────────────────────────────────────────────── -->
-  <div class="page-header">
-    <div class="header-left">
-      <div class="header-icon">
+  <div class="page-hero-card">
+    <div class="hero-main">
+      <div class="hero-icon">
         <i class="pi pi-calendar"></i>
       </div>
-      <div>
-        <h1 class="page-title">Seasonality Analysis</h1>
-        <p class="page-subtitle">Discover repeatable seasonal patterns and upcoming high-probability trades</p>
+      <div class="hero-text">
+        <h1 class="hero-title">Seasonality Analysis</h1>
+        <p class="hero-description">Discover repeatable seasonal patterns and upcoming high-probability trades</p>
       </div>
     </div>
 
-    <div class="header-right">
+    <div class="hero-actions">
       <!-- Saved configs dropdown -->
       @if (savedConfigs.length > 0) {
         <div class="saved-configs-group">
@@ -341,9 +341,21 @@
               <p>No data available for the selected stock(s). Verify the OHLCV file is uploaded in Admin.</p>
             </div>
           } @else {
+            @if (results.length > 5) {
+              <div class="results-filter-bar glass-card">
+                <div class="rfb-search">
+                  <i class="pi pi-search"></i>
+                  <input type="text" class="rfb-input" placeholder="Search stock symbol..." [(ngModel)]="resultSearchQuery" />
+                </div>
+                <div class="rfb-count">
+                  Showing <strong>{{ visibleResults.length }}</strong> of <strong>{{ totalFilteredResultsCount }}</strong> stocks
+                </div>
+              </div>
+            }
+
             <p-accordion [multiple]="true" styleClass="stocks-accordion"
                          [activeIndex]="section1ActiveIndexes" (activeIndexChange)="section1ActiveIndexes = $any($event)">
-              @for (result of results; track result.id) {
+              @for (result of visibleResults; track result.id) {
                 <p-accordionTab [header]="result.symbol">
                   <ng-template pTemplate="header">
                     <div class="accordion-header">
@@ -360,6 +372,14 @@
                 </p-accordionTab>
               }
             </p-accordion>
+
+            @if (displayLimit < totalFilteredResultsCount) {
+              <div class="load-more-wrap">
+                <button class="load-more-btn" (click)="loadMoreResults()">
+                  <i class="pi pi-chevron-down"></i> Load More Stocks (+25)
+                </button>
+              </div>
+            }
           }
         </div>
       }
@@ -398,7 +418,7 @@
           } @else {
             <p-accordion [multiple]="true" styleClass="stocks-accordion"
                          [activeIndex]="section2ActiveIndexes" (activeIndexChange)="section2ActiveIndexes = $any($event)">
-              @for (result of results; track result.id) {
+              @for (result of visibleResults; track result.id) {
                 <p-accordionTab>
                   <ng-template pTemplate="header">
                     <div class="accordion-header">
@@ -415,6 +435,14 @@
                 </p-accordionTab>
               }
             </p-accordion>
+
+            @if (displayLimit < totalFilteredResultsCount) {
+              <div class="load-more-wrap">
+                <button class="load-more-btn" (click)="loadMoreResults()">
+                  <i class="pi pi-chevron-down"></i> Load More Stocks (+25)
+                </button>
+              </div>
+            }
           }
         </div>
       }

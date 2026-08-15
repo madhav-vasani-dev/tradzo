@@ -2,19 +2,26 @@
 
 <div class="strategies-page">
   <!-- Page Header -->
-  <div class="page-header">
-    <div>
-      <h1 class="page-title">Strategies</h1>
-      <p class="page-subtitle">Browse and deploy algorithmic trading strategies to your broker account</p>
-    </div>
-    <div class="header-stats">
-      <div class="header-stat">
-        <span class="header-stat-value">{{ strategies.length }}</span>
-        <span class="header-stat-label">Available</span>
+  <div class="page-hero-card">
+    <div class="hero-main">
+      <div class="hero-icon">
+        <i class="pi pi-box"></i>
       </div>
-      <div class="header-stat">
-        <span class="header-stat-value">{{ deployedIds.size }}</span>
-        <span class="header-stat-label">Deployed</span>
+      <div class="hero-text">
+        <h1 class="hero-title">Strategies</h1>
+        <p class="hero-description">Browse and deploy algorithmic trading strategies to your broker account</p>
+      </div>
+    </div>
+    <div class="hero-actions">
+      <div class="header-stats">
+        <div class="header-stat">
+          <span class="header-stat-value">{{ strategies.length }}</span>
+          <span class="header-stat-label">Available</span>
+        </div>
+        <div class="header-stat">
+          <span class="header-stat-value">{{ deployedIds.size }}</span>
+          <span class="header-stat-label">Deployed</span>
+        </div>
       </div>
     </div>
   </div>

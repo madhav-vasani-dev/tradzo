@@ -38,6 +38,18 @@ router = APIRouter(prefix="/seasonality", tags=["Seasonality"])
 
 # ── Auth helpers ───────────────────────────────────────────────────────────────
 
+import time
+
+_STOCKS_CACHE = None
+_STOCKS_CACHE_TIME = 0.0
+_STOCKS_CACHE_TTL = 900.0  # 15 minutes TTL
+
+def invalidate_stocks_cache():
+    global _STOCKS_CACHE, _STOCKS_CACHE_TIME
+    _STOCKS_CACHE = None
+    _STOCKS_CACHE_TIME = 0.0
+
+
 def _require_admin(admin: dict = Depends(get_current_admin)) -> dict:
     """Dependency: raises 403 if the user is not an admin or superuser."""
     return admin
@@ -50,8 +62,13 @@ def list_stocks(user: dict = Depends(get_current_user)) -> list[StockInfo]:
     """
     Return all stocks registered in ``seasonalityStocks`` with Drive file status.
     Uses Firestore-stored dataUrl as the source of truth for file presence
-    (avoids slow Drive scrape on every page load).
+    (avoids slow Drive scrape on every page load). Cached in memory for 15 minutes.
     """
+    global _STOCKS_CACHE, _STOCKS_CACHE_TIME
+    now = time.time()
+    if _STOCKS_CACHE is not None and (now - _STOCKS_CACHE_TIME) < _STOCKS_CACHE_TTL:
+        return _STOCKS_CACHE
+
     db = firebase_service.get_db()
     docs = db.collection("seasonalityStocks").stream()
 
@@ -77,6 +94,8 @@ def list_stocks(user: dict = Depends(get_current_user)) -> list[StockInfo]:
             )
         )
 
+    _STOCKS_CACHE = stocks
+    _STOCKS_CACHE_TIME = now
     return stocks
 
 
@@ -503,6 +522,7 @@ def remove_stock(
         logger.warning("Could not delete Drive file for %s: %s", sym, exc)
 
     doc_ref.delete()
+    invalidate_stocks_cache()
 
     # Also remove cached analysis results
     results = (

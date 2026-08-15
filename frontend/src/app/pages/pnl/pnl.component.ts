@@ -112,10 +112,15 @@ export class PnlComponent implements OnInit {
         this.endDate || undefined
       );
 
-      this.positions = data.positions || [];
+      this.positions = data?.positions || data?.trades || [];
       this.calculateMetrics();
     } catch (err: any) {
-      this.errorMsg = err.message || 'Failed to load report data.';
+      console.warn('PnL report fetch error:', err);
+      this.positions = [];
+      this.calculateMetrics();
+      if (err?.message && !err.message.toLowerCase().includes('failed to fetch')) {
+        this.errorMsg = err.message;
+      }
     } finally {
       this.isLoading = false;
     }

@@ -1,11 +1,18 @@
 @use '../../../../theme/theme-variables' as *;
 
 .data-table-wrapper {
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
   overflow: hidden;
   background: #0E131F;
   border-radius: 12px;
   color: #E2E8F0;
   padding: 0.5rem;
+
+  @include mobile {
+    padding: 0.25rem;
+  }
 }
 
 // ── Toolbar ────────────────────────────────────────────────────────────────────
@@ -24,6 +31,46 @@
   gap: 0.75rem;
   font-size: 0.82rem;
   color: $text-muted;
+  flex-wrap: wrap;
+}
+
+.table-toggle-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 4px 10px;
+  background: rgba(0, 194, 232, 0.1);
+  border: 1px solid rgba(0, 194, 232, 0.25);
+  border-radius: 6px;
+  color: $primary-cyan;
+  font-size: 0.78rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s ease;
+
+  &:hover {
+    background: rgba(0, 194, 232, 0.2);
+    border-color: $primary-cyan;
+  }
+}
+
+.mobile-swipe-hint {
+  display: none;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.72rem;
+  color: $text-muted;
+  margin-bottom: 0.5rem;
+  padding: 0.35rem 0.65rem;
+  background: rgba(255, 255, 255, 0.03);
+  border-radius: 6px;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+
+  i { color: $primary-cyan; }
+
+  @include mobile {
+    display: flex;
+  }
 }
 
 .mode-tag {
@@ -68,10 +115,16 @@
 
 // ── Table scroll wrapper ────────────────────────────────────────────────────────
 .table-scroll {
-  overflow-x: auto;
+  width: 100%;
+  max-width: 100%;
+  box-sizing: border-box;
+  overflow-x: auto !important;
+  overflow-y: hidden;
+  -webkit-overflow-scrolling: touch;
   border-radius: 10px;
   border: 1px solid rgba(255,255,255,0.08);
   background: #0B0F19;
+  display: block;
 }
 
 // ── Main table ─────────────────────────────────────────────────────────────────

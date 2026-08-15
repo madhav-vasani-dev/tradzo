@@ -48,6 +48,8 @@ export interface PeriodStats {
 export interface SeasonalityResult {
   id: string;
   symbol: string;
+  displayName?: string;
+  companyName?: string;
   viewMode: ViewMode;
   years: YearRange;
   computedAt?: any;
