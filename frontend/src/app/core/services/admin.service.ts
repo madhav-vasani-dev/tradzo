@@ -37,7 +37,10 @@ export class AdminService {
     return runInInjectionContext(this.injector, () => {
       const ref = collection(this.firestore, 'users');
       return (collectionData(ref, { idField: 'uid' }) as Observable<TradzoUser[]>).pipe(
-        map(users => [...users].sort((a, b) => this.createdMillis(b) - this.createdMillis(a)))
+        map(users => (users || []).map(u => ({
+          ...u,
+          deployedStrategyIds: u.deployedStrategyIds || []
+        })).sort((a, b) => this.createdMillis(b) - this.createdMillis(a)))
       );
     });
   }

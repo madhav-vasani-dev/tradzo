@@ -7,8 +7,8 @@ export interface TradzoUser {
   isAdmin: boolean;
   createdAt: any;
   updatedAt?: any;
-  deployedStrategyIds: string[];
-  brokerConnected: boolean;
+  deployedStrategyIds?: string[];
+  brokerConnected?: boolean;
   paperTrading?: boolean;
 }
 

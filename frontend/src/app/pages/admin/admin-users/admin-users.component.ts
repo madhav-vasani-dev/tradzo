@@ -42,10 +42,12 @@ export class AdminUsersComponent implements OnInit, OnDestroy {
   ngOnDestroy() { this.sub?.unsubscribe(); }
 
   get filteredUsers(): TradzoUser[] {
+    if (!this.users || !Array.isArray(this.users)) return [];
     return this.users.filter(u => {
-      const matchSearch = !this.searchQuery ||
-        u.username?.toLowerCase().includes(this.searchQuery.toLowerCase()) ||
-        u.email?.toLowerCase().includes(this.searchQuery.toLowerCase());
+      const search = (this.searchQuery || '').toLowerCase();
+      const matchSearch = !search ||
+        (u.username && u.username.toLowerCase().includes(search)) ||
+        (u.email && u.email.toLowerCase().includes(search));
       const matchRole = this.filterRole === 'all' ||
         (this.filterRole === 'admin' && (u.isAdmin || u.isSuperUser)) ||
         (this.filterRole === 'user' && !u.isAdmin && !u.isSuperUser);
@@ -53,8 +55,8 @@ export class AdminUsersComponent implements OnInit, OnDestroy {
     });
   }
 
-  get totalAdmins(): number { return this.users.filter(u => u.isAdmin || u.isSuperUser).length; }
-  get totalUsers(): number { return this.users.length; }
+  get totalAdmins(): number { return (this.users || []).filter(u => u?.isAdmin || u?.isSuperUser).length; }
+  get totalUsers(): number { return (this.users || []).length; }
 
   async toggleAdmin(user: TradzoUser) {
     if (user.isSuperUser) {
@@ -93,7 +95,14 @@ export class AdminUsersComponent implements OnInit, OnDestroy {
 
   formatDate(ts: any): string {
     if (!ts) return '—';
-    const d = ts.toDate ? ts.toDate() : ts;
+    let d: Date;
+    if (typeof ts.toDate === 'function') {
+      d = ts.toDate();
+    } else if (typeof ts.seconds === 'number') {
+      d = new Date(ts.seconds * 1000);
+    } else {
+      d = new Date(ts);
+    }
     return formatDateUtil(d, { day: 'numeric', month: 'short', year: 'numeric' });
   }
 }
