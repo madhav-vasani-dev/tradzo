@@ -18,11 +18,14 @@
         <tr>
           <th class="col-year sticky-col">Year</th>
           @for (period of periods; track period) {
-            <th class="col-period" [class.col-highlighted]="isPeriodHighlighted(period)"
-                [pTooltip]="getStreakText(period)" tooltipPosition="top">
+            <th class="col-period" [class.col-highlighted]="isPeriodHighlighted(period)" [class.col-today]="isToday(period)"
+                [pTooltip]="isToday(period) ? 'Current period' : getStreakText(period)" tooltipPosition="top">
               {{ period }}
               @if (isPeriodHighlighted(period)) {
                 <span class="highlight-dot"></span>
+              }
+              @if (isToday(period)) {
+                <span class="today-dot"></span>
               }
             </th>
           }
@@ -39,6 +42,7 @@
               <td class="data-cell"
                   [class]="gridData[year] && gridData[year][period] ? gridData[year][period].colorClass : ''"
                   [class.col-highlighted]="isPeriodHighlighted(period)"
+                  [class.col-today]="isToday(period)"
                   [style]="gridData[year] && gridData[year][period] ? gridData[year][period].bgStyle : null"
                   [pTooltip]="gridData[year] && gridData[year][period] ? gridData[year][period].tooltipText : ''"
                   tooltipPosition="top">

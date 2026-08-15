@@ -540,6 +540,150 @@ def load_all_results_from_firestore(
     return results
 
 
+# ── Year range priority helper ─────────────────────────────────────────────────
+
+_YEAR_PRIORITY = {"max": 9999, "25": 25, "20": 20, "15": 15, "10": 10, "5": 5}
+
+
+def _year_priority(years_val: Any) -> int:
+    """Return a numeric priority for a year range. 'max' wins, then highest number."""
+    return _YEAR_PRIORITY.get(str(years_val), 0)
+
+
+def _date_to_daily_label(d: date) -> str:
+    """Convert a date to a daily period label like '12-Aug'."""
+    return d.strftime("%-d-%b") if hasattr(d, "strftime") else d.strftime("%d-%b").lstrip("0") or "0"
+
+
+def scan_trades_by_date(
+    target_date: date,
+    probability_threshold: float = 60.0,
+    avg_return_threshold: float = 0.0,
+    min_years_traded: Optional[int | str] = None,
+    direction_filter: str = "ALL",
+    cached_daily_results: Optional[list[dict]] = None,
+) -> list[dict]:
+    """
+    Scan ALL cached daily seasonality results in Firestore for a given target date.
+
+    For each stock:
+    - Picks the cached result with the highest year range (max > 25 > 20 > 15 > 10 > 5).
+    - Looks up stats for the label matching target_date (e.g. '12-Aug').
+    - Applies probability, avg_return, min_years, and direction filters.
+
+    Parameters
+    ----------
+    cached_daily_results : already-fetched daily-mode result dicts, if the caller
+        has them (e.g. it just checked for missing symbols). Avoids re-running the
+        same Firestore query the caller already did. Pass None to have this
+        function fetch them itself.
+
+    Returns a list of trade signal dicts sorted by dominant probability descending.
+    """
+    from services.firebase_service import get_db
+    from google.cloud.firestore_v1.base_query import FieldFilter
+
+    if cached_daily_results is None:
+        db = get_db()
+        docs = db.collection("seasonalityResults").where(
+            filter=FieldFilter("viewMode", "==", "daily")
+        ).stream()
+        cached_daily_results = [{"id": d.id, **d.to_dict()} for d in docs]
+
+    # Group best result per symbol (highest year range wins)
+    best_per_symbol: dict[str, dict] = {}
+    for data in cached_daily_results:
+        sym = data.get("symbol", "")
+        if not sym:
+            continue
+        existing = best_per_symbol.get(sym)
+        if existing is None or _year_priority(data.get("years")) > _year_priority(existing.get("years")):
+            best_per_symbol[sym] = data
+
+    # Convert date to label — try zero-padded and non-padded
+    label_padded = target_date.strftime("%d-%b")           # "12-Aug"
+    label_unpadded = str(target_date.day) + "-" + target_date.strftime("%b")  # "12-Aug" (same for day >=10)
+
+    results = []
+    for sym, result in best_per_symbol.items():
+        stats: dict = result.get("stats") or {}
+
+        # Try both label formats (e.g. "01-Jan" vs "1-Jan")
+        s = stats.get(label_padded) or stats.get(label_unpadded)
+        if s is None:
+            continue
+
+        pos_prob = s.get("pos_prob") or s.get("posProb") or 0.0
+        neg_prob = s.get("neg_prob") or s.get("negProb") or 0.0
+        avg_return = s.get("avg") or 0.0
+        sigma = s.get("sigma")
+        streak = s.get("streak")
+        traded_count = s.get("count") or 0
+
+        # Fallback: compute traded count from grid if missing in stats
+        if not traded_count and "grid" in result:
+            grid_dict = result.get("grid") or {}
+            label_to_use = label_padded if label_padded in (list(next(iter(grid_dict.values()), {}).keys()) if grid_dict else []) else label_unpadded
+            traded_count = sum(
+                1 for yr_data in grid_dict.values()
+                if isinstance(yr_data, dict) and yr_data.get(label_to_use) is not None and yr_data.get(label_to_use) != 0.0
+            )
+
+        # Min years filter
+        if min_years_traded is not None and min_years_traded != "max" and min_years_traded != 0:
+            try:
+                min_c = int(min_years_traded)
+                if traded_count < min_c:
+                    continue
+            except (ValueError, TypeError):
+                pass
+
+        # Must pass probability threshold for at least one direction
+        is_bull = pos_prob >= probability_threshold
+        is_bear = neg_prob >= probability_threshold
+        if not is_bull and not is_bear:
+            continue
+
+        # Determine dominant direction
+        direction = "BULL" if pos_prob >= neg_prob else "BEAR"
+
+        # Direction filter
+        if direction_filter != "ALL" and direction != direction_filter:
+            continue
+
+        # Avg return filter
+        if abs(avg_return) < avg_return_threshold:
+            continue
+
+        results.append({
+            "symbol": sym,
+            "displayName": None,   # filled below from stocks collection
+            "label": label_padded,
+            "direction": direction,
+            "posProb": pos_prob,
+            "negProb": neg_prob,
+            "avgReturn": avg_return,
+            "sigma": sigma,
+            "streak": streak,
+            "count": traded_count,
+            "yearRange": result.get("years"),
+        })
+
+    # Fetch display names in one shot
+    try:
+        db2 = get_db()
+        stock_docs = db2.collection("seasonalityStocks").stream()
+        display_names = {d.id: d.to_dict().get("displayName") for d in stock_docs}
+        for r in results:
+            r["displayName"] = display_names.get(r["symbol"])
+    except Exception:
+        pass
+
+    # Sort: BULL by posProb desc, BEAR by negProb desc, overall dominant prob desc
+    results.sort(key=lambda r: max(r["posProb"], r["negProb"]), reverse=True)
+    return results
+
+
 # ── Admin: full compute-and-cache pipeline ────────────────────────────────────
 
 def compute_and_cache_stock(

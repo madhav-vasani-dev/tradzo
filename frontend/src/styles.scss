@@ -29,9 +29,9 @@ body {
   --p-select-overlay-border-color: rgba(255, 255, 255, 0.12);
   --p-select-overlay-color: #E2E8F0;
   --p-select-option-color: #E2E8F0;
-  --p-select-option-focus-background: rgba(255, 255, 255, 0.08);
+  --p-select-option-focus-background: rgba(0, 194, 232, 0.14);
   --p-select-option-focus-color: #FFFFFF;
-  --p-select-option-selected-background: rgba(0, 194, 232, 0.18);
+  --p-select-option-selected-background: rgba(0, 194, 232, 0.22);
   --p-select-option-selected-color: #00C2E8;
 
   --p-multiselect-background: #0E131F;
@@ -40,6 +40,20 @@ body {
   --p-multiselect-overlay-background: #121826;
   --p-multiselect-overlay-color: #E2E8F0;
   --p-multiselect-option-color: #E2E8F0;
+
+  --p-dialog-background: #0E131F;
+  --p-dialog-color: #E2E8F0;
+  --p-dialog-header-background: #0E131F;
+  --p-dialog-content-background: #0E131F;
+  --p-dialog-footer-background: #0E131F;
+  --p-dialog-border-color: rgba(255, 255, 255, 0.12);
+
+  --p-checkbox-background: #0E131F;
+  --p-checkbox-border-color: rgba(255, 255, 255, 0.25);
+  --p-checkbox-hover-border-color: #00C2E8;
+  --p-checkbox-checked-background: #00C2E8;
+  --p-checkbox-checked-border-color: #00C2E8;
+  --p-checkbox-icon-color: #090D16;
 
   --p-selectbutton-background: #0E131F;
   --p-selectbutton-border-color: rgba(255, 255, 255, 0.1);
@@ -119,7 +133,6 @@ a { text-decoration: none; color: inherit; }
 // ── Page header ──────────────────────────────────────────────────────────────
 .page-header {
   margin-bottom: 2rem;
-  // Any header that lays title + actions side-by-side should wrap on small screens.
   flex-wrap: wrap;
   gap: 1rem;
 
@@ -171,30 +184,67 @@ a { text-decoration: none; color: inherit; }
 
 // ── PrimeNG Overrides ────────────────────────────────────────────────────────
 ::ng-deep {
+  .p-dialog,
+  .p-dialog-header,
+  .p-dialog-content,
+  .p-dialog-footer,
+  .p-confirm-dialog,
+  div[role="dialog"] {
+    background: #0E131F !important;
+    background-color: #0E131F !important;
+    color: #E2E8F0 !important;
+  }
+
   .p-dialog {
-    background: $secondary-black !important;
-    border: 1px solid $card-border !important;
-    border-radius: 20px !important;
-    box-shadow: 0 24px 80px rgba(0,0,0,0.6) !important;
+    border: 1px solid rgba(255, 255, 255, 0.12) !important;
+    border-radius: 18px !important;
+    box-shadow: 0 24px 80px rgba(0, 0, 0, 0.8) !important;
+    overflow: hidden !important;
   }
 
   .p-dialog-header {
-    background: $secondary-black !important;
-    border-bottom: 1px solid $card-border !important;
-    border-radius: 20px 20px 0 0 !important;
-    padding: 1.5rem 2rem !important;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
+    padding: 1.25rem 1.75rem !important;
+
+    .p-dialog-title {
+      font-size: 1.15rem !important;
+      font-weight: 700 !important;
+      color: #FFFFFF !important;
+    }
+
+    .p-dialog-header-icon,
+    .p-dialog-close-button {
+      color: #8B95B0 !important;
+      border-radius: 8px !important;
+      width: 32px !important;
+      height: 32px !important;
+      display: inline-flex !important;
+      align-items: center !important;
+      justify-content: center !important;
+      transition: all 0.2s !important;
+
+      &:hover {
+        color: #FFFFFF !important;
+        background: rgba(255, 255, 255, 0.1) !important;
+      }
+    }
   }
 
   .p-dialog-content {
-    background: $secondary-black !important;
-    padding: 1.5rem 2rem !important;
+    padding: 1.5rem 1.75rem !important;
   }
 
   .p-dialog-footer {
-    background: $secondary-black !important;
-    border-top: 1px solid $card-border !important;
-    border-radius: 0 0 20px 20px !important;
-    padding: 1rem 2rem !important;
+    border-top: 1px solid rgba(255, 255, 255, 0.08) !important;
+    padding: 1rem 1.75rem !important;
+  }
+
+  .p-dialog-mask,
+  .p-overlay-mask,
+  .p-component-overlay {
+    background-color: rgba(0, 0, 0, 0.75) !important;
+    backdrop-filter: blur(4px) !important;
+    -webkit-backdrop-filter: blur(4px) !important;
   }
 
   .p-button.p-button-primary,
@@ -213,7 +263,6 @@ a { text-decoration: none; color: inherit; }
 
   .p-chart { width: 100%; }
 
-  // Dialogs must never exceed the viewport on small screens.
   @include mobile {
     .p-dialog {
       max-width: 95vw !important;
@@ -230,16 +279,14 @@ a { text-decoration: none; color: inherit; }
   .p-select-panel,
   .p-select-overlay,
   .p-popover,
-  .p-overlay,
-  .p-component-overlay {
+  .p-overlay {
     z-index: 100000 !important;
     background-color: #121826 !important;
     border: 1px solid rgba(255, 255, 255, 0.12) !important;
-    border-radius: 10px !important;
-    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.6) !important;
+    border-radius: 12px !important;
+    box-shadow: 0 16px 40px rgba(0, 0, 0, 0.7) !important;
     color: #E2E8F0 !important;
-    min-width: var(--p-anchor-width, 100%) !important;
-    width: var(--p-anchor-width, auto) !important;
+    overflow: hidden !important;
 
     .p-dropdown-header,
     .p-multiselect-header,
@@ -247,15 +294,19 @@ a { text-decoration: none; color: inherit; }
       background-color: #1A2234 !important;
       border-bottom: 1px solid rgba(255, 255, 255, 0.08) !important;
       color: #E2E8F0 !important;
-      padding: 8px 12px !important;
+      padding: 10px 14px !important;
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
 
       .p-inputtext,
       .p-iconfield input {
         background: #0E131F !important;
         border: 1px solid rgba(255, 255, 255, 0.15) !important;
         color: #FFFFFF !important;
-        font-size: 0.8rem !important;
-        padding: 5px 8px !important;
+        font-size: 0.82rem !important;
+        padding: 6px 10px !important;
+        border-radius: 6px !important;
 
         &::placeholder {
           color: #8B95B0 !important;
@@ -267,7 +318,7 @@ a { text-decoration: none; color: inherit; }
     .p-multiselect-items,
     .p-select-list,
     .p-option-list {
-      padding: 4px !important;
+      padding: 6px !important;
       background-color: #121826 !important;
     }
 
@@ -277,25 +328,75 @@ a { text-decoration: none; color: inherit; }
     .p-multiselect-option,
     .p-select-option,
     .p-option {
+      display: flex !important;
+      align-items: center !important;
+      gap: 10px !important;
+      padding: 8px 12px !important;
+      border-radius: 8px !important;
       color: #E2E8F0 !important;
-      font-size: 0.82rem !important;
-      padding: 6px 10px !important;
-      border-radius: 6px !important;
+      font-size: 0.85rem !important;
+      cursor: pointer !important;
       transition: background 0.15s, color 0.15s !important;
 
       &:hover,
       &.p-focus,
       &.p-option-focus {
-        background-color: rgba(255, 255, 255, 0.08) !important;
+        background-color: rgba(0, 194, 232, 0.14) !important;
         color: #FFFFFF !important;
       }
 
       &.p-highlight,
       &.p-option-selected,
       &[aria-selected="true"] {
-        background-color: rgba(0, 194, 232, 0.18) !important;
+        background-color: rgba(0, 194, 232, 0.22) !important;
         color: #00C2E8 !important;
         font-weight: 600 !important;
+      }
+
+      // Align Checkbox & Stock Label
+      .p-checkbox,
+      .p-multiselect-option-checkbox,
+      p-checkbox {
+        display: inline-flex !important;
+        align-items: center !important;
+        justify-content: center !important;
+        flex-shrink: 0 !important;
+        margin: 0 !important;
+
+        .p-checkbox-box {
+          width: 18px !important;
+          height: 18px !important;
+          border-radius: 4px !important;
+          background: #0E131F !important;
+          border: 1px solid rgba(255, 255, 255, 0.25) !important;
+          display: flex !important;
+          align-items: center !important;
+          justify-content: center !important;
+          transition: all 0.15s !important;
+
+          .p-checkbox-icon, i, svg {
+            font-size: 0.7rem !important;
+            color: #090D16 !important;
+            font-weight: bold !important;
+          }
+        }
+
+        &.p-checkbox-checked .p-checkbox-box,
+        &.p-highlight .p-checkbox-box,
+        &[aria-checked="true"] .p-checkbox-box {
+          background: #00C2E8 !important;
+          border-color: #00C2E8 !important;
+
+          .p-checkbox-icon, i, svg {
+            color: #090D16 !important;
+          }
+        }
+      }
+
+      span, label {
+        display: inline-block !important;
+        vertical-align: middle !important;
+        line-height: 1.2 !important;
       }
     }
   }

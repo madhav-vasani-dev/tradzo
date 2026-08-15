@@ -88,6 +88,10 @@ export interface UserSeasonalityConfig {
   years: YearRange;
   probabilityThreshold: number;
   lookaheadDays: number;
+  returnBasis?: 'open' | 'prev_close';
+  directionFilter?: 'ALL' | 'BULL' | 'BEAR';
+  avgReturnThreshold?: number;
+  minYearsTraded?: number | string;
   createdAt?: any;
 }
 
@@ -97,6 +101,20 @@ export interface AnalysisFilters {
   years: YearRange;
   probabilityThreshold: number;
   lookaheadDays: number;
+}
+
+export interface TradeScannerResult {
+  symbol: string;
+  displayName?: string | null;
+  label: string;
+  direction: 'BULL' | 'BEAR';
+  posProb: number;
+  negProb: number;
+  avgReturn: number | null;
+  sigma: number | null;
+  streak: number | null;
+  count: number;
+  yearRange: number | 'max';
 }
 
 
@@ -196,6 +214,43 @@ export class SeasonalityService {
         )
       )
     ).pipe(map(trades => trades.map(this._mapTrade)));
+  }
+
+  /** Scan all stocks for trade signals on a specific date. */
+  scanTradesByDate(
+    date: string,
+    probability: number = 60,
+    avgReturn: number = 0,
+    minYears?: string | null,
+    direction: 'ALL' | 'BULL' | 'BEAR' = 'ALL',
+  ): Observable<TradeScannerResult[]> {
+    return from(
+      this.authHeaders().then(headers => {
+        let params = new HttpParams()
+          .set('date', date)
+          .set('probability', String(probability))
+          .set('avg_return', String(avgReturn))
+          .set('direction', direction);
+        if (minYears) params = params.set('min_years', minYears);
+        return firstValueFrom(
+          this.http.get<any[]>(`${this.apiBase}/seasonality/trade-scanner`, { headers, params })
+        );
+      })
+    ).pipe(
+      map(results => results.map(r => ({
+        symbol: r.symbol,
+        displayName: r.displayName || r.display_name,
+        label: r.label,
+        direction: r.direction,
+        posProb: r.posProb ?? r.pos_prob,
+        negProb: r.negProb ?? r.neg_prob,
+        avgReturn: r.avgReturn ?? r.avg_return,
+        sigma: r.sigma,
+        streak: r.streak,
+        count: r.count,
+        yearRange: r.yearRange ?? r.year_range,
+      } as TradeScannerResult)))
+    );
   }
 
   // ── Admin API ──────────────────────────────────────────────────────────────

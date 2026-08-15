@@ -43,6 +43,11 @@ export const routes: Routes = [
     loadComponent: () => import('./pages/seasonality/seasonality.component').then(m => m.SeasonalityComponent),
     canActivate: [authGuard]
   },
+  {
+    path: 'trade-scanner',
+    loadComponent: () => import('./pages/trade-scanner/trade-scanner.component').then(m => m.TradeScannerComponent),
+    canActivate: [authGuard]
+  },
 
   // ── Admin routes (authGuard + adminGuard) ────────────────────────────────
   {

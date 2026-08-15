@@ -1,4 +1,5 @@
 <p-toast></p-toast>
+<p-confirmDialog></p-confirmDialog>
 
 <div class="admin-seasonality-page animate-fade-in-up">
 
@@ -352,9 +353,15 @@
   </div>
 
   <ng-template pTemplate="footer">
-    <button class="btn-cancel-dialog" (click)="showReuploadDialog = false">Cancel</button>
-    <button class="btn-confirm-dialog" [disabled]="!reuploadFile && !reuploadUrl.trim()" (click)="reuploadFile_do()">
-      <i class="pi pi-upload"></i> Update Data
+    <button class="btn-cancel-dialog" [disabled]="isReuploading" (click)="showReuploadDialog = false">Cancel</button>
+    <button class="btn-confirm-dialog" [disabled]="isReuploading || (!reuploadFile && !reuploadUrl.trim())" (click)="reuploadFile_do()">
+      @if (isReuploading) {
+        <p-progressSpinner styleClass="btn-spinner" strokeWidth="4"></p-progressSpinner>
+        <span>Updating…</span>
+      } @else {
+        <i class="pi pi-upload"></i>
+        <span>Update Data</span>
+      }
     </button>
   </ng-template>
 </p-dialog>

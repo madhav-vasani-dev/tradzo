@@ -2,22 +2,50 @@
 
 <div class="upcoming-wrapper">
 
-  <!-- Timeline strip -->
-  <div class="timeline-strip">
-    <div class="timeline-label">Now</div>
-    <div class="timeline-track">
-      <div class="timeline-fill" [style.width]="'0%'"></div>
-      @for (trade of trades.slice(0, 8); track trade.symbol + trade.period) {
-        <div class="timeline-dot"
-             [style.left]="getUrgencyBarWidth(trade.daysAway)"
-             [class]="'dot-' + trade.direction.toLowerCase()"
-             [pTooltip]="trade.symbol + ' ' + trade.period + ' · ' + getCountdownLabel(trade.daysAway)"
-             tooltipPosition="top">
+  <!-- Calendar: real dates, so weekday alignment is meaningful here (unlike the recurring-period sections) -->
+  <div class="upcoming-calendar">
+    @for (month of calendarMonths; track month.label) {
+      <div class="cal-month">
+        <div class="cal-month-label">{{ month.label }}</div>
+        <div class="cal-weekdays">
+          <span>Mo</span><span>Tu</span><span>We</span><span>Th</span><span>Fr</span><span>Sa</span><span>Su</span>
         </div>
-      }
-    </div>
-    <div class="timeline-label">+{{ lookaheadDays }}d</div>
+        <div class="cal-days">
+          @for (week of month.weeks; track $index) {
+            @for (day of week; track $index) {
+              @if (day) {
+                <div class="cal-day"
+                     [class.out-of-range]="!day.inRange"
+                     [class.is-today]="day.isToday"
+                     [class.has-trades]="day.bullCount + day.bearCount > 0"
+                     [class.selected]="selectedDate === day.iso"
+                     (click)="selectDay(day)"
+                     [pTooltip]="(day.bullCount + day.bearCount > 0) ? (day.bullCount + day.bearCount) + ' trade(s) on ' + day.iso : ''"
+                     tooltipPosition="top">
+                  <span class="cal-day-num">{{ day.dayNum }}</span>
+                  @if (day.bullCount + day.bearCount > 0) {
+                    <span class="cal-day-dots">
+                      @if (day.bullCount > 0) { <span class="cal-dot bull"></span> }
+                      @if (day.bearCount > 0) { <span class="cal-dot bear"></span> }
+                    </span>
+                  }
+                </div>
+              } @else {
+                <div class="cal-day cal-day--empty"></div>
+              }
+            }
+          }
+        </div>
+      </div>
+    }
   </div>
+
+  @if (selectedDate) {
+    <div class="date-filter-chip">
+      Showing trades entering <strong>{{ formatDate(selectedDate) }}</strong>
+      <i class="pi pi-times" (click)="clearDateFilter()"></i>
+    </div>
+  }
 
   <!-- Accordion per symbol -->
   <div class="symbols-list">

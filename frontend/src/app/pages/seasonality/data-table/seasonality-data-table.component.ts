@@ -27,14 +27,49 @@ export class SeasonalityDataTableComponent implements OnChanges {
   years: string[] = [];
   periods: string[] = [];
   gridData: Record<string, Record<string, GridCell>> = {};
+  todayPeriod = '';
 
   // Max absolute return for heat-map scaling
   private maxReturn = 0;
 
+  private static readonly MONTHS = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['result'] || changes['heatMapEnabled'] || changes['probabilityThreshold']) {
       this.buildGrid();
+      this.todayPeriod = this.computeTodayPeriod();
     }
+  }
+
+  /** Current period label in the same format as the backend produces (Jan / W03 / 15-Aug), for the "today" column marker. */
+  private computeTodayPeriod(): string {
+    if (!this.result) return '';
+    const today = new Date();
+    const mode = this.result.viewMode;
+
+    if (mode === 'monthly') {
+      return SeasonalityDataTableComponent.MONTHS[today.getMonth()];
+    }
+    if (mode === 'weekly') {
+      return `W${String(this.isoWeek(today)).padStart(2, '0')}`;
+    }
+    const day = String(today.getDate()).padStart(2, '0');
+    return `${day}-${SeasonalityDataTableComponent.MONTHS[today.getMonth()]}`;
+  }
+
+  /** ISO-8601 week number (matches Python's isocalendar().week used server-side). */
+  private isoWeek(date: Date): number {
+    const d = new Date(Date.UTC(date.getFullYear(), date.getMonth(), date.getDate()));
+    const dayNum = (d.getUTCDay() + 6) % 7;
+    d.setUTCDate(d.getUTCDate() - dayNum + 3);
+    const firstThursday = new Date(Date.UTC(d.getUTCFullYear(), 0, 4));
+    const firstDayNum = (firstThursday.getUTCDay() + 6) % 7;
+    firstThursday.setUTCDate(firstThursday.getUTCDate() - firstDayNum + 3);
+    return 1 + Math.round((d.getTime() - firstThursday.getTime()) / (7 * 24 * 3600 * 1000));
+  }
+
+  isToday(period: string): boolean {
+    return !!this.todayPeriod && period === this.todayPeriod;
   }
 
   private buildGrid(): void {

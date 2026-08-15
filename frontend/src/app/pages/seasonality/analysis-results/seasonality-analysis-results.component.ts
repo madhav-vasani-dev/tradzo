@@ -12,6 +12,16 @@ interface AnalysisRow {
   streakText: string;
 }
 
+interface CalendarCell {
+  period: string;
+  shortLabel: string;
+  avg: number | null;
+  winRate: number | null;
+  direction: 'BULL' | 'BEAR' | 'NEUTRAL';
+  meetsThreshold: boolean;
+  bgStyle: string;
+}
+
 @Component({
   selector: 'app-seasonality-analysis-results',
   standalone: true,
@@ -30,9 +40,17 @@ export class SeasonalityAnalysisResultsComponent implements OnChanges {
   expandedPeriod: string | null = null;
   Math = Math;  // expose to template
 
+  // ── Calendar view (alternative to the setup-card list) ──────────────────────
+  displayMode: 'list' | 'calendar' = 'list';
+  calendarCells: CalendarCell[] = [];
+  calendarDailyGroups: { month: string; cells: CalendarCell[] }[] = [];
+
+  private static readonly MONTH_ORDER = ['Jan','Feb','Mar','Apr','May','Jun','Jul','Aug','Sep','Oct','Nov','Dec'];
+
   ngOnChanges(changes: SimpleChanges): void {
     if (changes['result'] || changes['probabilityThreshold']) {
       this.buildRows();
+      this.buildCalendar();
     }
   }
 
@@ -61,6 +79,71 @@ export class SeasonalityAnalysisResultsComponent implements OnChanges {
     }
 
     this.filteredRows = rows.sort((a, b) => this.getWinRate(b) - this.getWinRate(a));
+  }
+
+  private buildCalendar(): void {
+    if (!this.result?.stats) {
+      this.calendarCells = [];
+      this.calendarDailyGroups = [];
+      return;
+    }
+
+    let maxAbsAvg = 0;
+    for (const s of Object.values(this.result.stats)) {
+      if (s.avg !== null && s.avg !== undefined) maxAbsAvg = Math.max(maxAbsAvg, Math.abs(s.avg));
+    }
+    if (maxAbsAvg === 0) maxAbsAvg = 5;
+
+    this.calendarCells = (this.result.periodsOrdered || []).map(period => {
+      const stats = this.result.stats[period];
+      const posP = stats?.posProb ?? stats?.pos_prob ?? 0;
+      const negP = stats?.negProb ?? stats?.neg_prob ?? 0;
+      const direction: 'BULL' | 'BEAR' | 'NEUTRAL' = !stats ? 'NEUTRAL' : (posP >= negP ? 'BULL' : 'BEAR');
+      const winRate = !stats ? null : (direction === 'BEAR' ? negP : posP);
+      const avg = stats?.avg ?? null;
+
+      let bgStyle = '';
+      if (avg !== null) {
+        const alpha = 0.08 + Math.min(Math.abs(avg) / maxAbsAvg, 1) * 0.4;
+        bgStyle = avg >= 0 ? `rgba(34,197,94,${alpha.toFixed(2)})` : `rgba(239,68,68,${alpha.toFixed(2)})`;
+      }
+
+      return {
+        period,
+        shortLabel: this.shortLabel(period),
+        avg,
+        winRate,
+        direction,
+        meetsThreshold: winRate !== null && winRate >= this.probabilityThreshold,
+        bgStyle,
+      };
+    });
+
+    if (this.result.viewMode === 'daily') {
+      const groups = new Map<string, CalendarCell[]>();
+      for (const c of this.calendarCells) {
+        const month = c.period.split('-')[1] || '?';
+        if (!groups.has(month)) groups.set(month, []);
+        groups.get(month)!.push(c);
+      }
+      this.calendarDailyGroups = SeasonalityAnalysisResultsComponent.MONTH_ORDER
+        .filter(m => groups.has(m))
+        .map(m => ({ month: m, cells: groups.get(m)! }));
+    } else {
+      this.calendarDailyGroups = [];
+    }
+  }
+
+  private shortLabel(period: string): string {
+    if (this.result.viewMode === 'daily') return period.split('-')[0];
+    if (this.result.viewMode === 'weekly') return period.replace('W', '');
+    return period;
+  }
+
+  cellTooltip(cell: CalendarCell): string {
+    if (cell.avg === null) return `${cell.period}: No data`;
+    const rateLabel = cell.direction === 'BEAR' ? 'down-rate' : 'up-rate';
+    return `${cell.period}: ${this.formatPct(cell.avg)} avg · ${this.formatProb(cell.winRate)} ${rateLabel}`;
   }
 
   getWinRate(row: AnalysisRow): number {

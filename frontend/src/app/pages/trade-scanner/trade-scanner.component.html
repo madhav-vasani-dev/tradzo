@@ -1,0 +1,315 @@
+﻿<p-toast></p-toast>
+
+<div class="seasonality-page animate-fade-in-up">
+
+  <!-- ── Page header ─────────────────────────────────────────────────────── -->
+  <div class="page-header">
+    <div class="header-left">
+      <div class="header-icon">
+        <i class="pi pi-search"></i>
+      </div>
+      <div>
+        <h1 class="page-title">Trade Scanner</h1>
+        <p class="page-subtitle">Find high-probability seasonality signals across all stocks for any calendar date</p>
+      </div>
+    </div>
+
+    @if (hasScanned && !isScanning) {
+      <div class="header-right">
+        <div class="scan-summary-badges">
+          <span class="summary-badge bull-badge">
+            <i class="pi pi-arrow-up"></i> {{ bullResults.length }} Bull
+          </span>
+          <span class="summary-badge bear-badge">
+            <i class="pi pi-arrow-down"></i> {{ bearResults.length }} Bear
+          </span>
+          <span class="summary-total-text">{{ results.length }} signals on {{ scanDateLabel }}</span>
+        </div>
+      </div>
+    }
+  </div>
+
+  <!-- ── Filter Panel ────────────────────────────────────────────────────── -->
+  <div class="filter-panel glass-card">
+
+    <!-- Top Row: Date Picker, Direction, Min Traded Years -->
+    <div class="filter-row filter-row--top">
+
+      <!-- Scan Date -->
+      <div class="filter-group filter-group--date">
+        <label class="filter-label">Scan Date</label>
+        <p-datePicker
+          [(ngModel)]="selectedDate"
+          [showIcon]="true"
+          [disabledDays]="[0, 6]"
+          dateFormat="dd M yy"
+          styleClass="scanner-datepicker"
+          appendTo="body"
+          pTooltip="Weekends are disabled — markets are closed"
+          tooltipPosition="top"
+        ></p-datePicker>
+      </div>
+
+      <!-- Direction filter -->
+      <div class="filter-group filter-group--direction">
+        <label class="filter-label">Direction</label>
+        <p-selectButton
+          [options]="directionOptions"
+          [(ngModel)]="selectedDirection"
+          optionLabel="label"
+          optionValue="value"
+          [allowEmpty]="false"
+          styleClass="direction-select"
+        ></p-selectButton>
+      </div>
+
+      <!-- Min Traded Years -->
+      <div class="filter-group filter-group--min-years">
+        <label class="filter-label">Min Traded Years</label>
+        <p-dropdown
+          [options]="minYearsOptions"
+          [(ngModel)]="selectedMinYears"
+          optionLabel="label"
+          optionValue="value"
+          styleClass="min-years-dropdown"
+          panelStyleClass="min-years-dropdown-panel"
+          appendTo="body"
+        ></p-dropdown>
+      </div>
+
+    </div>
+
+    <!-- Middle Row: Probability Slider & Avg Return Slider -->
+    <div class="filter-row filter-row--middle">
+
+      <!-- Probability threshold -->
+      <div class="filter-group filter-group--prob">
+        <label class="filter-label">
+          Min Probability
+          <span class="threshold-badge" [style.background]="getProbColor(probabilityThreshold) + '22'" [style.color]="getProbColor(probabilityThreshold)">
+            ≥ {{ probabilityThreshold.toFixed(1) }}%
+          </span>
+        </label>
+        <div class="slider-row">
+          <span class="slider-min">50%</span>
+          <p-slider
+            [(ngModel)]="probabilityThreshold"
+            [min]="50" [max]="100" [step]="0.1"
+            styleClass="prob-slider"
+          ></p-slider>
+          <span class="slider-max">100%</span>
+        </div>
+      </div>
+
+      <!-- Avg Return % filter -->
+      <div class="filter-group filter-group--avg-return">
+        <label class="filter-label">
+          Min |Avg Return|
+          <span class="threshold-badge" style="background: rgba(168,85,247,0.12); color: #a855f7;">
+            ≥ {{ avgReturnThreshold.toFixed(1) }}%
+          </span>
+        </label>
+        <div class="slider-row">
+          <span class="slider-min">0%</span>
+          <p-slider
+            [(ngModel)]="avgReturnThreshold"
+            [min]="0" [max]="5" [step]="0.1"
+            styleClass="prob-slider"
+          ></p-slider>
+          <span class="slider-max">5%</span>
+        </div>
+      </div>
+
+      <!-- Scan Action Button -->
+      <div class="filter-group filter-group--actions">
+        <button class="btn-run" (click)="scan()" [disabled]="isScanning">
+          @if (isScanning) {
+            <p-progressSpinner styleClass="btn-spinner" strokeWidth="5"></p-progressSpinner>
+            <span>Scanning…</span>
+          } @else {
+            <i class="pi pi-search"></i>
+            <span>Scan Signals</span>
+          }
+        </button>
+      </div>
+
+    </div>
+
+  </div>
+
+  <!-- ── Results & States Area ─────────────────────────────────────────── -->
+
+  <!-- Idle state -->
+  @if (!hasScanned && !isScanning) {
+    <div class="empty-state glass-card">
+      <div class="empty-icon">
+        <i class="pi pi-search"></i>
+      </div>
+      <h3>Ready to Scan</h3>
+      <p>Select a date, set your probability and return thresholds, then click <strong>Scan Signals</strong> to analyze all stocks.</p>
+    </div>
+  }
+
+  <!-- Loading state -->
+  @if (isScanning) {
+    <div class="empty-state glass-card">
+      <div class="spinner-wrapper">
+        <p-progressSpinner strokeWidth="3" styleClass="main-spinner"></p-progressSpinner>
+      </div>
+      <p class="loading-text">Scanning Market Data…</p>
+      <p class="loading-hint">Checking daily seasonality metrics across all stocks for {{ scanDateLabel }}</p>
+    </div>
+  }
+
+  <!-- Error state -->
+  @if (!isScanning && error) {
+    <div class="empty-state glass-card">
+      <div class="empty-icon error-icon">
+        <i class="pi pi-exclamation-triangle"></i>
+      </div>
+      <h3>Scan Failed</h3>
+      <p>{{ error }}</p>
+      <button class="btn-retry" (click)="scan()">
+        <i class="pi pi-refresh"></i> Retry Scan
+      </button>
+    </div>
+  }
+
+  <!-- Empty state (No trades matched) -->
+  @if (!isScanning && hasScanned && !error && results.length === 0) {
+    <div class="empty-state glass-card">
+      <div class="empty-icon">
+        <i class="pi pi-inbox"></i>
+      </div>
+      <h3>No Trade Signals Found</h3>
+      <p>No stocks meet the selected filter criteria for <strong>{{ scanDateLabel }}</strong>.</p>
+      <p class="empty-hint">Try lowering the minimum probability or average return threshold.</p>
+    </div>
+  }
+
+  <!-- Results Table -->
+  @if (!isScanning && hasScanned && results.length > 0) {
+    <div class="results-toolbar animate-fade-in-up">
+      <div class="table-search">
+        <i class="pi pi-search search-icon"></i>
+        <input
+          type="text"
+          class="table-search-input"
+          [(ngModel)]="searchQuery"
+          placeholder="Filter by symbol or name…"
+        />
+        @if (searchQuery) {
+          <i class="pi pi-times clear-icon" (click)="searchQuery = ''"></i>
+        }
+      </div>
+      <span class="results-count-text">{{ displayedResults.length }} of {{ results.length }} shown</span>
+    </div>
+
+    <div class="results-table-wrapper animate-fade-in-up">
+      <table class="results-table">
+        <thead>
+          <tr>
+            <th>#</th>
+            <th class="th-sortable" (click)="toggleSort('symbol')">Stock <i class="pi" [class]="sortIcon('symbol')"></i></th>
+            <th>Signal</th>
+            <th class="th-sortable" (click)="toggleSort('posProb')">Pos % <i class="pi" [class]="sortIcon('posProb')"></i></th>
+            <th class="th-sortable" (click)="toggleSort('negProb')">Neg % <i class="pi" [class]="sortIcon('negProb')"></i></th>
+            <th class="th-sortable" (click)="toggleSort('avgReturn')">Avg Return <i class="pi" [class]="sortIcon('avgReturn')"></i></th>
+            <th class="th-sortable" (click)="toggleSort('sigma')">Std Dev <i class="pi" [class]="sortIcon('sigma')"></i></th>
+            <th class="th-sortable" (click)="toggleSort('streak')">Streak <i class="pi" [class]="sortIcon('streak')"></i></th>
+            <th class="th-sortable" (click)="toggleSort('count')">Traded Yrs <i class="pi" [class]="sortIcon('count')"></i></th>
+            <th>History</th>
+            <th class="th-action"></th>
+          </tr>
+        </thead>
+        <tbody>
+          @for (r of displayedResults; track r.symbol; let i = $index) {
+            <tr class="result-row" [class.bull-row]="r.direction === 'BULL'" [class.bear-row]="r.direction === 'BEAR'">
+
+              <!-- # Rank -->
+              <td class="td-rank">{{ i + 1 }}</td>
+
+              <!-- Stock Symbol & Name -->
+              <td class="td-stock">
+                <div class="stock-cell">
+                  <span class="stock-symbol">{{ r.symbol }}</span>
+                  @if (r.displayName) {
+                    <span class="stock-name">{{ r.displayName }}</span>
+                  }
+                </div>
+              </td>
+
+              <!-- Signal Badge -->
+              <td class="td-signal">
+                @if (r.direction === 'BULL') {
+                  <span class="signal-badge bull-badge">
+                    <i class="pi pi-arrow-up"></i> BULL
+                  </span>
+                } @else {
+                  <span class="signal-badge bear-badge">
+                    <i class="pi pi-arrow-down"></i> BEAR
+                  </span>
+                }
+              </td>
+
+              <!-- Pos Prob -->
+              <td class="td-prob">
+                <span class="prob-value" [style.color]="getProbColor(r.posProb)">
+                  {{ formatPct(r.posProb) }}
+                </span>
+              </td>
+
+              <!-- Neg Prob -->
+              <td class="td-prob">
+                <span class="prob-value" [style.color]="getProbColor(r.negProb)">
+                  {{ formatPct(r.negProb) }}
+                </span>
+              </td>
+
+              <!-- Avg Return -->
+              <td class="td-avg">
+                <span class="avg-value" [style.color]="getAvgReturnColor(r.avgReturn)">
+                  {{ r.avgReturn !== null ? (r.avgReturn >= 0 ? '+' : '') + r.avgReturn.toFixed(2) + '%' : '—' }}
+                </span>
+              </td>
+
+              <!-- Sigma -->
+              <td class="td-sigma">
+                {{ r.sigma !== null ? r.sigma!.toFixed(2) + '%' : '—' }}
+              </td>
+
+              <!-- Streak -->
+              <td class="td-streak">
+                <span class="streak-value"
+                      [class.streak-pos]="r.streak !== null && r.streak > 0"
+                      [class.streak-neg]="r.streak !== null && r.streak < 0">
+                  {{ getStreakLabel(r.streak) }}
+                </span>
+              </td>
+
+              <!-- Traded Count -->
+              <td class="td-count">{{ r.count }} yrs</td>
+
+              <!-- Year Range -->
+              <td class="td-range">
+                <span class="range-badge">
+                  {{ r.yearRange === 'max' ? 'Max' : r.yearRange + 'Y' }}
+                </span>
+              </td>
+
+              <!-- Quick Link Action -->
+              <td class="td-action">
+                <button class="btn-open" (click)="openInSeasonality(r.symbol)"
+                        pTooltip="Open Seasonality Analysis" tooltipPosition="left">
+                  <i class="pi pi-external-link"></i>
+                </button>
+              </td>
+
+            </tr>
+          }
+        </tbody>
+      </table>
+    </div>
+  }
+
+</div>

@@ -35,7 +35,14 @@ def extract_gdrive_file_id(url_or_id: str) -> str:
     """Extract Google Drive file ID from shared link or return as-is."""
     match = re.search(r"(?:file/d/|id=)([\w-]+)", url_or_id)
     if match:
-        return match.group(1).split("-0-")[0]
+        # The regex already stops at the first non-id character (/, ?, &), so
+        # match.group(1) is the complete, correct file ID — do NOT truncate on
+        # "-0-" here. Real Drive file IDs can legitimately contain that
+        # substring (e.g. "18Fvp-0-9snb04-..."), and splitting on it mangles
+        # otherwise-valid IDs into a 404. The "-0-" heuristic below is only for
+        # the scraped-HTML fallback path, where thumbnail-size suffixes can
+        # genuinely get appended to a captured ID.
+        return match.group(1)
     return url_or_id.strip().split("-0-")[0]
 
 
