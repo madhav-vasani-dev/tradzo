@@ -10,10 +10,11 @@ import { Auth } from '@angular/fire/auth';
 import { Subscription } from 'rxjs';
 import { SidebarComponent } from './pages/sidebar/sidebar.component';
 import { StrategyService } from './core/services/strategy.service';
+import { PwaInstallPromptComponent } from './shared/components/pwa-install-prompt/pwa-install-prompt.component';
 
 @Component({
   selector: 'app-root',
-  imports: [RouterOutlet, ToastModule, CommonModule, DrawerModule, ButtonModule, MenuModule, SidebarComponent],
+  imports: [RouterOutlet, ToastModule, CommonModule, DrawerModule, ButtonModule, MenuModule, SidebarComponent, PwaInstallPromptComponent],
   templateUrl: './app.component.html',
   styleUrl: './app.component.scss'
 })

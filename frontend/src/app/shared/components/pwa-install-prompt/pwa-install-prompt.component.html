@@ -1,0 +1,44 @@
+@if (pwaService.canInstall() && !isDismissed()) {
+  <div class="pwa-prompt-container animate-fade-in">
+    <div class="pwa-prompt-card">
+      <div class="brand-badge">
+        <img src="Images/logo.jpeg" alt="Tradzo Logo" class="pwa-logo" />
+      </div>
+      <div class="pwa-content">
+        <div class="pwa-title">Install Tradzo App</div>
+        <div class="pwa-subtitle">Add to your home screen for quick access & enhanced experience.</div>
+      </div>
+      <div class="pwa-actions">
+        <p-button 
+          label="Install" 
+          icon="pi pi-download" 
+          size="small" 
+          severity="primary" 
+          (onClick)="installApp()">
+        </p-button>
+        <p-button 
+          icon="pi pi-times" 
+          size="small" 
+          [text]="true" 
+          severity="secondary" 
+          (onClick)="dismiss()">
+        </p-button>
+      </div>
+    </div>
+  </div>
+}
+
+@if (pwaService.updateAvailable()) {
+  <div class="pwa-update-banner">
+    <div class="update-content">
+      <i class="pi pi-refresh spin-icon"></i>
+      <span>A new version of Tradzo is available!</span>
+    </div>
+    <p-button 
+      label="Update Now" 
+      size="small" 
+      severity="info" 
+      (onClick)="pwaService.reloadToUpdate()">
+    </p-button>
+  </div>
+}
