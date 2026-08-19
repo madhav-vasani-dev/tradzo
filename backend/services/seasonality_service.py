@@ -511,7 +511,13 @@ def load_all_results_from_firestore(
     mode: ViewMode | None = None,
     years: int | str | None = None,
 ) -> list[dict]:
-    """Fetch cached results, optionally filtered by symbol / mode / years."""
+    """Fetch cached results, optionally filtered by symbol / mode / years.
+
+    Note: `retry=None` is intentional — it disables the built-in Firestore
+    retry logic which triggers an `AttributeError` on newer grpc versions
+    when a query times out (grpc._channel._UnaryStreamMultiCallable has no
+    attribute '_retry').  We handle retries / errors at the call-site instead.
+    """
     from services.firebase_service import get_db
 
     db = get_db()
@@ -521,23 +527,36 @@ def load_all_results_from_firestore(
         from google.cloud.firestore_v1.base_query import FieldFilter
         query = query.where(filter=FieldFilter("viewMode", "==", mode))
 
-    docs = query.stream()
-    results = []
-    symbol_set = {s.upper() for s in symbols} if symbols else None
-    years_str = str(years) if years is not None else None
+    # retry=None prevents the broken retry path that causes AttributeError on
+    # newer grpc versions; timeout=120 gives the query a reasonable deadline.
+    try:
+        docs = query.stream(retry=None, timeout=120)
+        results = []
+        symbol_set = {s.upper() for s in symbols} if symbols else None
+        years_str = str(years) if years is not None else None
 
-    for d in docs:
-        data = {"id": d.id, **d.to_dict()}
-        sym = data.get("symbol")
-        doc_years = str(data.get("years")) if data.get("years") is not None else None
+        for d in docs:
+            data = {"id": d.id, **d.to_dict()}
+            sym = data.get("symbol")
+            doc_years = str(data.get("years")) if data.get("years") is not None else None
 
-        if symbol_set and sym not in symbol_set:
-            continue
-        if years_str is not None and doc_years != years_str:
-            continue
+            if symbol_set and sym not in symbol_set:
+                continue
+            if years_str is not None and doc_years != years_str:
+                continue
 
-        results.append(data)
-    return results
+            results.append(data)
+        return results
+    except Exception as exc:
+        import logging as _logging
+        _logging.getLogger(__name__).error(
+            "load_all_results_from_firestore failed (mode=%s): %s", mode, exc
+        )
+        raise RuntimeError(
+            f"Firestore query timed out or failed while loading seasonality results "
+            f"(mode={mode!r}). Add a composite index on 'viewMode' in Firestore or "
+            f"reduce collection size. Original error: {exc}"
+        ) from exc
 
 
 # ── Year range priority helper ─────────────────────────────────────────────────
