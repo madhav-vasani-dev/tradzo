@@ -483,9 +483,12 @@ def save_result_to_firestore(
     payload = {
         "symbol": symbol.upper(),
         "viewMode": mode,
-        "years": years,
         "computedAt": datetime.now(IST),
         **result,
+        # IMPORTANT: must come AFTER **result — compute_returns_grid also returns a
+        # key called "years" (list of actual year strings) which would otherwise
+        # overwrite the range label ("max", 10, 5 …) we want stored here.
+        "years": years,
     }
     db.collection("seasonalityResults").document(doc_id).set(payload)
     logger.info("Saved seasonality result for %s (%s / %s).", symbol, mode, years)
@@ -565,7 +568,16 @@ _YEAR_PRIORITY = {"max": 9999, "25": 25, "20": 20, "15": 15, "10": 10, "5": 5}
 
 
 def _year_priority(years_val: Any) -> int:
-    """Return a numeric priority for a year range. 'max' wins, then highest number."""
+    """Return a numeric priority for a year range. 'max' wins, then highest number.
+
+    Handles legacy Firestore docs where 'years' was accidentally stored as a list
+    of actual year strings (e.g. ['2005', ..., '2026']) instead of the range label
+    ('max', '10', …) due to a dict-spread ordering bug in save_result_to_firestore.
+    In that case we use the list length as a priority proxy — more years = higher
+    priority, which correctly picks the max-range doc over smaller ranges.
+    """
+    if isinstance(years_val, list):
+        return len(years_val)   # e.g. 22 for max-range doc, 10 for 10-year doc
     return _YEAR_PRIORITY.get(str(years_val), 0)
 
 
@@ -606,7 +618,7 @@ def scan_trades_by_date(
         db = get_db()
         docs = db.collection("seasonalityResults").where(
             filter=FieldFilter("viewMode", "==", "daily")
-        ).stream()
+        ).stream(retry=None, timeout=120)
         cached_daily_results = [{"id": d.id, **d.to_dict()} for d in docs]
 
     # Group best result per symbol (highest year range wins)
@@ -623,36 +635,58 @@ def scan_trades_by_date(
     label_padded = target_date.strftime("%d-%b")           # "12-Aug"
     label_unpadded = str(target_date.day) + "-" + target_date.strftime("%b")  # "12-Aug" (same for day >=10)
 
+    no_label = prob_fail = dir_fail = avg_fail = min_years_fail = 0
+
     results = []
     for sym, result in best_per_symbol.items():
         stats: dict = result.get("stats") or {}
 
-        # Try both label formats (e.g. "01-Jan" vs "1-Jan")
-        s = stats.get(label_padded) or stats.get(label_unpadded)
+        # Derive the year-range label reliably from the doc ID (e.g. "JPPOWER_daily_max" → "max")
+        # For legacy docs the "years" field is a list, not the range label.
+        _doc_id_str = result.get("id", "")
+        _year_range_label = _doc_id_str.rsplit("_", 1)[-1] if "_" in _doc_id_str else str(result.get("years", ""))
+
+        # Try both label formats — use explicit None check, NOT `or`,
+        # because an empty dict {} is falsy and would wrongly skip real entries.
+        s = stats.get(label_padded)
         if s is None:
+            s = stats.get(label_unpadded)
+        if s is None:
+            no_label += 1
             continue
 
-        pos_prob = s.get("pos_prob") or s.get("posProb") or 0.0
-        neg_prob = s.get("neg_prob") or s.get("negProb") or 0.0
-        avg_return = s.get("avg") or 0.0
-        sigma = s.get("sigma")
+        # Use explicit None guards — `or 0.0` would convert a stored None to 0.0
+        # and then the avg_return filter (|avg| < threshold) would silently drop
+        # stocks that simply have no historical data for this exact date.
+        _pos = s.get("pos_prob") if s.get("pos_prob") is not None else s.get("posProb")
+        _neg = s.get("neg_prob") if s.get("neg_prob") is not None else s.get("negProb")
+        pos_prob:    float = float(_pos) if _pos is not None else 0.0
+        neg_prob:    float = float(_neg) if _neg is not None else 0.0
+        _avg = s.get("avg")
+        avg_return:  float = float(_avg) if _avg is not None else 0.0
+        sigma  = s.get("sigma")
         streak = s.get("streak")
-        traded_count = s.get("count") or 0
+        _cnt = s.get("count")
+        traded_count: int = int(_cnt) if _cnt is not None else 0
 
         # Fallback: compute traded count from grid if missing in stats
         if not traded_count and "grid" in result:
             grid_dict = result.get("grid") or {}
-            label_to_use = label_padded if label_padded in (list(next(iter(grid_dict.values()), {}).keys()) if grid_dict else []) else label_unpadded
+            first_yr_keys = list(next(iter(grid_dict.values()), {}).keys()) if grid_dict else []
+            label_to_use = label_padded if label_padded in first_yr_keys else label_unpadded
             traded_count = sum(
                 1 for yr_data in grid_dict.values()
-                if isinstance(yr_data, dict) and yr_data.get(label_to_use) is not None and yr_data.get(label_to_use) != 0.0
+                if isinstance(yr_data, dict)
+                and yr_data.get(label_to_use) is not None
+                and yr_data.get(label_to_use) != 0.0
             )
 
-        # Min years filter
+        # Min years traded filter
         if min_years_traded is not None and min_years_traded != "max" and min_years_traded != 0:
             try:
                 min_c = int(min_years_traded)
                 if traded_count < min_c:
+                    min_years_fail += 1
                     continue
             except (ValueError, TypeError):
                 pass
@@ -661,6 +695,7 @@ def scan_trades_by_date(
         is_bull = pos_prob >= probability_threshold
         is_bear = neg_prob >= probability_threshold
         if not is_bull and not is_bear:
+            prob_fail += 1
             continue
 
         # Determine dominant direction
@@ -668,10 +703,12 @@ def scan_trades_by_date(
 
         # Direction filter
         if direction_filter != "ALL" and direction != direction_filter:
+            dir_fail += 1
             continue
 
-        # Avg return filter
-        if abs(avg_return) < avg_return_threshold:
+        # Avg return filter — only apply when avg is actually available (not None/0)
+        if avg_return_threshold > 0 and _avg is not None and abs(avg_return) < avg_return_threshold:
+            avg_fail += 1
             continue
 
         results.append({
@@ -685,8 +722,15 @@ def scan_trades_by_date(
             "sigma": sigma,
             "streak": streak,
             "count": traded_count,
-            "yearRange": result.get("years"),
+            "yearRange": _year_range_label,
         })
+
+    logger.info(
+        "Trade scanner [%s] label='%s': %d symbols checked → %d passed | "
+        "dropped: no_label=%d, min_years=%d, prob=%d, direction=%d, avg=%d",
+        target_date, label_padded, len(best_per_symbol), len(results),
+        no_label, min_years_fail, prob_fail, dir_fail, avg_fail,
+    )
 
     # Fetch display names in one shot
     try:
