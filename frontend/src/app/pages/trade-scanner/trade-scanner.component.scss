@@ -11,21 +11,23 @@
   @include mobile { gap: 1rem; }
 }
 
-// ── Page header ────────────────────────────────────────────────────────────────
-.page-header {
+// ── Page hero card ─────────────────────────────────────────────────────────────
+.page-hero-card {
+  padding: 1.5rem;
+  border-radius: 16px;
   display: flex;
-  align-items: flex-start;
+  align-items: center;
   justify-content: space-between;
+  gap: 1.25rem;
   flex-wrap: wrap;
-  gap: 1rem;
 
-  .header-left {
+  .hero-main {
     display: flex;
     align-items: center;
     gap: 1rem;
   }
 
-  .header-icon {
+  .hero-icon {
     width: 52px;
     height: 52px;
     border-radius: 14px;
@@ -35,19 +37,16 @@
     justify-content: center;
     flex-shrink: 0;
     box-shadow: $shadow-glow-cyan;
-
     i { font-size: 1.4rem; color: $primary-black; }
   }
 
-  .page-title  { font-size: 1.75rem; font-weight: 800; color: $text-primary; margin: 0; }
-  .page-subtitle { font-size: 0.875rem; color: $text-secondary; margin-top: 0.2rem; }
+  .hero-title    { font-size: 1.75rem; font-weight: 800; color: $text-primary; margin: 0; }
+  .hero-description { font-size: 0.875rem; color: $text-secondary; margin-top: 0.2rem; }
+}
 
-  .header-right {
-    display: flex;
-    align-items: center;
-    gap: 1rem;
-    flex-wrap: wrap;
-  }
+.hero-actions {
+  display: flex;
+  align-items: center;
 }
 
 .scan-summary-badges {
@@ -82,6 +81,201 @@
   font-size: 0.82rem;
   color: $text-secondary;
 }
+
+// ── Mode bar ───────────────────────────────────────────────────────────────────
+.mode-bar {
+  padding: 0.875rem 1.25rem;
+  border-radius: 14px;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+}
+
+.mode-toggles {
+  display: flex;
+  gap: 4px;
+  background: rgba(255,255,255,0.04);
+  border: 1px solid rgba(255,255,255,0.07);
+  border-radius: 10px;
+  padding: 4px;
+}
+
+.mode-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  padding: 8px 18px;
+  border: none;
+  border-radius: 7px;
+  font-size: 0.825rem;
+  font-weight: 600;
+  font-family: inherit;
+  cursor: pointer;
+  color: $text-secondary;
+  background: transparent;
+  transition: all 0.2s;
+
+  i { font-size: 0.9rem; }
+
+  &:hover:not(.active) {
+    color: $text-primary;
+    background: rgba(255,255,255,0.06);
+  }
+
+  &.active {
+    background: $primary-cyan;
+    color: $primary-black;
+    box-shadow: 0 2px 12px rgba(0,194,232,0.35);
+  }
+}
+
+.mode-date-group {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+}
+
+// ── Preset cards grid ─────────────────────────────────────────────────────────
+.preset-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 1rem;
+
+  @include tablet { grid-template-columns: repeat(2, 1fr); }
+  @include mobile { grid-template-columns: 1fr; }
+}
+
+.preset-card {
+  position: relative;
+  padding: 1.25rem;
+  border-radius: 14px;
+  border: 1.5px solid rgba(255,255,255,0.07) !important;
+  text-align: left;
+  cursor: pointer;
+  transition: all 0.25s;
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  background: rgba(255,255,255,0.03);
+  overflow: hidden;
+
+  &:hover {
+    border-color: rgba(0,194,232,0.3) !important;
+    transform: translateY(-2px);
+    background: rgba(0,194,232,0.04);
+  }
+
+  &.selected {
+    border-color: $primary-cyan !important;
+    background: rgba(0,194,232,0.07);
+    box-shadow: 0 0 0 1px rgba(0,194,232,0.2), inset 0 0 20px rgba(0,194,232,0.03);
+  }
+}
+
+.preset-card-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+}
+
+.preset-icon-wrap {
+  width: 38px;
+  height: 38px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+
+  i { font-size: 1rem; }
+
+  &.open-basis {
+    background: linear-gradient(135deg, rgba(0,194,232,0.18) 0%, rgba(0,194,232,0.06) 100%);
+    color: $primary-cyan;
+    border: 1px solid rgba(0,194,232,0.2);
+  }
+
+  &.prev-basis {
+    background: linear-gradient(135deg, rgba(168,85,247,0.18) 0%, rgba(168,85,247,0.06) 100%);
+    color: #a855f7;
+    border: 1px solid rgba(168,85,247,0.2);
+  }
+}
+
+.preset-meta-badges {
+  display: flex;
+  gap: 4px;
+  flex-wrap: wrap;
+  justify-content: flex-end;
+}
+
+.preset-basis-badge {
+  font-size: 0.68rem;
+  font-weight: 700;
+  padding: 2px 8px;
+  border-radius: 100px;
+  letter-spacing: 0.03em;
+
+  &.open   { background: rgba(0,194,232,0.12); color: $primary-cyan; }
+  &.prev   { background: rgba(168,85,247,0.12); color: #a855f7; }
+}
+
+.preset-label {
+  font-size: 0.9rem;
+  font-weight: 700;
+  color: $text-primary;
+}
+
+.preset-desc {
+  font-size: 0.75rem;
+  color: $text-muted;
+}
+
+.preset-counts {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  margin-top: 0.25rem;
+  font-size: 0.8rem;
+  font-weight: 700;
+
+  .count-bull { color: $primary-green; display: flex; align-items: center; gap: 4px; }
+  .count-bear { color: $neon-red; display: flex; align-items: center; gap: 4px; }
+  .count-total { color: $text-muted; margin-left: auto; font-weight: 500; font-size: 0.75rem; }
+}
+
+.preset-selected-indicator {
+  position: absolute;
+  bottom: 0;
+  left: 0;
+  right: 0;
+  height: 3px;
+  background: linear-gradient(90deg, $primary-cyan, $bright-cyan);
+  border-radius: 0 0 3px 3px;
+}
+
+.btn-retry {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  padding: 9px 20px;
+  border: 1px solid rgba(0,194,232,0.4);
+  border-radius: 8px;
+  background: rgba(0,194,232,0.08);
+  color: $primary-cyan;
+  font-size: 0.85rem;
+  font-weight: 600;
+  cursor: pointer;
+  font-family: inherit;
+  transition: all 0.2s;
+  margin-top: 0.75rem;
+
+  &:hover { background: rgba(0,194,232,0.15); }
+}
+
 
 // ── Filter Panel ──────────────────────────────────────────────────────────────
 .filter-panel {
@@ -153,6 +347,10 @@
   &--avg-return {
     flex: 1 1 240px;
     min-width: 200px;
+  }
+
+  &--basis {
+    flex: 0 0 auto;
   }
 
   &--actions {
@@ -295,25 +493,9 @@
 .loading-text { font-size: 1rem; font-weight: 600; color: $text-primary; }
 .loading-hint { font-size: 0.82rem; color: $text-muted; }
 
-.btn-retry {
-  display: inline-flex;
-  align-items: center;
-  gap: 6px;
-  margin-top: 0.5rem;
-  padding: 8px 18px;
-  border-radius: 8px;
-  background: $soft-red;
-  color: $neon-red;
-  border: 1px solid rgba(239,68,68,0.3);
-  font-weight: 600;
-  font-size: 0.85rem;
-  cursor: pointer;
-  transition: all 0.2s;
-
-  &:hover { background: rgba(239,68,68,0.25); }
-}
 
 // ── Results toolbar (search + count) ────────────────────────────────────────────
+
 .results-toolbar {
   display: flex;
   align-items: center;

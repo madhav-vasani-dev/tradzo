@@ -119,6 +119,22 @@ export interface TradeScannerResult {
   yearRange: number | 'max';
 }
 
+export interface PredefinedScanPreset {
+  id: string;
+  label: string;
+  description: string;
+  icon: string;
+  returnBasis: 'open' | 'prev_close';
+  minYears: number;
+  probability: number;
+  avgReturn: number;
+}
+
+export interface PredefinedScansResponse {
+  date: string;
+  computedAt: string;
+  scans: Record<string, TradeScannerResult[]>;
+}
 
 // ── Service ────────────────────────────────────────────────────────────────────
 
@@ -225,6 +241,7 @@ export class SeasonalityService {
     avgReturn: number = 0,
     minYears?: string | null,
     direction: 'ALL' | 'BULL' | 'BEAR' = 'ALL',
+    returnBasis: 'open' | 'prev_close' = 'open',
   ): Observable<TradeScannerResult[]> {
     return from(
       this.authHeaders().then(headers => {
@@ -232,7 +249,8 @@ export class SeasonalityService {
           .set('date', date)
           .set('probability', String(probability))
           .set('avg_return', String(avgReturn))
-          .set('direction', direction);
+          .set('direction', direction)
+          .set('return_basis', returnBasis);
         if (minYears) params = params.set('min_years', minYears);
         return firstValueFrom(
           this.http.get<any[]>(`${this.apiBase}/seasonality/trade-scanner`, { headers, params })
@@ -252,6 +270,21 @@ export class SeasonalityService {
         count: r.count,
         yearRange: r.yearRange ?? r.year_range,
       } as TradeScannerResult)))
+    );
+  }
+
+  /** Fetch predefined scan results for a given date (cached daily in Firestore). */
+  getPredefinedScans(date: string): Observable<PredefinedScansResponse> {
+    return from(
+      this.authHeaders().then(headers => {
+        const params = new HttpParams().set('date', date);
+        return firstValueFrom(
+          this.http.get<PredefinedScansResponse>(
+            `${this.apiBase}/seasonality/predefined-scans`,
+            { headers, params }
+          )
+        );
+      })
     );
   }
 

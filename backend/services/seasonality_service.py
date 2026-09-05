@@ -842,10 +842,18 @@ def compute_single_stock_seasonality(
     mode: ViewMode,
     years: int | str,
     return_basis: str = "open",
+    save_to_cache: bool = True,
 ) -> Optional[dict]:
     """
-    Compute seasonality for a single stock on-the-fly, save to Firestore cache, and return result.
-    Does NOT save CSV files locally.
+    Compute seasonality for a single stock on-the-fly, optionally save to Firestore cache,
+    and return result.
+
+    Parameters
+    ----------
+    save_to_cache : bool
+        If True (default), writes the result to ``seasonalityResults`` in Firestore.
+        Pass False when computing in-memory only (e.g. ``prev_close`` for predefined scans)
+        so the existing ``open``-basis cached doc is not overwritten.
     """
     from services import gdrive_service, firebase_service
 
@@ -873,9 +881,108 @@ def compute_single_stock_seasonality(
             "computedAt": datetime.now(IST),
             **grid_result,
         }
-        save_result_to_firestore(sym, mode, years, grid_result)
+        if save_to_cache:
+            save_result_to_firestore(sym, mode, years, grid_result)
         doc_payload["id"] = _doc_id(sym, mode, years)
         return doc_payload
     except Exception as exc:
         logger.error("Failed on-the-fly compute for %s (%s / %s): %s", sym, mode, years, exc)
         return None
+
+
+# ── Predefined daily scans ────────────────────────────────────────────────────
+
+# The four predefined scan configurations shown in the Trade Scanner UI.
+# Each is a fixed combination of filters that runs automatically every day.
+PREDEFINED_SCAN_CONFIGS: list[dict] = [
+    {"id": "open_10",       "return_basis": "open",       "min_years": 10, "probability": 75.0, "avg_return": 1.0},
+    {"id": "prev_close_10", "return_basis": "prev_close", "min_years": 10, "probability": 75.0, "avg_return": 1.0},
+    {"id": "open_5",        "return_basis": "open",       "min_years": 5,  "probability": 75.0, "avg_return": 1.0},
+    {"id": "prev_close_5",  "return_basis": "prev_close", "min_years": 5,  "probability": 75.0, "avg_return": 1.0},
+]
+
+
+def compute_predefined_scans_for_date(
+    target_date: date,
+    open_basis_results: list[dict],
+) -> dict[str, list[dict]]:
+    """
+    Compute all predefined scan result sets for a given date in one pass.
+
+    Strategy
+    --------
+    * ``open`` basis presets: use the already-loaded ``open_basis_results`` (no Drive downloads).
+    * ``prev_close`` basis presets: compute each stock in parallel from raw Drive data
+      with ``save_to_cache=False`` so the existing ``open``-basis ``seasonalityResults``
+      docs are NOT overwritten.  The final filtered signals land in ``dailyScans/{date}``
+      which is the cache layer for predefined scans.
+
+    Parameters
+    ----------
+    target_date       : The calendar date to scan.
+    open_basis_results: Already-loaded and up-to-date ``open``-basis daily results
+                        (the caller is responsible for ensuring these are fresh).
+
+    Returns
+    -------
+    dict keyed by preset ID → list of trade signal dicts.
+    """
+    import concurrent.futures
+
+    # ── Collect all symbols present in the open-basis results ────────────────
+    all_symbols = list({r.get("symbol") for r in open_basis_results if r.get("symbol")})
+
+    # ── Compute prev_close results in parallel (Drive downloads, no cache write) ─
+    logger.info(
+        "Predefined scans [%s]: computing prev_close for %d symbols in parallel",
+        target_date, len(all_symbols),
+    )
+    prev_close_results: list[dict] = []
+    with concurrent.futures.ThreadPoolExecutor(max_workers=min(10, max(len(all_symbols), 1))) as pool:
+        futures_map = {
+            pool.submit(
+                compute_single_stock_seasonality,
+                sym, "daily", "max",
+                return_basis="prev_close",
+                save_to_cache=False,   # keep seasonalityResults at open-basis
+            ): sym
+            for sym in all_symbols
+        }
+        for future in concurrent.futures.as_completed(futures_map):
+            sym = futures_map[future]
+            try:
+                result = future.result()
+                if result:
+                    prev_close_results.append(result)
+            except Exception:
+                logger.exception("Predefined scans: prev_close compute failed for %s", sym)
+
+    logger.info(
+        "Predefined scans [%s]: prev_close computed for %d / %d symbols",
+        target_date, len(prev_close_results), len(all_symbols),
+    )
+
+    # ── Apply all 4 filter combos ─────────────────────────────────────────────
+    output: dict[str, list[dict]] = {}
+    basis_results = {
+        "open":       open_basis_results,
+        "prev_close": prev_close_results,
+    }
+
+    for cfg in PREDEFINED_SCAN_CONFIGS:
+        source = basis_results[cfg["return_basis"]]
+        signals = scan_trades_by_date(
+            target_date=target_date,
+            probability_threshold=cfg["probability"],
+            avg_return_threshold=cfg["avg_return"],
+            min_years_traded=cfg["min_years"],
+            direction_filter="ALL",
+            cached_daily_results=source,
+        )
+        output[cfg["id"]] = signals
+        logger.info(
+            "Predefined scans [%s]: %s → %d signals",
+            target_date, cfg["id"], len(signals),
+        )
+
+    return output
