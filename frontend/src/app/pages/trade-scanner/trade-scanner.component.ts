@@ -1,4 +1,4 @@
-﻿import { Component, inject, OnDestroy } from '@angular/core';
+import { Component, inject, OnInit, OnDestroy } from '@angular/core';
 import { CommonModule } from '@angular/common';
 import { FormsModule } from '@angular/forms';
 import { Router } from '@angular/router';
@@ -14,7 +14,12 @@ import { ProgressSpinnerModule } from 'primeng/progressspinner';
 import { ToastModule } from 'primeng/toast';
 import { MessageService } from 'primeng/api';
 
-import { SeasonalityService, TradeScannerResult } from '../../core/services/seasonality.service';
+import {
+  SeasonalityService,
+  TradeScannerResult,
+  PredefinedScanPreset,
+  PredefinedScansResponse,
+} from '../../core/services/seasonality.service';
 
 @Component({
   selector: 'app-trade-scanner',
@@ -35,32 +40,98 @@ import { SeasonalityService, TradeScannerResult } from '../../core/services/seas
   templateUrl: './trade-scanner.component.html',
   styleUrl: './trade-scanner.component.scss',
 })
-export class TradeScannerComponent implements OnDestroy {
+export class TradeScannerComponent implements OnInit, OnDestroy {
   private seasonalityService = inject(SeasonalityService);
   private messageService = inject(MessageService);
   private router = inject(Router);
   private subs = new Subscription();
 
-  // ── State ──────────────────────────────────────────────────────────────────
+  // ── Scan mode ─────────────────────────────────────────────────────────────
+  scanMode: 'predefined' | 'custom' = 'predefined';
+
+  scanModeOptions: Array<{ label: string; value: 'predefined' | 'custom'; icon: string }> = [
+    { label: 'Predefined Scans', value: 'predefined', icon: 'pi-bolt' },
+    { label: 'Custom Scan',      value: 'custom',     icon: 'pi-sliders-h' },
+  ];
+
+  // ── Predefined scan state ─────────────────────────────────────────────────
+  predefinedResults: Record<string, TradeScannerResult[]> = {};
+  selectedPresetId: string | null = null;
+  isLoadingPredefined = false;
+  predefinedError: string | null = null;
+  predefinedComputedAt: string | null = null;
+
+  /** Metadata for each of the 4 predefined presets — drives card rendering. */
+  readonly predefinedPresets: PredefinedScanPreset[] = [
+    {
+      id: 'open_10',
+      label: "Open · 10+ Yrs",
+      description: "Today's Open basis, 10+ years of history",
+      icon: 'pi-sun',
+      returnBasis: 'open',
+      minYears: 10,
+      probability: 75,
+      avgReturn: 1.0,
+    },
+    {
+      id: 'prev_close_10',
+      label: 'Prev Close · 10+ Yrs',
+      description: 'Prev Close basis, 10+ years of history',
+      icon: 'pi-moon',
+      returnBasis: 'prev_close',
+      minYears: 10,
+      probability: 75,
+      avgReturn: 1.0,
+    },
+    {
+      id: 'open_5',
+      label: "Open · 5+ Yrs",
+      description: "Today's Open basis, 5+ years of history",
+      icon: 'pi-sun',
+      returnBasis: 'open',
+      minYears: 5,
+      probability: 75,
+      avgReturn: 1.0,
+    },
+    {
+      id: 'prev_close_5',
+      label: 'Prev Close · 5+ Yrs',
+      description: 'Prev Close basis, 5+ years of history',
+      icon: 'pi-moon',
+      returnBasis: 'prev_close',
+      minYears: 5,
+      probability: 75,
+      avgReturn: 1.0,
+    },
+  ];
+
+  // ── Custom scan state ─────────────────────────────────────────────────────
   isScanning = false;
   hasScanned = false;
   results: TradeScannerResult[] = [];
   error: string | null = null;
-  today: Date = new Date();
 
-  // ── Results table search/sort ────────────────────────────────────────────────
+  // ── Shared date picker ────────────────────────────────────────────────────
+  selectedDate: Date = new Date();
+
+  // ── Results table search / sort ───────────────────────────────────────────
   searchQuery = '';
   sortField: keyof TradeScannerResult | null = null;
   sortDir: 1 | -1 = -1;
 
-  get displayedResults(): TradeScannerResult[] {
-    let list = this.results;
+  get activeResults(): TradeScannerResult[] {
+    if (this.scanMode === 'predefined' && this.selectedPresetId) {
+      return this.predefinedResults[this.selectedPresetId] ?? [];
+    }
+    return this.results;
+  }
 
+  get displayedResults(): TradeScannerResult[] {
+    let list = this.activeResults;
     const q = this.searchQuery.trim().toUpperCase();
     if (q) {
       list = list.filter(r => r.symbol.includes(q) || (r.displayName ?? '').toUpperCase().includes(q));
     }
-
     if (this.sortField) {
       const field = this.sortField;
       const dir = this.sortDir;
@@ -73,7 +144,6 @@ export class TradeScannerComponent implements OnDestroy {
         return 0;
       });
     }
-
     return list;
   }
 
@@ -91,18 +161,22 @@ export class TradeScannerComponent implements OnDestroy {
     return this.sortDir === 1 ? 'pi-sort-amount-up' : 'pi-sort-amount-down';
   }
 
-  // ── Filters ────────────────────────────────────────────────────────────────
-  selectedDate: Date = new Date();
+  // ── Custom scan filters ────────────────────────────────────────────────────
   probabilityThreshold = 60;
   avgReturnThreshold = 0;
   selectedMinYears: string = 'none';
   selectedDirection: 'ALL' | 'BULL' | 'BEAR' = 'ALL';
 
-  // ── Options ────────────────────────────────────────────────────────────────
   directionOptions = [
     { label: 'All', value: 'ALL' },
     { label: 'Bull', value: 'BULL' },
     { label: 'Bear', value: 'BEAR' },
+  ];
+
+  returnBasis: 'open' | 'prev_close' = 'open';
+  returnBasisOptions = [
+    { label: "Today's Open", value: 'open' },
+    { label: 'Prev Close', value: 'prev_close' },
   ];
 
   minYearsOptions = [
@@ -115,26 +189,77 @@ export class TradeScannerComponent implements OnDestroy {
     { label: 'Max', value: 'max' },
   ];
 
+  // ── Lifecycle ─────────────────────────────────────────────────────────────
+  ngOnInit(): void {
+    this.loadPredefinedScans();
+  }
+
   ngOnDestroy(): void {
     this.subs.unsubscribe();
   }
 
-  // ── Getters ────────────────────────────────────────────────────────────────
-  get bullResults(): TradeScannerResult[] {
-    return this.results.filter(r => r.direction === 'BULL');
+  // ── Predefined scan actions ───────────────────────────────────────────────
+  loadPredefinedScans(date?: Date): void {
+    const d = date ?? this.selectedDate;
+    const dateStr = this.formatDate(d);
+    this.isLoadingPredefined = true;
+    this.predefinedError = null;
+    this.predefinedResults = {};
+    this.selectedPresetId = null;
+    this.searchQuery = '';
+
+    this.subs.add(
+      this.seasonalityService.getPredefinedScans(dateStr).subscribe({
+        next: (resp: PredefinedScansResponse) => {
+          this.predefinedResults = resp.scans;
+          this.predefinedComputedAt = resp.computedAt;
+          this.isLoadingPredefined = false;
+          // Auto-select the first preset
+          if (this.predefinedPresets.length > 0) {
+            this.selectPreset(this.predefinedPresets[0].id);
+          }
+        },
+        error: (err) => {
+          this.predefinedError = err?.error?.detail || 'Failed to load predefined scans.';
+          this.isLoadingPredefined = false;
+        },
+      })
+    );
   }
 
-  get bearResults(): TradeScannerResult[] {
-    return this.results.filter(r => r.direction === 'BEAR');
+  selectPreset(id: string): void {
+    this.selectedPresetId = id;
+    this.searchQuery = '';
+    this.sortField = null;
   }
 
-  get scanDateLabel(): string {
-    return this.selectedDate.toLocaleDateString('en-IN', {
-      day: 'numeric', month: 'short', year: 'numeric'
-    });
+  onPredefinedDateChange(): void {
+    if (this.scanMode === 'predefined') {
+      this.loadPredefinedScans(this.selectedDate);
+    }
   }
 
-  // ── Actions ────────────────────────────────────────────────────────────────
+  onScanModeChange(): void {
+    this.searchQuery = '';
+    this.sortField = null;
+    if (this.scanMode === 'predefined' && Object.keys(this.predefinedResults).length === 0) {
+      this.loadPredefinedScans();
+    }
+  }
+
+  presetResultCount(id: string): number {
+    return (this.predefinedResults[id] ?? []).length;
+  }
+
+  presetBullCount(id: string): number {
+    return (this.predefinedResults[id] ?? []).filter(r => r.direction === 'BULL').length;
+  }
+
+  presetBearCount(id: string): number {
+    return (this.predefinedResults[id] ?? []).filter(r => r.direction === 'BEAR').length;
+  }
+
+  // ── Custom scan actions ───────────────────────────────────────────────────
   scan(): void {
     if (!this.selectedDate) {
       this.messageService.add({ severity: 'warn', summary: 'Date Required', detail: 'Please select a date.' });
@@ -143,6 +268,7 @@ export class TradeScannerComponent implements OnDestroy {
     this.isScanning = true;
     this.error = null;
     this.searchQuery = '';
+    this.sortField = null;
     const dateStr = this.formatDate(this.selectedDate);
     const minYears = this.selectedMinYears === 'none' ? null : this.selectedMinYears;
 
@@ -153,6 +279,7 @@ export class TradeScannerComponent implements OnDestroy {
         this.avgReturnThreshold,
         minYears,
         this.selectedDirection,
+        this.returnBasis,
       ).subscribe({
         next: (results) => {
           this.results = results;
@@ -172,7 +299,36 @@ export class TradeScannerComponent implements OnDestroy {
     this.router.navigate(['/seasonality'], { queryParams: { symbol } });
   }
 
-  // ── Helpers ────────────────────────────────────────────────────────────────
+  // ── Getters ───────────────────────────────────────────────────────────────
+  get bullResults(): TradeScannerResult[] {
+    return this.activeResults.filter(r => r.direction === 'BULL');
+  }
+
+  get bearResults(): TradeScannerResult[] {
+    return this.activeResults.filter(r => r.direction === 'BEAR');
+  }
+
+  get scanDateLabel(): string {
+    return this.selectedDate.toLocaleDateString('en-IN', {
+      day: 'numeric', month: 'short', year: 'numeric'
+    });
+  }
+
+  get hasResults(): boolean {
+    if (this.scanMode === 'predefined') {
+      return this.selectedPresetId != null && (this.predefinedResults[this.selectedPresetId]?.length ?? 0) > 0;
+    }
+    return this.results.length > 0;
+  }
+
+  get showResultsTable(): boolean {
+    if (this.scanMode === 'predefined') {
+      return !this.isLoadingPredefined && this.selectedPresetId != null;
+    }
+    return !this.isScanning && this.hasScanned && !this.error;
+  }
+
+  // ── Helpers ───────────────────────────────────────────────────────────────
   getProbColor(prob: number): string {
     if (prob >= 80) return '#22c55e';
     if (prob >= 70) return '#84cc16';

@@ -191,7 +191,7 @@ def upcoming_trades(
     return trades
 
 
-def _compute_missing_daily_data(missing_symbols: list[str]) -> None:
+def _compute_missing_daily_data(missing_symbols: list[str], return_basis: str = "open") -> None:
     """
     Compute daily/max seasonality for stocks that don't have it cached yet, in
     parallel. Each stock is a Drive download + pandas resample — dominated by
@@ -201,7 +201,10 @@ def _compute_missing_daily_data(missing_symbols: list[str]) -> None:
     """
     with ThreadPoolExecutor(max_workers=min(10, len(missing_symbols))) as pool:
         futures = {
-            pool.submit(seasonality_service.compute_single_stock_seasonality, sym, "daily", "max"): sym  # type: ignore[arg-type]
+            pool.submit(
+                seasonality_service.compute_single_stock_seasonality,
+                sym, "daily", "max", return_basis=return_basis  # type: ignore[arg-type]
+            ): sym
             for sym in missing_symbols
         }
         for future in as_completed(futures):
@@ -212,6 +215,95 @@ def _compute_missing_daily_data(missing_symbols: list[str]) -> None:
                 logger.exception("Failed to compute daily/max for %s", sym)
 
 
+@router.get("/predefined-scans", summary="Get predefined daily scan results (cached per day)")
+def predefined_scans(
+    date: str,
+    user: dict = Depends(get_current_user),
+) -> dict[str, Any]:
+    """
+    Returns results for the 4 predefined Trade Scanner presets for the given date.
+
+    Cache behaviour
+    ---------------
+    * ``dailyScans/{date}`` exists in Firestore → returned immediately (zero compute).
+    * Not cached → fetch raw daily results, compute all 4 presets in one pass,
+      write to ``dailyScans/{date}``, then return.  Subsequent calls for the same
+      date are instant reads.
+
+    Predefined presets (fixed config, no user input required)
+    ----------------------------------------------------------
+    open_10       : Today's Open  · 10+ years · ≥75% probability · ≥1% avg return
+    prev_close_10 : Prev Close    · 10+ years · ≥75% probability · ≥1% avg return
+    open_5        : Today's Open  ·  5+ years · ≥75% probability · ≥1% avg return
+    prev_close_5  : Prev Close    ·  5+ years · ≥75% probability · ≥1% avg return
+    """
+    import pytz
+    from datetime import datetime as _datetime, date as _date
+
+    # Validate date
+    try:
+        target_date = _date.fromisoformat(date)
+    except ValueError:
+        raise HTTPException(status_code=422, detail=f"Invalid date format: {date!r}. Use YYYY-MM-DD.")
+
+    db = firebase_service.get_db()
+
+    # ── Cache hit ──────────────────────────────────────────────────────────────
+    cache_snap = db.collection("dailyScans").document(date).get()
+    if cache_snap.exists:
+        logger.info("Predefined scans: cache hit for %s", date)
+        return cache_snap.to_dict()
+
+    # ── Cache miss: compute all 4 presets ─────────────────────────────────────
+    logger.info("Predefined scans: cache miss for %s \u2014 computing\u2026", date)
+
+    all_symbols = [d.id for d in db.collection("seasonalityStocks").stream()]
+
+    # Load all cached daily results and ensure open-basis is current.
+    cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+
+    from services.seasonality_service import _year_priority  # noqa: PLC0415
+
+    cached_by_symbol: dict[str, dict] = {}
+    for r in cached_daily:
+        sym = r.get("symbol")
+        if not sym:
+            continue
+        existing = cached_by_symbol.get(sym)
+        if existing is None or _year_priority(r.get("years")) > _year_priority(existing.get("years")):
+            cached_by_symbol[sym] = r
+
+    missing_symbols = [s for s in all_symbols if s not in cached_by_symbol]
+    wrong_basis_symbols = [
+        s for s, r in cached_by_symbol.items()
+        if (r.get("return_basis") or "open") != "open"
+    ]
+    to_compute_open = list(set(missing_symbols + wrong_basis_symbols))
+
+    if to_compute_open:
+        logger.info(
+            "Predefined scans: computing open-basis for %d symbols (%d missing, %d wrong basis)",
+            len(to_compute_open), len(missing_symbols), len(wrong_basis_symbols),
+        )
+        _compute_missing_daily_data(to_compute_open, return_basis="open")
+        cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+
+    # Compute all 4 presets (prev_close computed in parallel via Drive downloads)
+    scans = seasonality_service.compute_predefined_scans_for_date(target_date, cached_daily)
+
+    # Persist to Firestore so subsequent calls for the same date are instant
+    ist = pytz.timezone("Asia/Kolkata")
+    payload: dict[str, Any] = {
+        "date": date,
+        "computedAt": _datetime.now(ist).isoformat(),
+        "scans": scans,
+    }
+    db.collection("dailyScans").document(date).set(payload)
+    logger.info("Predefined scans: cached results for %s in dailyScans/%s", date, date)
+
+    return payload
+
+
 @router.get("/trade-scanner", summary="Scan all stocks for trade signals on a specific date")
 def trade_scanner(
     date: str,                                  # ISO date string, e.g. "2026-08-12"
@@ -219,17 +311,19 @@ def trade_scanner(
     avg_return: float = 0.0,
     min_years: Optional[str] = None,            # "5","10","15","20","25","max"
     direction: str = "ALL",
+    return_basis: str = "open",                 # "open" | "prev_close"
     user: dict = Depends(get_current_user),
 ) -> list[dict[str, Any]]:
     """
     Scan all stocks with cached daily seasonality data for the given date.
 
     - Picks the highest available year range (max > 25 > 20 > 15 > 10 > 5) per stock.
-    - Applies probability, avg_return, min_years_traded, and direction filters.
+    - Applies probability, avg_return, min_years_traded, direction, and return_basis filters.
     - Stocks missing a daily/max result are computed in parallel before scanning,
-      so results are complete on the first call — but each stock is only ever
-      computed once (cached in Firestore after), so every scan after that is a
-      pure cache read with no compute at all.
+      using the requested return_basis so the first-time result is correct.
+    - For already-cached stocks, the scan uses whatever basis was stored. Stocks
+      where the stored basis differs from the requested one are re-computed so
+      results reflect the correct calculation method.
     - Returns results sorted by dominant probability descending.
     """
     from datetime import date as _date
@@ -239,6 +333,9 @@ def trade_scanner(
         target_date = _date.fromisoformat(date)
     except ValueError:
         raise HTTPException(status_code=422, detail=f"Invalid date format: {date!r}. Use ISO format YYYY-MM-DD.")
+
+    # Normalise return_basis
+    basis = return_basis if return_basis in ("open", "prev_close") else "open"
 
     # Parse min_years
     min_years_val: Any = None
@@ -252,15 +349,38 @@ def trade_scanner(
     db = firebase_service.get_db()
     all_symbols = [d.id for d in db.collection("seasonalityStocks").stream()]
 
+    # Load all cached daily results (no basis filter — the doc is keyed by symbol/mode/years only,
+    # one doc per combination, storing whichever basis it was last computed with).
     cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
-    cached_symbols = {r.get("symbol") for r in cached_daily if r.get("symbol")}
-    missing_symbols = [s for s in all_symbols if s not in cached_symbols]
 
-    if missing_symbols:
-        logger.info("Trade scanner: computing daily/max in parallel for %d uncached stocks", len(missing_symbols))
-        _compute_missing_daily_data(missing_symbols)
-        # Re-fetch once to pick up what was just computed — scan_trades_by_date
-        # reuses this list instead of re-querying Firestore itself.
+    # Split into: symbols that have no cached doc at all (need first-time compute),
+    # and symbols whose cached doc used a different basis (need re-compute).
+    cached_by_symbol: dict[str, dict] = {}
+    for r in cached_daily:
+        sym = r.get("symbol")
+        if not sym:
+            continue
+        existing = cached_by_symbol.get(sym)
+        from services.seasonality_service import _year_priority  # noqa: PLC0415
+        if existing is None or _year_priority(r.get("years")) > _year_priority(existing.get("years")):
+            cached_by_symbol[sym] = r
+
+    missing_symbols = [s for s in all_symbols if s not in cached_by_symbol]
+    wrong_basis_symbols = [
+        s for s, r in cached_by_symbol.items()
+        if (r.get("return_basis") or "open") != basis
+    ]
+
+    symbols_to_compute = list(set(missing_symbols + wrong_basis_symbols))
+
+    if symbols_to_compute:
+        logger.info(
+            "Trade scanner: computing daily/max (basis=%s) for %d symbols "
+            "(%d missing, %d wrong basis)",
+            basis, len(symbols_to_compute), len(missing_symbols), len(wrong_basis_symbols),
+        )
+        _compute_missing_daily_data(symbols_to_compute, return_basis=basis)
+        # Re-fetch to pick up freshly computed docs.
         cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
 
     results = seasonality_service.scan_trades_by_date(
