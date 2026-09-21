@@ -5,6 +5,7 @@ Nifty straddle (Mon–Fri):
   11:55     pre_entry_check       — validate tokens, set status="ready" (Nifty only)
   11:59:45  execute_entry         — pre-stage, then place straddle orders + SL at 12:00:00
   15:29     execute_exit          — cancel SL orders, square off remaining
+  15:29:30  execute_exit (retry)  — re-run for any leg the first pass could not close
   15:31     eod_cleanup           — compute PnL, log day summary
 
 BTC option selling (every day):
@@ -113,6 +114,16 @@ def start_scheduler() -> AsyncIOScheduler | None:
         CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=29, timezone=IST),
         id="execute_exit",
         replace_existing=True,
+    )
+
+    # ── 15:29:30 — Exit retry: only touches legs still open/closing after the first pass
+    #    (e.g. an exit order that didn't fill). Position claims make it safe to overlap. ─
+    _scheduler.add_job(
+        _run_async(execution_service.execute_exit),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=29, second=30, timezone=IST),
+        id="execute_exit_retry",
+        replace_existing=True,
+        misfire_grace_time=20,
     )
 
     # ── 15:31 — EOD: compute PnL, log daily summary ───────────────────────

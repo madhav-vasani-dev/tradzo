@@ -22,6 +22,18 @@ Equity/F&O legs are placed with the product code from `settings.equity_product`
 auto-squared-off by the broker at 15:15 — the strategy owns its own exit. Delta Exchange
 has no product concept; crypto positions always carry forward.
 
+"Market" orders
+---------------
+`settings.order_style` picks how place_sell_market / place_buy_market send an order:
+  "market" (default) — a plain MARKET order, as before.
+  "limit"            — a marketable IOC LIMIT priced past the LTP by `market_protection_pct`,
+                       escalating on a miss. Use this if the broker/exchange starts refusing
+                       API MARKET orders (Upstox announced that from 1 Oct 2025; it has not
+                       been observed on this account).
+Either way the fill is VERIFIED against the broker (never assumed from the LTP), and if the
+order can't be filled the call RAISES `OrderNotFilled` — callers must never assume a fill.
+Delta Exchange keeps its own market_order path.
+
 Stop-loss orders
 ----------------
 Every SL is placed as a stop-MARKET. NSE discontinued SL-M in the F&O segment, so an
@@ -30,8 +42,10 @@ does not fill when the market gaps through. After placing, we read the order bac
 if it was downgraded, repair the limit price to `trigger × (1 + sl_limit_buffer_pct)`
 so it still fills on a spike with a bounded worst price.
 """
+import asyncio
 import logging
 import math
+import time
 import uuid
 
 import httpx
@@ -202,6 +216,256 @@ async def _get_jainam_fill_price(token: str, app_order_id: str, default_price: f
     return default_price
 
 
+# ── Marketable-limit ("market with protection") orders ────────────────────────
+
+class OrderNotFilled(RuntimeError):
+    """A protected-limit order could not be (fully) filled.
+
+    Carries whatever DID fill so the caller can reconcile a partial fill instead of
+    treating the whole leg as untouched.
+    """
+
+    def __init__(self, message: str, *, filled_qty: int = 0, avg_price: float = 0.0,
+                 remaining: int = 0, order_id: str = ""):
+        super().__init__(message)
+        self.filled_qty = filled_qty
+        self.avg_price = avg_price
+        self.remaining = remaining
+        self.order_id = order_id
+
+
+def _round_down_tick(price: float, tick: float = NSE_TICK) -> float:
+    return round(math.floor(price / tick) * tick, 2)
+
+
+def protected_limit_price(ref_price: float, side: str, buffer_pct: float) -> float:
+    """Limit price that behaves like a market order but caps the worst fill.
+
+    BUY sits `buffer_pct` above the reference (LTP), SELL sits below it, tick-aligned.
+    The pad is at least two ticks so very cheap options still get a marketable price.
+    """
+    pad = max(ref_price * buffer_pct / 100.0, 2 * NSE_TICK)
+    if side == "BUY":
+        return _round_up_tick(ref_price + pad)
+    return max(_round_down_tick(ref_price - pad), NSE_TICK)
+
+
+def _ci(row: dict, *keys, default=None):
+    """Case-insensitive dict lookup — XTS responses vary their key casing."""
+    lowered = {str(k).lower(): v for k, v in (row or {}).items()}
+    for k in keys:
+        v = lowered.get(k.lower())
+        if v not in (None, ""):
+            return v
+    return default
+
+
+async def _order_fill_state(access_token: str, order_id: str, broker: str) -> dict:
+    """Normalised order state: {terminal, status, filled_qty, avg_price, message}.
+
+    status is one of "complete" | "cancelled" | "rejected" | "open" | "unknown".
+    """
+    if broker == "jainam":
+        from services import jainam_service
+        hist = await jainam_service.get_order_history(access_token, order_id)
+        if not hist:
+            return {"terminal": False, "status": "unknown", "filled_qty": 0, "avg_price": 0.0, "message": ""}
+        raw = str(_ci(hist[-1], "orderstatus", default="")).upper().replace(" ", "")
+        status = {
+            "FILLED": "complete",
+            "CANCELLED": "cancelled",
+            "EXPIRED": "cancelled",
+            "REJECTED": "rejected",
+        }.get(raw, "open")
+        filled = max(int(float(_ci(r, "cumulativequantity", "cumulativeqty", default=0) or 0)) for r in hist)
+        avg = 0.0
+        for r in reversed(hist):
+            a = float(_ci(r, "orderaveragetradedprice", "averageprice", "averagetradedprice", default=0) or 0)
+            if a > 0:
+                avg = a
+                break
+        msg = str(_ci(hist[-1], "cancelrejectreason", default="") or "")
+        return {"terminal": status != "open", "status": status, "filled_qty": filled,
+                "avg_price": avg, "message": msg}
+
+    details = await get_order_details(access_token, order_id)
+    raw = str(details.get("status", "")).lower()
+    status = raw if raw in ("complete", "cancelled", "rejected") else "open"
+    return {
+        "terminal": status != "open",
+        "status": status,
+        "filled_qty": int(float(details.get("filled_quantity") or 0)),
+        "avg_price": float(details.get("average_price") or 0.0),
+        "message": str(details.get("status_message") or details.get("status_message_raw") or ""),
+    }
+
+
+async def _submit_limit(
+    access_token: str, instrument_key: str, quantity: int, side: str,
+    price: float | None, tag: str, broker: str,
+) -> str:
+    """Send one order and return the broker order id.
+
+    price=None sends a plain MARKET/DAY order; otherwise an IOC LIMIT at `price`.
+    """
+    is_market = price is None
+    if broker == "jainam":
+        from services import jainam_service
+        resp = await jainam_service.place_order(access_token, {
+            "exchangeSegment": "NSEFO",
+            "exchangeInstrumentID": int(instrument_key),
+            "productType": jainam_product(),
+            "orderType": "Market" if is_market else "Limit",
+            "orderSide": side,
+            "timeInForce": "DAY" if is_market else "IOC",
+            "disclosedQuantity": 0,
+            "orderQuantity": quantity,
+            "limitPrice": 0.0 if is_market else price,
+            "stopPrice": 0.0,
+            "orderUniqueIdentifier": tag[:20],
+        })
+        order_id = resp.get("result", {}).get("appOrderID")
+        if not order_id:
+            raise RuntimeError("Jainam order placement failed: no appOrderID returned")
+        return str(order_id)
+
+    resp = await _real_place(access_token, {
+        "instrument_token": instrument_key,
+        "quantity": quantity,
+        "order_type": "MARKET" if is_market else "LIMIT",
+        "transaction_type": side,
+        "product": upstox_product(),
+        "validity": "DAY" if is_market else "IOC",
+        "price": 0 if is_market else price,    # Upstox requires price=0 for MARKET (UDAPI1008)
+        "disclosed_quantity": 0,
+        "trigger_price": 0,
+        "is_amo": False,
+        "tag": tag[:40],
+    })
+    order_id = resp.get("data", {}).get("order_id", "")
+    if not order_id:
+        raise RuntimeError("Upstox order placement failed: no order_id returned")
+    return str(order_id)
+
+
+async def _await_terminal(access_token: str, order_id: str, broker: str, timeout: float) -> dict | None:
+    """Poll until the order reaches a terminal state, or `timeout` seconds pass."""
+    deadline = time.monotonic() + timeout
+    state = None
+    while True:
+        try:
+            state = await _order_fill_state(access_token, order_id, broker)
+            if state["terminal"]:
+                return state
+        except Exception as exc:  # noqa: BLE001 — polling must not raise
+            log.warning("Order state poll failed for %s: %s", order_id, exc)
+        if time.monotonic() >= deadline:
+            return state
+        await asyncio.sleep(0.25)
+
+
+async def _place_protected(
+    *,
+    access_token: str,
+    instrument_key: str,
+    quantity: int,
+    side: str,
+    tag: str,
+    ltp: float,
+    broker: str,
+    ltp_fn=None,
+    reference_fallback: float = 0.0,
+) -> dict:
+    """Fill `quantity` and verify it, retrying on a miss.
+
+    order_style "market": plain MARKET orders. "limit": IOC limits priced past the LTP,
+    with the buffer doubling each attempt.
+
+    Returns {"order_id", "fill_price", "filled_quantity", "order_ids"} on a full fill.
+    Raises OrderNotFilled otherwise (carrying any partial fill). Never places a new order
+    while an earlier one's outcome is unknown — a duplicate would double the position.
+    """
+    start = float(getattr(settings, "market_protection_pct", 2.0))
+    cap = float(getattr(settings, "market_protection_max_pct", 10.0))
+    attempts = int(getattr(settings, "order_max_attempts", 4))
+    timeout = float(getattr(settings, "order_status_timeout_seconds", 3.0))
+    use_market = str(getattr(settings, "order_style", "market")).lower() != "limit"
+
+    remaining = quantity
+    filled_total = 0
+    notional = 0.0
+    order_ids: list[str] = []
+
+    def _fail(msg: str) -> OrderNotFilled:
+        avg = notional / filled_total if filled_total else 0.0
+        return OrderNotFilled(
+            f"{side} {instrument_key}: {msg} (filled {filled_total}/{quantity})",
+            filled_qty=filled_total, avg_price=avg, remaining=remaining,
+            order_id=order_ids[-1] if order_ids else "",
+        )
+
+    for attempt in range(attempts):
+        fresh = 0.0
+        if ltp_fn is not None:
+            try:
+                fresh = float(await ltp_fn() or 0.0)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("LTP refresh failed for %s: %s", instrument_key, exc)
+        ref = fresh or ltp or reference_fallback
+        buffer_pct = 0.0
+        if use_market:
+            price = None
+        else:
+            if ref <= 0:
+                raise _fail("no reference price (LTP) available to price a protected limit order")
+            buffer_pct = min(start * (2 ** attempt), cap)
+            price = protected_limit_price(ref, side, buffer_pct)
+        attempt_tag = tag if attempt == 0 else f"{tag}_{attempt}"
+
+        try:
+            order_id = await _submit_limit(access_token, instrument_key, remaining, side, price, attempt_tag, broker)
+        except Exception as exc:  # noqa: BLE001 — outcome ambiguous (timeout) or rejected: stop, don't stack orders
+            raise _fail(f"order submit failed on attempt {attempt + 1}: {exc}") from exc
+        order_ids.append(order_id)
+
+        state = await _await_terminal(access_token, order_id, broker, timeout)
+        if state is None or not state["terminal"]:
+            # IOC should be terminal almost instantly. Try to kill it, then re-check once.
+            try:
+                await cancel_order(access_token, order_id, paper=False, broker=broker)
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Cancel of unresolved order %s failed: %s", order_id, exc)
+            state = await _await_terminal(access_token, order_id, broker, timeout)
+            if state is None or not state["terminal"]:
+                raise _fail(f"order {order_id} state unknown — not retrying to avoid a duplicate")
+
+        filled = state["filled_qty"]
+        if state["status"] == "complete" and filled <= 0:
+            filled = remaining
+        filled = min(filled, remaining)
+        if filled > 0:
+            notional += filled * (state["avg_price"] or price or ref)
+            filled_total += filled
+            remaining -= filled
+
+        if remaining <= 0:
+            return {
+                "order_id": order_ids[0],
+                "fill_price": notional / filled_total,
+                "filled_quantity": filled_total,
+                "order_ids": order_ids,
+            }
+
+        log.warning(
+            "%s %s attempt %d/%d not filled (%s, ref %.2f, buffer %.1f%%): status=%s filled=%d/%d %s",
+            side, instrument_key, attempt + 1, attempts,
+            "MARKET" if price is None else f"limit {price:.2f}", ref, buffer_pct,
+            state["status"], filled_total, quantity, state["message"],
+        )
+
+    raise _fail(f"not filled after {attempts} attempts")
+
+
 async def place_sell_market(
     access_token: str,
     instrument_key: str,
@@ -211,10 +475,14 @@ async def place_sell_market(
     ltp: float = 0.0,
     broker: str = "upstox",
     delta_creds: dict | None = None,
+    ltp_fn=None,
+    ref_fallback: float = 0.0,
 ) -> dict:
-    """Sell (short) an instrument at market price.
+    """Sell (short) an instrument "at market" (verified fill; see settings.order_style).
 
-    Returns {"order_id": str, "fill_price": float}
+    `ltp_fn` is an optional async callable returning a fresh LTP (used on retries);
+    `ref_fallback` prices the order when no LTP is available.
+    Returns {"order_id": str, "fill_price": float}. Raises OrderNotFilled on a miss.
     """
     if paper:
         oid = _paper_id()
@@ -239,50 +507,17 @@ async def place_sell_market(
         fill_price = float(result.get("average_fill_price") or ltp)
         return {"order_id": order_id, "fill_price": fill_price}
 
-    if broker == "jainam":
-        payload = {
-            "exchangeSegment": "NSEFO",
-            "exchangeInstrumentID": int(instrument_key),
-            "productType": jainam_product(),
-            "orderType": "Market",
-            "orderSide": "SELL",
-            "timeInForce": "DAY",
-            "disclosedQuantity": 0,
-            "orderQuantity": quantity,
-            "limitPrice": 0.0,
-            "stopPrice": 0.0,
-            "orderUniqueIdentifier": tag,
-        }
-        from services import jainam_service
-        resp = await jainam_service.place_order(access_token, payload)
-        app_order_id = resp.get("result", {}).get("appOrderID")
-        if not app_order_id:
-            raise RuntimeError("Jainam order placement failed: no appOrderID returned")
-        fill_price = await _get_jainam_fill_price(access_token, app_order_id, ltp)
-        return {"order_id": app_order_id, "fill_price": fill_price}
-
-    payload = {
-        "instrument_token": instrument_key,
-        "quantity": quantity,
-        "order_type": "MARKET",
-        "transaction_type": "SELL",
-        "product": upstox_product(),
-        "validity": "DAY",
-        "price": 0,            # Upstox requires price=0 for MARKET orders (UDAPI1008 otherwise)
-        "disclosed_quantity": 0,
-        "trigger_price": 0,
-        "is_amo": False,
-        "tag": tag,
-    }
-    resp = await _real_place(access_token, payload)
-    data = resp.get("data", {})
-    order_id = data.get("order_id", "")
-    # Upstox does not return a fill price on placement — fetch the real average fill.
-    fill_price = data.get("average_price") or await _get_upstox_fill_price(access_token, order_id, ltp)
-    return {
-        "order_id": order_id,
-        "fill_price": fill_price,
-    }
+    return await _place_protected(
+        access_token=access_token,
+        instrument_key=instrument_key,
+        quantity=quantity,
+        side="SELL",
+        tag=tag,
+        ltp=ltp,
+        broker=broker,
+        ltp_fn=ltp_fn,
+        reference_fallback=ref_fallback,
+    )
 
 
 async def place_sl_market(
@@ -551,10 +786,14 @@ async def place_buy_market(
     ltp: float = 0.0,
     broker: str = "upstox",
     delta_creds: dict | None = None,
+    ltp_fn=None,
+    ref_fallback: float = 0.0,
 ) -> dict:
-    """Buy (square-off a short leg) at market price.
+    """Buy (square-off a short leg) "at market" (verified fill; see settings.order_style).
 
-    Returns {"order_id": str, "fill_price": float}
+    `ltp_fn` is an optional async callable returning a fresh LTP (used on retries);
+    `ref_fallback` prices the order when no LTP is available.
+    Returns {"order_id": str, "fill_price": float}. Raises OrderNotFilled on a miss.
     """
     if paper:
         oid = _paper_id()
@@ -579,50 +818,17 @@ async def place_buy_market(
         fill_price = float(result.get("average_fill_price") or ltp)
         return {"order_id": order_id, "fill_price": fill_price}
 
-    if broker == "jainam":
-        payload = {
-            "exchangeSegment": "NSEFO",
-            "exchangeInstrumentID": int(instrument_key),
-            "productType": jainam_product(),
-            "orderType": "Market",
-            "orderSide": "BUY",
-            "timeInForce": "DAY",
-            "disclosedQuantity": 0,
-            "orderQuantity": quantity,
-            "limitPrice": 0.0,
-            "stopPrice": 0.0,
-            "orderUniqueIdentifier": tag,
-        }
-        from services import jainam_service
-        resp = await jainam_service.place_order(access_token, payload)
-        app_order_id = resp.get("result", {}).get("appOrderID")
-        if not app_order_id:
-            raise RuntimeError("Jainam exit order placement failed: no appOrderID returned")
-        fill_price = await _get_jainam_fill_price(access_token, app_order_id, ltp)
-        return {"order_id": app_order_id, "fill_price": fill_price}
-
-    payload = {
-        "instrument_token": instrument_key,
-        "quantity": quantity,
-        "order_type": "MARKET",
-        "transaction_type": "BUY",
-        "product": upstox_product(),
-        "validity": "DAY",
-        "price": 0,            # Upstox requires price=0 for MARKET orders (UDAPI1008 otherwise)
-        "disclosed_quantity": 0,
-        "trigger_price": 0,
-        "is_amo": False,
-        "tag": tag,
-    }
-    resp = await _real_place(access_token, payload)
-    data = resp.get("data", {})
-    order_id = data.get("order_id", "")
-    # Upstox does not return a fill price on placement — fetch the real average fill.
-    fill_price = data.get("average_price") or await _get_upstox_fill_price(access_token, order_id, ltp)
-    return {
-        "order_id": order_id,
-        "fill_price": fill_price,
-    }
+    return await _place_protected(
+        access_token=access_token,
+        instrument_key=instrument_key,
+        quantity=quantity,
+        side="BUY",
+        tag=tag,
+        ltp=ltp,
+        broker=broker,
+        ltp_fn=ltp_fn,
+        reference_fallback=ref_fallback,
+    )
 
 
 async def cancel_order(
@@ -669,11 +875,12 @@ async def _sl_order_state(
     order_id: str,
     broker: str,
     delta_creds: dict | None,
-) -> tuple[str, float | None]:
+) -> tuple[str, float | None, str]:
     """Query a broker for an order's terminal state.
 
-    Returns (state, fill_price) where state is 'filled' | 'cancelled' | 'unknown'.
-    Any error → 'unknown' (the caller must treat that as "not safe to square off").
+    Returns (state, fill_price, detail) where state is 'filled' | 'cancelled' | 'unknown'
+    and detail is the raw broker status / error (surfaced in logs when state is unknown).
+    Any error -> 'unknown' (the caller must treat that as "not safe to square off").
     """
     try:
         if broker == "delta":
@@ -684,10 +891,10 @@ async def _sl_order_state(
             )
             state = str(od.get("state", "")).lower()
             if state == "closed":
-                return "filled", float(od.get("average_fill_price") or 0) or None
+                return "filled", float(od.get("average_fill_price") or 0) or None, state
             if state == "cancelled":
-                return "cancelled", None
-            return "unknown", None
+                return "cancelled", None, state
+            return "unknown", None, state or "empty"
 
         if broker == "jainam":
             from services import jainam_service
@@ -696,22 +903,23 @@ async def _sl_order_state(
             if any(s == "FILLED" for s in statuses):
                 filled = [h for h in hist if str(h.get("orderstatus", "")).upper() == "FILLED"][-1]
                 price = filled.get("averageprice") or filled.get("AverageTradedPrice") or 0
-                return "filled", float(price) or None
+                return "filled", float(price) or None, "FILLED"
             if any(s in ("CANCELLED", "REJECTED") for s in statuses):
-                return "cancelled", None
-            return "unknown", None
+                return "cancelled", None, statuses[-1]
+            return "unknown", None, statuses[-1] if statuses else "no history"
 
         # Upstox
         details = await get_order_details(access_token, order_id)
         status = str(details.get("status", "")).lower()
         if status == "complete":
-            return "filled", float(details.get("average_price") or 0) or None
-        if status in ("cancelled", "rejected"):
-            return "cancelled", None
-        return "unknown", None
+            return "filled", float(details.get("average_price") or 0) or None, status
+        if status in ("cancelled", "rejected") or status.startswith("cancelled"):
+            return "cancelled", None, status
+        msg = details.get("status_message") or ""
+        return "unknown", None, f"status={status or 'empty'}" + (f" ({msg})" if msg else "")
     except Exception as e:  # noqa: BLE001
         log.warning("Could not query SL order state for %s (%s): %s", order_id, broker, e)
-        return "unknown", None
+        return "unknown", None, f"status query failed: {e}"
 
 
 async def cancel_and_confirm_sl(
@@ -749,10 +957,21 @@ async def cancel_and_confirm_sl(
         log.warning("SL cancel raised for %s; will verify actual state: %s", order_id, e)
 
     # 2. Verify the order truly can't fill anymore (cancel is not always authoritative).
-    state, fill_price = await _sl_order_state(access_token, order_id, broker, delta_creds)
+    #    Brokers often report "cancel pending"/"open" for a moment after a cancel, so poll
+    #    briefly instead of giving up on the first read — an "unknown" here makes the caller
+    #    skip the square-off entirely and leave the position open.
+    state, fill_price, detail = "unknown", None, ""
+    for i in range(8):
+        state, fill_price, detail = await _sl_order_state(access_token, order_id, broker, delta_creds)
+        if state != "unknown":
+            break
+        if i < 7:
+            await asyncio.sleep(0.4)
+    if state == "unknown":
+        log.warning("SL %s still unconfirmed after polling: %s", order_id, detail)
     if state == "filled":
         return {"state": "filled", "fill_price": fill_price}
     if state == "cancelled":
         return {"state": "cancelled"}
-    return {"state": "unknown"}
+    return {"state": "unknown", "detail": detail}
 

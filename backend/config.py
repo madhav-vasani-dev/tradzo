@@ -59,6 +59,18 @@ class Settings(BaseSettings):
     # happens we repair the order to a stop-limit whose limit price sits this far past the
     # trigger, so it still fills on a spike with a bounded worst price.
     sl_limit_buffer_pct: float = 10.0
+    # How entry/exit "market" orders are sent. "market" = plain MARKET order (what has
+    # worked on this account). "limit" = IOC limit priced past the LTP — switch to this if
+    # a broker starts refusing API market orders (Upstox announced that from 1 Oct 2025).
+    # Either way the fill is verified and an unfilled order is retried, never assumed.
+    order_style: str = "market"
+    # "limit" style only: first attempt sits this far past the LTP; each retry doubles it
+    # (and refreshes the LTP) up to the max.
+    market_protection_pct: float = 2.0
+    market_protection_max_pct: float = 10.0
+    order_max_attempts: int = 4
+    # How long to wait for a broker to report an order's terminal state.
+    order_status_timeout_seconds: float = 3.0
 
     # Live market data feed (websocket) — drives live mark-to-market P&L on open positions.
     enable_live_feed: bool = True

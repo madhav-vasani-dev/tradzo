@@ -513,15 +513,29 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
         if order["error"]:
             raise order["error"]
         item = order["item"]
-        result = await order_service.place_sell_market(
-            access_token=item["access_token"],
-            instrument_key=order["instrument_key"],
-            quantity=order["qty"],
-            tag=f"{order['tag_prefix']}_E",
-            paper=item["paper"],
-            ltp=order["ltp"],
-            broker=item["broker"],
-        )
+        ltp_fn = None
+        if item["broker"] == "upstox" and not item["paper"]:
+            ltp_fn = lambda k=order["instrument_key"]: market_data_service.get_option_ltp(k)  # noqa: E731
+        try:
+            result = await order_service.place_sell_market(
+                access_token=item["access_token"],
+                instrument_key=order["instrument_key"],
+                quantity=order["qty"],
+                tag=f"{order['tag_prefix']}_E",
+                paper=item["paper"],
+                ltp=order["ltp"],
+                broker=item["broker"],
+                ltp_fn=ltp_fn,
+            )
+        except order_service.OrderNotFilled as exc:
+            if exc.filled_qty <= 0:
+                raise
+            # Partially filled: carry the shares that DID fill (with an SL) rather than
+            # leaving an unprotected short the position book knows nothing about.
+            log.warning("Entry partially filled (%d/%d) for %s — continuing with the filled quantity.",
+                        exc.filled_qty, order["qty"], order["instrument_key"])
+            order["qty"] = exc.filled_qty
+            result = {"order_id": exc.order_id, "fill_price": exc.avg_price}
         order["sell_result"] = result
         order["fill_price"] = result["fill_price"] or order["ltp"]
         return order
@@ -680,6 +694,62 @@ def _refresh_live_feed() -> None:
         log.debug("Live feed subscription refresh skipped: %s", exc)
 
 
+async def _rearm_sl_after_failed_exit(pos: dict, access_token: str, broker: str, quantity: int) -> str | None:
+    """Put a protective BUY stop back after an exit failed once the old SL was cancelled.
+
+    Without this a failed square-off leaves the short leg naked. Returns the new SL order
+    id, or None if it could not be placed.
+    """
+    try:
+        ltp = 0.0
+        if broker == "upstox":
+            ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+        trigger = float(pos.get("slPrice") or 0.0)
+        if ltp > 0 and trigger <= ltp * 1.02:
+            trigger = ltp * 1.10          # a BUY stop's trigger must sit above the market
+        if trigger <= 0:
+            return None
+        trigger = order_service._round_up_tick(trigger)
+        res = await order_service.place_sl_market(
+            access_token=access_token,
+            instrument_key=pos["instrumentKey"],
+            quantity=quantity,
+            trigger_price=trigger,
+            tag=f"SQ_RE_{pos['id'][:8].upper()}",
+            paper=False,
+            broker=broker,
+        )
+        position_service.update_position(pos["id"], {"slOrderId": res["order_id"], "slPrice": trigger})
+        return res["order_id"]
+    except Exception as exc:  # noqa: BLE001
+        log.error("Could not re-arm SL for %s after failed exit: %s", pos.get("id"), exc)
+        return None
+
+
+async def _handle_failed_exit(pos: dict, exc: Exception, access_token: str, broker: str, sl_cancelled: bool) -> str:
+    """After a failed square-off BUY: record any partial fill and re-arm the SL.
+
+    Returns a short note to append to the error log entry.
+    """
+    notes: list[str] = []
+    qty = int(pos.get("quantity") or 0)
+    if isinstance(exc, order_service.OrderNotFilled) and exc.filled_qty > 0:
+        qty = max(qty - exc.filled_qty, 0)
+        try:
+            position_service.update_position(pos["id"], {
+                "quantity": qty,
+                "partialExitQty": exc.filled_qty,
+                "partialExitPrice": round(exc.avg_price, 2),
+            })
+        except Exception as e:  # noqa: BLE001
+            log.error("Could not record partial exit on %s: %s", pos.get("id"), e)
+        notes.append(f"partially filled {exc.filled_qty}, {qty} still open")
+    if sl_cancelled and qty > 0 and broker in ("upstox", "jainam"):
+        sl_id = await _rearm_sl_after_failed_exit(pos, access_token, broker, qty)
+        notes.append("stop-loss re-armed" if sl_id else "STOP-LOSS COULD NOT BE RE-ARMED - position is unprotected")
+    return "; ".join(notes)
+
+
 # ── 15:29 — Execute exit ──────────────────────────────────────────────────────
 
 async def execute_exit() -> dict:
@@ -733,6 +803,7 @@ async def execute_exit() -> dict:
         except Exception:
             pass
 
+        sl_cancelled = False
         try:
             # Step 1: Cancel the SL-M and CONFIRM it can't fill, before squaring off.
             sl_order_id = pos.get("slOrderId", "")
@@ -746,7 +817,8 @@ async def execute_exit() -> dict:
                 # Could not confirm the SL is cancelled — squaring off now risks a double-fill
                 # (SL + buy → net long). Leave the position open for the next sync / manual review.
                 raise RuntimeError(
-                    f"SL {sl_order_id} could not be confirmed cancelled — skipping square-off to avoid double-fill"
+                    f"SL {sl_order_id} could not be confirmed cancelled ({sl_state.get('detail') or 'no detail'}) "
+                    f"— skipping square-off to avoid double-fill"
                 )
             if sl_state["state"] == "filled":
                 # The SL already closed the short. Reconcile from the SL fill; do NOT buy again.
@@ -777,14 +849,20 @@ async def execute_exit() -> dict:
                 closed_deployment_ids.add(pos.get("userStrategyId", ""))
                 continue
 
-            # Step 2: Get current LTP for PnL calculation
+            sl_cancelled = bool(sl_order_id) and not pos_paper
+
+            # Step 2: Get current LTP (prices the exit order and the PnL calculation)
             current_ltp = 0.0
+            ltp_fn = None
             if pos_paper:
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
             elif broker == "upstox":
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+                ltp_fn = lambda k=pos["instrumentKey"]: market_data_service.get_option_ltp(k)  # noqa: E731
 
-            # Step 3: Place BUY MARKET to square off (SL is confirmed cancelled)
+            # Step 3: BUY to square off (SL is confirmed cancelled). Brokers no longer take
+            # API MARKET orders, so this is a protected IOC limit; it raises OrderNotFilled
+            # if it can't fill — we must NOT mark the leg closed in that case.
             tag = f"SQ_{pos['id'][:8].upper()}"
             buy_result = await order_service.place_buy_market(
                 access_token=access_token,
@@ -794,6 +872,8 @@ async def execute_exit() -> dict:
                 paper=pos_paper,
                 ltp=current_ltp,
                 broker=broker,
+                ltp_fn=ltp_fn,
+                ref_fallback=float(pos.get("slPrice") or pos.get("entryPrice") or 0.0),
             )
             exit_price = buy_result["fill_price"] or current_ltp or pos["entryPrice"]
 
@@ -834,12 +914,15 @@ async def execute_exit() -> dict:
         except Exception as exc:  # noqa: BLE001
             log.error("Exit failed for position %s: %s", pos["id"], exc)
             failed += 1
+            # The SL was cancelled before the BUY — put protection back and record any
+            # partial fill BEFORE releasing the claim, so the 15:29:30 retry sees true state.
+            recovery = await _handle_failed_exit(pos, exc, access_token, broker, sl_cancelled)
             # Give the claim back so a retry or manual square-off can pick this leg up
             # immediately rather than waiting out the staleness window.
             position_service.release_position_claim(pos["id"])
             _log(
                 "exit_error",
-                f"Exit failed for {pos.get('symbol')} — {exc}",
+                f"Exit failed for {pos.get('symbol')} — {exc}" + (f" [{recovery}]" if recovery else ""),
                 severity="error",
                 date_str=today,
                 user_id=pos.get("userId"),
@@ -1026,9 +1109,17 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
                     ltp=current_ltp,
                     broker=broker,
                     delta_creds=delta_creds,
+                    ltp_fn=(lambda k=pos["instrumentKey"]: market_data_service.get_option_ltp(k))
+                    if (broker == "upstox" and not pos_paper) else None,
+                    ref_fallback=float(pos.get("slPrice") or pos.get("entryPrice") or 0.0),
                 )
             except Exception as exc:  # noqa: BLE001
                 log.error("Manual exit: square-off BUY failed for %s: %s", pos["id"], exc)
+                recovery = await _handle_failed_exit(
+                    pos, exc, access_token, broker, sl_cancelled=bool(sl_order_id) and not pos_paper,
+                )
+                if recovery:
+                    exc = RuntimeError(f"{exc} [{recovery}]")
                 _log(
                     "exit_error",
                     f"Square-off failed for {pos.get('symbol')} — {exc}. "
