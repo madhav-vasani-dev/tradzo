@@ -226,8 +226,11 @@ class OrderNotFilled(RuntimeError):
     """
 
     def __init__(self, message: str, *, filled_qty: int = 0, avg_price: float = 0.0,
-                 remaining: int = 0, order_id: str = ""):
+                 remaining: int = 0, order_id: str = "", ambiguous: bool = False):
         super().__init__(message)
+        # True when we could not tell whether the order filled (timeout, unreadable status).
+        # The order may well HAVE filled — callers must check the broker before acting.
+        self.ambiguous = ambiguous
         self.filled_qty = filled_qty
         self.avg_price = avg_price
         self.remaining = remaining
@@ -396,12 +399,12 @@ async def _place_protected(
     notional = 0.0
     order_ids: list[str] = []
 
-    def _fail(msg: str) -> OrderNotFilled:
+    def _fail(msg: str, ambiguous: bool = False) -> OrderNotFilled:
         avg = notional / filled_total if filled_total else 0.0
         return OrderNotFilled(
             f"{side} {instrument_key}: {msg} (filled {filled_total}/{quantity})",
             filled_qty=filled_total, avg_price=avg, remaining=remaining,
-            order_id=order_ids[-1] if order_ids else "",
+            order_id=order_ids[-1] if order_ids else "", ambiguous=ambiguous,
         )
 
     for attempt in range(attempts):
@@ -425,7 +428,7 @@ async def _place_protected(
         try:
             order_id = await _submit_limit(access_token, instrument_key, remaining, side, price, attempt_tag, broker)
         except Exception as exc:  # noqa: BLE001 — outcome ambiguous (timeout) or rejected: stop, don't stack orders
-            raise _fail(f"order submit failed on attempt {attempt + 1}: {exc}") from exc
+            raise _fail(f"order submit failed on attempt {attempt + 1}: {exc}", ambiguous=True) from exc
         order_ids.append(order_id)
 
         state = await _await_terminal(access_token, order_id, broker, timeout)
@@ -437,7 +440,7 @@ async def _place_protected(
                 log.warning("Cancel of unresolved order %s failed: %s", order_id, exc)
             state = await _await_terminal(access_token, order_id, broker, timeout)
             if state is None or not state["terminal"]:
-                raise _fail(f"order {order_id} state unknown — not retrying to avoid a duplicate")
+                raise _fail(f"order {order_id} state unknown — not retrying to avoid a duplicate", ambiguous=True)
 
         filled = state["filled_qty"]
         if state["status"] == "complete" and filled <= 0:
@@ -922,6 +925,55 @@ async def _sl_order_state(
         return "unknown", None, f"status query failed: {e}"
 
 
+async def get_net_position(access_token: str, instrument_key: str, broker: str) -> dict | None:
+    """The broker's current NET position in one instrument.
+
+    Returns {"net_qty": int (negative = short), "buy_price": float, "sell_price": float,
+    "realised": float | None, "found": bool}, or None if it could not be determined.
+    This is the source of truth before any exit BUY: Tradzo's own position record can be
+    stale (leg closed by hand in the broker app, SL filled, partial fills, ...).
+    """
+    try:
+        if broker == "jainam":
+            from services import jainam_service
+            rows = await jainam_service.get_positions(access_token)
+            for r in rows:
+                if str(_ci(r, "exchangeinstrumentid", "exchangeinstrumentidstr", default="")) == str(instrument_key):
+                    qty = _ci(r, "quantity", "netquantity")
+                    if qty is None:
+                        return None                      # unfamiliar shape -> unknown
+                    return {
+                        "net_qty": int(float(qty)),
+                        "buy_price": float(_ci(r, "buyaverageprice", default=0) or 0),
+                        "sell_price": float(_ci(r, "sellaverageprice", default=0) or 0),
+                        "realised": None,
+                        "found": True,
+                    }
+            return None                                  # not listed / unfamiliar -> unknown
+
+        headers = {"accept": "application/json", "Authorization": f"Bearer {access_token}"}
+        async with httpx.AsyncClient(timeout=20) as client:
+            resp = await client.get(f"{UPSTOX_BASE}/portfolio/short-term-positions", headers=headers)
+        body = resp.json() if resp.content else {}
+        if resp.status_code != 200:
+            log.warning("Upstox positions failed %s: %s", resp.status_code, body)
+            return None
+        rows = [r for r in (body.get("data") or []) if str(r.get("instrument_token")) == str(instrument_key)]
+        if not rows:
+            return {"net_qty": 0, "buy_price": 0.0, "sell_price": 0.0, "realised": None, "found": False}
+        realised = [r.get("realised") for r in rows if r.get("realised") is not None]
+        return {
+            "net_qty": sum(int(float(r.get("quantity") or 0)) for r in rows),
+            "buy_price": float(rows[0].get("buy_price") or rows[0].get("day_buy_price") or 0),
+            "sell_price": float(rows[0].get("sell_price") or rows[0].get("day_sell_price") or 0),
+            "realised": float(sum(float(x) for x in realised)) if realised else None,
+            "found": True,
+        }
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Could not read broker position for %s (%s): %s", instrument_key, broker, exc)
+        return None
+
+
 async def cancel_and_confirm_sl(
     access_token: str,
     order_id: str,
@@ -961,12 +1013,24 @@ async def cancel_and_confirm_sl(
     #    briefly instead of giving up on the first read — an "unknown" here makes the caller
     #    skip the square-off entirely and leave the position open.
     state, fill_price, detail = "unknown", None, ""
-    for i in range(8):
-        state, fill_price, detail = await _sl_order_state(access_token, order_id, broker, delta_creds)
+    for rnd in range(2):
+        for i in range(8):
+            state, fill_price, detail = await _sl_order_state(access_token, order_id, broker, delta_creds)
+            if state != "unknown":
+                break
+            if i < 7:
+                await asyncio.sleep(0.4)
         if state != "unknown":
             break
-        if i < 7:
-            await asyncio.sleep(0.4)
+        if rnd == 0:
+            # Still not terminal after ~3s: the first cancel may simply not have landed.
+            # Ask again (harmless if it's already gone), then give it one more window.
+            log.warning("SL %s unconfirmed after first window (%s) - re-sending cancel.", order_id, detail)
+            try:
+                await cancel_order(access_token=access_token, order_id=order_id, paper=False,
+                                   broker=broker, delta_creds=delta_creds, product_id=product_id)
+            except Exception as e:  # noqa: BLE001
+                log.warning("SL re-cancel raised for %s: %s", order_id, e)
     if state == "unknown":
         log.warning("SL %s still unconfirmed after polling: %s", order_id, detail)
     if state == "filled":

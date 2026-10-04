@@ -260,7 +260,9 @@ def predefined_scans(
     all_symbols = [d.id for d in db.collection("seasonalityStocks").stream()]
 
     # Load all cached daily results and ensure open-basis is current.
-    cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+    cached_daily = seasonality_service.load_all_results_from_firestore(
+        mode="daily", fields=seasonality_service.SCAN_FIELDS
+    )
 
     from services.seasonality_service import _year_priority  # noqa: PLC0415
 
@@ -286,7 +288,9 @@ def predefined_scans(
             len(to_compute_open), len(missing_symbols), len(wrong_basis_symbols),
         )
         _compute_missing_daily_data(to_compute_open, return_basis="open")
-        cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+        cached_daily = seasonality_service.load_all_results_from_firestore(
+        mode="daily", fields=seasonality_service.SCAN_FIELDS
+    )
 
     # Compute all 4 presets (prev_close computed in parallel via Drive downloads)
     scans = seasonality_service.compute_predefined_scans_for_date(target_date, cached_daily)
@@ -351,7 +355,9 @@ def trade_scanner(
 
     # Load all cached daily results (no basis filter — the doc is keyed by symbol/mode/years only,
     # one doc per combination, storing whichever basis it was last computed with).
-    cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+    cached_daily = seasonality_service.load_all_results_from_firestore(
+        mode="daily", fields=seasonality_service.SCAN_FIELDS
+    )
 
     # Split into: symbols that have no cached doc at all (need first-time compute),
     # and symbols whose cached doc used a different basis (need re-compute).
@@ -381,7 +387,9 @@ def trade_scanner(
         )
         _compute_missing_daily_data(symbols_to_compute, return_basis=basis)
         # Re-fetch to pick up freshly computed docs.
-        cached_daily = seasonality_service.load_all_results_from_firestore(mode="daily")
+        cached_daily = seasonality_service.load_all_results_from_firestore(
+        mode="daily", fields=seasonality_service.SCAN_FIELDS
+    )
 
     results = seasonality_service.scan_trades_by_date(
         target_date=target_date,

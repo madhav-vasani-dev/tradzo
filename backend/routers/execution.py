@@ -99,6 +99,15 @@ async def square_off_user_strategy(user_strategy_id: str, current_user: dict = D
         raise HTTPException(status_code=403, detail="Forbidden: You do not own this strategy deployment.")
 
     summary = await execution_service.square_off_single_deployment(user_strategy_id)
+    if summary.get("status") == "partial":
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                f"{summary.get('skipped', 0)} leg(s) could not be squared off and are still open "
+                f"(see the Activity log). The algo was NOT stopped, so Tradzo keeps managing them - "
+                f"retry, or close them in your broker app."
+            ),
+        )
     return {"status": "success", **summary}
 
 

@@ -193,6 +193,23 @@ def reset_daily_statuses() -> dict:
     """
     count = firebase_service.reset_all_strategy_statuses_to_enabled()
     log.info("Daily status reset: %d deployment(s) set to 'enabled'.", count)
+    try:
+        for p in position_service.get_stale_open_positions(_today()):
+            if p.get("strategyCode") == "BTC_OPTION_SELLING":
+                continue
+            _log(
+                "stale_position",
+                f"{p.get('symbol')} from {p.get('date')} is still marked open in Tradzo. Check your broker "
+                f"account; if it is closed there, fix the record.",
+                severity="warning",
+                date_str=_today(),
+                user_id=p.get("userId"),
+                strategy_id=p.get("strategyId"),
+                position_id=p["id"],
+                paper=p.get("isPaper", False),
+            )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Stale-position check failed: %s", exc)
     _log("daily_reset", f"Daily reset complete — {count} deployment(s) set to enabled.", "info")
     return {"reset": count}
 
@@ -529,13 +546,21 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
             )
         except order_service.OrderNotFilled as exc:
             if exc.filled_qty <= 0:
-                raise
-            # Partially filled: carry the shares that DID fill (with an SL) rather than
-            # leaving an unprotected short the position book knows nothing about.
-            log.warning("Entry partially filled (%d/%d) for %s — continuing with the filled quantity.",
-                        exc.filled_qty, order["qty"], order["instrument_key"])
-            order["qty"] = exc.filled_qty
-            result = {"order_id": exc.order_id, "fill_price": exc.avg_price}
+                rec = await _reconcile_ambiguous_sell(order, item, exc) if exc.ambiguous else None
+                if not rec:
+                    raise
+                # The status was unreadable but the broker shows the short: it filled.
+                log.warning("Entry SELL status unknown for %s but broker shows a short of %d - keeping the leg.",
+                            order["instrument_key"], rec["qty"])
+                order["qty"] = rec["qty"]
+                result = rec["result"]
+            else:
+                # Partially filled: carry the shares that DID fill (with an SL) rather than
+                # leaving an unprotected short the position book knows nothing about.
+                log.warning("Entry partially filled (%d/%d) for %s — continuing with the filled quantity.",
+                            exc.filled_qty, order["qty"], order["instrument_key"])
+                order["qty"] = exc.filled_qty
+                result = {"order_id": exc.order_id, "fill_price": exc.avg_price}
         order["sell_result"] = result
         order["fill_price"] = result["fill_price"] or order["ltp"]
         return order
@@ -694,6 +719,128 @@ def _refresh_live_feed() -> None:
         log.debug("Live feed subscription refresh skipped: %s", exc)
 
 
+# Deployment statuses that mean "the user switched this algo off" — the automatic EOD
+# exit must NOT place orders for them (admin pauses are exempt: those still get closed).
+_HANDS_OFF_STATUSES = ("disabled_today", "stopped", "paused")
+
+
+def _stopped_reason(user_strategy_id: str | None) -> str | None:
+    """Why the automatic exit must leave this deployment alone, or None if it may act."""
+    if not user_strategy_id or str(user_strategy_id).startswith("system"):
+        return None
+    try:
+        doc = firebase_service.get_db().collection("userStrategies").document(user_strategy_id).get()
+    except Exception as exc:  # noqa: BLE001 — can't read it: don't block a safety exit on that
+        log.warning("Could not read status of deployment %s: %s", user_strategy_id, exc)
+        return None
+    if not doc.exists:
+        return None
+    data = doc.to_dict() or {}
+    if data.get("pausedByAdmin"):
+        return None
+    status = data.get("status")
+    return status if status in _HANDS_OFF_STATUSES else None
+
+
+async def _broker_exit_quantity(pos: dict, access_token: str, broker: str, pos_paper: bool) -> tuple[int, dict | None]:
+    """How many lots-worth of shares the exit BUY should be, per the BROKER's own books.
+
+    Returns (qty, snapshot). qty == 0 means the broker is already flat (closed by hand,
+    SL fill, ...) and NO order must be sent. Raises if the broker shows a net-long or the
+    position can't be read (Upstox) — buying blind is how a net-long gets created.
+    """
+    recorded = int(pos.get("quantity") or 0)
+    if pos_paper or broker not in ("upstox", "jainam"):
+        return recorded, None
+    snap = None
+    for attempt in range(3):
+        snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker)
+        if snap is not None:
+            break
+        await asyncio.sleep(0.5 * (attempt + 1))
+    if snap is None:
+        if broker == "jainam":
+            # Jainam's positions payload is unverified — don't let a parsing gap block exits.
+            log.warning("Jainam position unreadable for %s — proceeding on Tradzo's record.", pos.get("symbol"))
+            return recorded, None
+        raise RuntimeError(
+            "could not read the broker's position - not buying blind (risk of going net long)"
+        )
+    net = snap["net_qty"]
+    if net > 0:
+        raise RuntimeError(f"broker shows NET LONG {net} for {pos.get('symbol')} - refusing to BUY more")
+    short = -net
+    return min(recorded, short), snap
+
+
+def _record_closed_externally(pos: dict, snap: dict | None, today: str, user_name: str, pos_paper: bool,
+                              exit_reason: str = "closed_externally",
+                              label: str = "CLOSED OUTSIDE TRADZO") -> float:
+    """The broker is already flat for this leg: reconcile the record, place nothing."""
+    entry = float(pos.get("entryPrice") or 0)
+    qty = int(pos.get("quantity") or 0)
+    exit_price = float((snap or {}).get("buy_price") or 0)
+    realised = (snap or {}).get("realised")
+    if realised is not None:
+        pnl = float(realised)
+    elif exit_price > 0:
+        pnl = (entry - exit_price) * qty
+    else:
+        pnl = 0.0
+    position_service.update_position(pos["id"], {
+        "status": "squared_off",
+        "exitReason": exit_reason,
+        "exitOrderId": None,
+        "exitPrice": exit_price or None,
+        "exitAt": _now_ist(),
+        "pnl": round(pnl, 2),
+    })
+    _log(
+        "square_off",
+        f"[{label}] {pos.get('symbol')} | broker already flat - no order placed | "
+        f"PnL {pnl:+.2f}" + ("" if realised is not None or exit_price > 0 else " (unknown, recorded as 0)"),
+        severity="warning",
+        date_str=today,
+        user_id=pos.get("userId"),
+        user_name=user_name,
+        strategy_id=pos.get("strategyId"),
+        position_id=pos["id"],
+        paper=pos_paper,
+        metadata={"symbol": pos.get("symbol"), "pnl": round(pnl, 2), "exitPrice": exit_price or None},
+    )
+    return pnl
+
+
+async def _reconcile_failed_exit(pos: dict, access_token: str, broker: str, pos_paper: bool,
+                                 today: str, user_name: str, exit_reason: str) -> bool:
+    """After an exit 'failure': did the BUY actually fill? Ask the broker, not our logs.
+
+    A timeout or unreadable order status does not mean the order failed. If the broker is
+    now flat the leg IS closed — record it, and above all do NOT re-arm a stop-loss on it
+    or let the retry pass buy again (that is how a net-long gets created).
+    Returns True when the leg was found flat and reconciled.
+    """
+    if pos_paper or broker not in ("upstox", "jainam"):
+        return False
+    snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker)
+    if snap is None or snap["net_qty"] != 0:
+        return False
+    _record_closed_externally(pos, snap, today, user_name, pos_paper, exit_reason=exit_reason,
+                              label="EXIT CONFIRMED VIA BROKER")
+    return True
+
+
+async def _reconcile_ambiguous_sell(order: dict, item: dict, exc) -> dict | None:
+    """Entry SELL outcome unknown: if the broker shows a short, the leg IS open - keep it."""
+    if item["paper"] or item["broker"] not in ("upstox", "jainam"):
+        return None
+    snap = await order_service.get_net_position(item["access_token"], order["instrument_key"], item["broker"])
+    if not snap or snap["net_qty"] >= 0:
+        return None
+    qty = min(-snap["net_qty"], int(order["qty"]))
+    return {"qty": qty, "result": {"order_id": exc.order_id, "fill_price": snap["sell_price"] or order["ltp"]}}
+
+
 async def _rearm_sl_after_failed_exit(pos: dict, access_token: str, broker: str, quantity: int) -> str | None:
     """Put a protective BUY stop back after an exit failed once the old SL was cancelled.
 
@@ -733,6 +880,10 @@ async def _handle_failed_exit(pos: dict, exc: Exception, access_token: str, brok
     """
     notes: list[str] = []
     qty = int(pos.get("quantity") or 0)
+    try:
+        position_service.update_position(pos["id"], {"exitFailedAt": _now_ist()})
+    except Exception as e:  # noqa: BLE001
+        log.error("Could not flag failed exit on %s: %s", pos.get("id"), e)
     if isinstance(exc, order_service.OrderNotFilled) and exc.filled_qty > 0:
         qty = max(qty - exc.filled_qty, 0)
         try:
@@ -745,6 +896,14 @@ async def _handle_failed_exit(pos: dict, exc: Exception, access_token: str, brok
             log.error("Could not record partial exit on %s: %s", pos.get("id"), e)
         notes.append(f"partially filled {exc.filled_qty}, {qty} still open")
     if sl_cancelled and qty > 0 and broker in ("upstox", "jainam"):
+        if getattr(exc, "ambiguous", False):
+            # The BUY may have filled. A stop-loss on a flat leg would open a LONG when it
+            # triggers, so only re-arm if the broker confirms we are still short.
+            snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker)
+            if snap is None or snap["net_qty"] >= 0:
+                notes.append("BUY outcome unknown and broker position unreadable - stop-loss NOT re-armed; "
+                             "check the broker app")
+                return "; ".join(notes)
         sl_id = await _rearm_sl_after_failed_exit(pos, access_token, broker, qty)
         notes.append("stop-loss re-armed" if sl_id else "STOP-LOSS COULD NOT BE RE-ARMED - position is unprotected")
     return "; ".join(notes)
@@ -752,8 +911,13 @@ async def _handle_failed_exit(pos: dict, exc: Exception, access_token: str, brok
 
 # ── 15:29 — Execute exit ──────────────────────────────────────────────────────
 
-async def execute_exit() -> dict:
+async def execute_exit(retry: bool = False) -> dict:
     """Square off all remaining open positions at 15:29 PM.
+
+    Deployments the user has stopped (disabled_today / stopped / paused) are skipped, and
+    before any BUY the broker's real net position is checked so a leg that was already
+    closed by hand is never bought again. `retry=True` (the 15:29:30 pass) only revisits
+    legs whose first attempt FAILED — it never touches anything else.
 
     Steps per open position:
       1. Cancel the SL-M order (it's no longer needed).
@@ -770,6 +934,8 @@ async def execute_exit() -> dict:
         p for p in position_service.get_exitable_positions_for_date(today)
         if p.get("strategyCode") != "BTC_OPTION_SELLING"
     ]
+    if retry:
+        open_positions = [p for p in open_positions if p.get("exitFailedAt")]
     accounts = _accounts_by_id()
 
     if not open_positions:
@@ -782,6 +948,24 @@ async def execute_exit() -> dict:
     closed_deployment_ids: set[str] = set()
 
     for pos in open_positions:
+        # The user switched this algo off: place NO automatic orders for it.
+        stopped = _stopped_reason(pos.get("userStrategyId"))
+        if stopped:
+            log.warning("EOD exit: %s skipped - deployment is '%s'.", pos.get("symbol"), stopped)
+            _log(
+                "exit_skipped",
+                f"{pos.get('symbol')} left untouched - algo is '{stopped}'. If it is still open in "
+                f"your broker account, close it yourself (its stop-loss expires at end of day).",
+                severity="warning",
+                date_str=today,
+                user_id=pos.get("userId"),
+                strategy_id=pos.get("strategyId"),
+                position_id=pos["id"],
+                paper=pos.get("isPaper", paper),
+                metadata={"deploymentStatus": stopped},
+            )
+            continue
+
         # Take exclusive ownership before any broker call — a manual square-off or a
         # second /trigger-exit could otherwise be closing this same leg right now.
         if not position_service.claim_position_for_exit(pos["id"]):
@@ -851,6 +1035,15 @@ async def execute_exit() -> dict:
 
             sl_cancelled = bool(sl_order_id) and not pos_paper
 
+            # Step 1b: trust the BROKER, not our record. Already flat -> nothing to buy;
+            # smaller than recorded -> buy only what is really short.
+            exit_qty, snap = await _broker_exit_quantity(pos, access_token, broker, pos_paper)
+            if exit_qty <= 0:
+                _record_closed_externally(pos, snap, today, user_name, pos_paper)
+                closed += 1
+                closed_deployment_ids.add(pos.get("userStrategyId", ""))
+                continue
+
             # Step 2: Get current LTP (prices the exit order and the PnL calculation)
             current_ltp = 0.0
             ltp_fn = None
@@ -867,7 +1060,7 @@ async def execute_exit() -> dict:
             buy_result = await order_service.place_buy_market(
                 access_token=access_token,
                 instrument_key=pos["instrumentKey"],
-                quantity=pos["quantity"],
+                quantity=exit_qty,
                 tag=tag,
                 paper=pos_paper,
                 ltp=current_ltp,
@@ -913,6 +1106,10 @@ async def execute_exit() -> dict:
 
         except Exception as exc:  # noqa: BLE001
             log.error("Exit failed for position %s: %s", pos["id"], exc)
+            if await _reconcile_failed_exit(pos, access_token, broker, pos_paper, today, user_name, "eod_exit"):
+                closed += 1
+                closed_deployment_ids.add(pos.get("userStrategyId", ""))
+                continue
             failed += 1
             # The SL was cancelled before the BUY — put protection back and record any
             # partial fill BEFORE releasing the claim, so the 15:29:30 retry sees true state.
@@ -1098,12 +1295,17 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
             #    The SL is already cancelled here, so a failure must NOT release the claim
             #    silently without saying so — log loudly and leave it for the EOD job.
             try:
+                exit_qty, snap = await _broker_exit_quantity(pos, access_token, broker, pos_paper)
+                if exit_qty <= 0:
+                    _record_closed_externally(pos, snap, today, user_name, pos_paper)
+                    closed += 1
+                    continue
                 current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
                 tag = f"SQ_MAN_{pos['id'][:6].upper()}"
                 buy_result = await order_service.place_buy_market(
                     access_token=access_token,
                     instrument_key=pos["instrumentKey"],
-                    quantity=pos["quantity"],
+                    quantity=exit_qty,
                     tag=tag,
                     paper=pos_paper,
                     ltp=current_ltp,
@@ -1115,6 +1317,9 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
                 )
             except Exception as exc:  # noqa: BLE001
                 log.error("Manual exit: square-off BUY failed for %s: %s", pos["id"], exc)
+                if await _reconcile_failed_exit(pos, access_token, broker, pos_paper, today, user_name, "manual_exit"):
+                    closed += 1
+                    continue
                 recovery = await _handle_failed_exit(
                     pos, exc, access_token, broker, sl_cancelled=bool(sl_order_id) and not pos_paper,
                 )
@@ -1172,6 +1377,11 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
             },
         )
         closed += 1
+
+    if skipped:
+        # A leg is still open. Do NOT mark the algo stopped: a stopped algo is skipped by the
+        # EOD exit, which would leave this leg open (and its stop-loss expiring) overnight.
+        return {"closed": closed, "skipped": skipped, "status": "partial"}
 
     # Set status to disabled_today so that EOD job does not process it again and it does not re-enter today
     firebase_service.update_user_strategy_status(user_strategy_id, "disabled_today")

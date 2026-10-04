@@ -162,6 +162,22 @@ def get_exitable_positions_for_date(date_str: str) -> list[dict]:
     return [{"id": d.id, **d.to_dict()} for d in docs]
 
 
+def get_stale_open_positions(before_date: str) -> list[dict]:
+    """Positions from an EARLIER day still marked open/closing (exit never completed)."""
+    docs = (
+        get_db()
+        .collection("positions")
+        .where(filter=FieldFilter("status", "in", ["open", CLOSING_STATUS]))
+        .stream()
+    )
+    out = []
+    for d in docs:
+        data = d.to_dict() or {}
+        if (data.get("date") or "9999") < before_date:
+            out.append({"id": d.id, **data})
+    return out
+
+
 def get_positions_for_date(date_str: str) -> list[dict]:
     """Return ALL positions (any status) for the given date string."""
     docs = (

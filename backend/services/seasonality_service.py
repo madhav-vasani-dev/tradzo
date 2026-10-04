@@ -509,56 +509,130 @@ def load_result_from_firestore(
     return {"id": snap.id, **snap.to_dict()}
 
 
+# Fields the date scanners actually need. Daily docs carry a ~366-column x N-year
+# "grid" that the scanners never read; projecting it away cuts the payload ~10x.
+SCAN_FIELDS: list[str] = ["symbol", "viewMode", "years", "return_basis", "stats"]
+
+_PAGE_SIZE_FULL = 25        # full docs (with grid) are large — keep pages small
+_PAGE_SIZE_PROJECTED = 200  # stats-only docs are small
+_PAGE_ATTEMPTS = 3
+
+
+def _run_page(query, attempts: int = _PAGE_ATTEMPTS) -> list:
+    """Run one bounded page query with a simple retry loop.
+
+    We pass retry=None and retry ourselves: on firestore 2.x, an error during a
+    stream with retry=None crashes inside the SDK with
+    "'NoneType' object has no attribute '_predicate'", which hides the real
+    error (usually DEADLINE_EXCEEDED). Catching it here and retrying the page
+    keeps each RPC short and recoverable.
+    """
+    import time as _time
+
+    last_exc: Exception | None = None
+    for attempt in range(1, attempts + 1):
+        try:
+            return list(query.stream(retry=None, timeout=60))
+        except Exception as exc:  # noqa: BLE001
+            cause = exc.__cause__ or exc.__context__ or exc
+            last_exc = exc
+            logger.warning(
+                "Firestore page query failed (attempt %d/%d): %s", attempt, attempts, cause
+            )
+            _time.sleep(0.5 * attempt)
+    assert last_exc is not None
+    raise last_exc
+
+
 def load_all_results_from_firestore(
     symbols: list[str] | None = None,
     mode: ViewMode | None = None,
     years: int | str | None = None,
+    fields: list[str] | None = None,
 ) -> list[dict]:
     """Fetch cached results, optionally filtered by symbol / mode / years.
 
-    Note: `retry=None` is intentional — it disables the built-in Firestore
-    retry logic which triggers an `AttributeError` on newer grpc versions
-    when a query times out (grpc._channel._UnaryStreamMultiCallable has no
-    attribute '_retry').  We handle retries / errors at the call-site instead.
+    Why this is not a single ``query.stream()``
+    -------------------------------------------
+    ``seasonalityResults`` holds ~500 daily docs, each with a large ``grid``.
+    Streaming them in one RunQuery exceeds Firestore's server-side query
+    deadline ("Query timed out. Please try either limiting the entities
+    scanned…"), which broke the Trade Scanner and Seasonality pages. Instead:
+
+    * symbols + mode + years all given → direct document lookups by ID
+      (``{SYMBOL}_{mode}_{years}``) via ``get_all`` — no query scan at all.
+    * otherwise → paginated query (ordered by document ID, bounded pages),
+      each page its own short RPC with its own retries.
+    * ``fields`` → server-side projection (e.g. :data:`SCAN_FIELDS`) so large
+      fields like ``grid`` are not transferred when the caller doesn't need them.
     """
     from services.firebase_service import get_db
 
     db = get_db()
-    query = db.collection("seasonalityResults")
+    coll = db.collection("seasonalityResults")
+    symbol_set = {s.upper() for s in symbols} if symbols else None
+    years_str = str(years) if years is not None else None
 
-    if mode:
-        from google.cloud.firestore_v1.base_query import FieldFilter
-        query = query.where(filter=FieldFilter("viewMode", "==", mode))
-
-    # retry=None prevents the broken retry path that causes AttributeError on
-    # newer grpc versions; timeout=120 gives the query a reasonable deadline.
     try:
-        docs = query.stream(retry=None, timeout=120)
+        # ── Fast path: exact doc IDs are known ──────────────────────────────────
+        if symbol_set and mode and years is not None:
+            refs = [coll.document(_doc_id(sym, mode, years)) for sym in sorted(symbol_set)]
+            results: list[dict] = []
+            for i in range(0, len(refs), 100):
+                chunk = refs[i : i + 100]
+                snaps = None
+                for attempt in range(1, _PAGE_ATTEMPTS + 1):
+                    try:
+                        snaps = list(db.get_all(chunk, field_paths=fields, timeout=60))
+                        break
+                    except Exception as exc:  # noqa: BLE001
+                        logger.warning(
+                            "Firestore get_all failed (attempt %d/%d): %s",
+                            attempt, _PAGE_ATTEMPTS, exc.__cause__ or exc,
+                        )
+                        if attempt == _PAGE_ATTEMPTS:
+                            raise
+                for snap in snaps or []:
+                    if snap.exists:
+                        results.append({"id": snap.id, **(snap.to_dict() or {})})
+            return results
+
+        # ── Paginated query path ────────────────────────────────────────────────
+        from google.cloud.firestore_v1.base_query import FieldFilter
+
+        base = coll
+        if mode:
+            base = base.where(filter=FieldFilter("viewMode", "==", mode))
+        if fields:
+            base = base.select(fields)
+        base = base.order_by("__name__")
+        page_size = _PAGE_SIZE_PROJECTED if fields else _PAGE_SIZE_FULL
+
         results = []
-        symbol_set = {s.upper() for s in symbols} if symbols else None
-        years_str = str(years) if years is not None else None
-
-        for d in docs:
-            data = {"id": d.id, **d.to_dict()}
-            sym = data.get("symbol")
-            doc_years = str(data.get("years")) if data.get("years") is not None else None
-
-            if symbol_set and sym not in symbol_set:
-                continue
-            if years_str is not None and doc_years != years_str:
-                continue
-
-            results.append(data)
+        last_snap = None
+        while True:
+            q = base.limit(page_size)
+            if last_snap is not None:
+                q = q.start_after(last_snap)
+            page = _run_page(q)
+            for d in page:
+                data = {"id": d.id, **(d.to_dict() or {})}
+                sym = data.get("symbol")
+                doc_years = str(data.get("years")) if data.get("years") is not None else None
+                if symbol_set and sym not in symbol_set:
+                    continue
+                if years_str is not None and doc_years != years_str:
+                    continue
+                results.append(data)
+            if len(page) < page_size:
+                break
+            last_snap = page[-1]
         return results
     except Exception as exc:
-        import logging as _logging
-        _logging.getLogger(__name__).error(
-            "load_all_results_from_firestore failed (mode=%s): %s", mode, exc
-        )
+        cause = exc.__cause__ or exc
+        logger.error("load_all_results_from_firestore failed (mode=%s): %s", mode, cause)
         raise RuntimeError(
-            f"Firestore query timed out or failed while loading seasonality results "
-            f"(mode={mode!r}). Add a composite index on 'viewMode' in Firestore or "
-            f"reduce collection size. Original error: {exc}"
+            f"Firestore failed while loading seasonality results (mode={mode!r}): {cause}"
         ) from exc
 
 
@@ -615,11 +689,7 @@ def scan_trades_by_date(
     from google.cloud.firestore_v1.base_query import FieldFilter
 
     if cached_daily_results is None:
-        db = get_db()
-        docs = db.collection("seasonalityResults").where(
-            filter=FieldFilter("viewMode", "==", "daily")
-        ).stream(retry=None, timeout=120)
-        cached_daily_results = [{"id": d.id, **d.to_dict()} for d in docs]
+        cached_daily_results = load_all_results_from_firestore(mode="daily", fields=SCAN_FIELDS)
 
     # Group best result per symbol (highest year range wins)
     best_per_symbol: dict[str, dict] = {}

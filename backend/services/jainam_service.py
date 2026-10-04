@@ -172,3 +172,20 @@ async def cancel_order(token: str, app_order_id: str) -> dict:
         raise RuntimeError(f"order_cancellation_failed: {desc}")
     return body
 
+
+async def get_positions(token: str) -> list[dict]:
+    """Net-wise positions for the day (XTS /interactive/portfolio/positions)."""
+    headers = {"Content-Type": "application/json", "authorization": token}
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{_base()}/interactive/portfolio/positions",
+            params={"dayOrNet": "NetWise"},
+            headers=headers,
+        )
+    body = resp.json() if resp.content else {}
+    if resp.status_code != 200 or body.get("type") != "success":
+        desc = body.get("description") or resp.text
+        logger.error("Jainam positions failed: %s %s", resp.status_code, desc)
+        raise RuntimeError(f"positions_failed: {desc}")
+    result = body.get("result", {})
+    return result.get("positionList", []) if isinstance(result, dict) else (result or [])
