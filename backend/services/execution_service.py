@@ -37,6 +37,12 @@ from utils import logger as activity, token_store
 log = logging.getLogger("tradzo.execution")
 IST = pytz.timezone("Asia/Kolkata")
 
+NIFTY_CODE = "NIFTY_STRADDLE"
+BTC_CODE = "BTC_OPTION_SELLING"
+CRUDE_CODE = "CRUDEOILM_STRADDLE"
+# Brokers whose positions/orders the engine can read back (reconciliation, net-position checks).
+RECONCILABLE_BROKERS = ("upstox", "jainam", "kotak")
+
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -79,6 +85,18 @@ def _to_dt(value: Any) -> datetime:
 def _get_token(account: dict | None) -> str | None:
     if not account or not account.get("isConnected"):
         return None
+    if account.get("broker") == "kotak":
+        # Kotak: an opaque session handle. Refresh it if today's session is missing — the
+        # stored TOTP secret makes this automatic. On failure fall back to the stored handle;
+        # calls re-login by themselves if Kotak reports the session invalid.
+        from services import kotak_service
+        sess = kotak_service.cached_session(account["id"])
+        if sess is None or not sess.is_fresh():
+            try:
+                sess = kotak_service.ensure_session_sync(account["id"])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Kotak session refresh for %s failed: %s", account["id"], exc)
+        return sess.to_handle() if sess else None
     tokens = token_store.get_tokens(account["id"])
     if not tokens:
         return None
@@ -107,10 +125,45 @@ def _get_jainam_market_data_token(account: dict | None) -> str | None:
     return None
 
 
+async def _aget_token(account: dict | None) -> str | None:
+    """`_get_token` for async code: refreshes a Kotak session without blocking the loop."""
+    if account and account.get("broker") == "kotak" and account.get("isConnected"):
+        from services import kotak_service
+        sess = kotak_service.cached_session(account["id"])
+        if sess is None or not sess.is_fresh():
+            try:
+                sess = await kotak_service.ensure_session(account["id"])
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Kotak session refresh for %s failed: %s", account["id"], exc)
+        return sess.to_handle() if sess else None
+    return _get_token(account)
+
+
+def _kotak_ready(account: dict | None) -> bool:
+    """Kotak readiness: credentials are stored, so a session can always be (re)created.
+
+    Logs in now if today's session is missing. A failed login flags the account
+    (needsReauth + lastLoginError) but never disables the client's strategies — the next
+    attempt (pre-entry, or the entry itself) can still recover it.
+    """
+    if not account or not account.get("isConnected"):
+        return False
+    from services import kotak_service
+    try:
+        kotak_service.ensure_session_sync(account["id"])
+        return True
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Kotak session for %s unavailable: %s", account["id"], exc)
+        kotak_service.mark_login_failed(account["id"], str(exc))
+        return False
+
+
 def _is_token_valid(account: dict | None) -> bool:
     """True only if the account is connected and has a non-expired token."""
     if not account or not account.get("isConnected"):
         return False
+    if account.get("broker") == "kotak":
+        return _kotak_ready(account)
     tokens = token_store.get_tokens(account["id"])
     if not tokens:
         log.warning("Token decryption failed for account %s. Marking disconnected.", account["id"])
@@ -154,6 +207,73 @@ def _users_by_id() -> dict[str, dict]:
     db = firebase_service.get_db()
     docs = db.collection("users").stream()
     return {d.id: d.to_dict() for d in docs}
+
+
+# ── Broker/exchange-aware position helpers ────────────────────────────────────
+
+def _exchange(pos: dict) -> str:
+    return str(pos.get("exchange") or "NSE").upper()
+
+
+def _pnl_units(pos: dict) -> float:
+    """Underlying units per unit of `quantity` (10 barrels for a Kotak CRUDEOILM qty in lots)."""
+    try:
+        return float(pos.get("pnlMultiplier") or 1.0)
+    except (TypeError, ValueError):
+        return 1.0
+
+
+def _pnl(pos: dict, exit_price: float, qty: float | None = None) -> float:
+    """P&L of a SHORT leg closed at `exit_price` (sold at entryPrice)."""
+    q = float(pos.get("quantity") or 0) if qty is None else float(qty)
+    return (float(pos.get("entryPrice") or 0) - float(exit_price or 0)) * q * _pnl_units(pos)
+
+
+async def _position_ltp(pos: dict, access_token: str | None = None) -> float:
+    """Current LTP of a position's instrument, from the right source. Never raises.
+
+    Kotak keys → Kotak quotes (the account's own session); otherwise the Upstox market-data
+    feed, preferring `marketDataKey` (set when the traded key isn't an Upstox key, e.g. Jainam
+    MCX tokens) over `instrumentKey`.
+    """
+    key = str(pos.get("instrumentKey") or "")
+    try:
+        from services import kotak_service
+        if kotak_service.is_kotak_key(key):
+            handle = access_token if kotak_service.is_handle(access_token) else None
+            if handle is None and pos.get("brokerAccountId"):
+                sess = kotak_service.cached_session(pos["brokerAccountId"])
+                handle = sess.to_handle() if sess else None
+            md_key = pos.get("marketDataKey")
+            if handle:
+                ltp = await kotak_service.get_ltp(handle, key)
+                if ltp > 0:
+                    return ltp
+            if md_key:
+                ltp = float(await market_data_service.get_option_ltp(md_key) or 0.0)
+                if ltp > 0:
+                    return ltp
+            if handle and pos.get("expiry") and pos.get("strike") and pos.get("optionType"):
+                # Last resort: read the leg off Kotak's option chain (also covers segments the
+                # REST quotes API may not serve).
+                seg = kotak_service.parse_instrument_key(key)[0]
+                underlying = pos.get("underlying") or ("CRUDEOILM" if seg == "mcx_fo" else "NIFTY")
+                legs = await kotak_service.option_legs(handle, exchange=seg, underlying=underlying,
+                                                       expiry=str(pos["expiry"]), strike=float(pos["strike"]))
+                return float(legs[str(pos["optionType"]).upper()]["ltp"] or 0.0)
+            return 0.0
+        md_key = pos.get("marketDataKey") or key
+        return float(await market_data_service.get_option_ltp(md_key)) if md_key else 0.0
+    except Exception as exc:  # noqa: BLE001
+        log.warning("LTP lookup failed for %s: %s", pos.get("symbol") or key, exc)
+        return 0.0
+
+
+def _ltp_fn(pos: dict, access_token: str | None, paper: bool):
+    """Async LTP refresher for order retries (None in paper mode)."""
+    if paper:
+        return None
+    return lambda p=pos, t=access_token: _position_ltp(p, t)  # noqa: E731
 
 
 def _log(
@@ -236,8 +356,8 @@ def pre_entry_check() -> dict:
             skipped += 1
             continue
 
-        # BTC entry is at 17:01 — it is validated by pre_entry_check_btc (~16:56), not here.
-        if dep.get("strategyCode") == "BTC_OPTION_SELLING":
+        # BTC (17:01) and Crude (15:30) have their own pre-checks closer to their entries.
+        if dep.get("strategyCode") in (BTC_CODE, CRUDE_CODE):
             continue
 
         account = accounts.get(dep.get("brokerAccountId", ""))
@@ -333,7 +453,7 @@ def _stage_nifty_deployments(today: str) -> tuple[list[dict], int]:
     all_enabled = firebase_service.list_deployments_by_status("enabled")
     deployments = [
         d for d in (all_ready + all_enabled)
-        if d.get("strategyCode") == "NIFTY_STRADDLE" and not d.get("pausedByAdmin")
+        if d.get("strategyCode") == NIFTY_CODE and not d.get("pausedByAdmin")
     ]
 
     staged: list[dict] = []
@@ -350,9 +470,13 @@ def _stage_nifty_deployments(today: str) -> tuple[list[dict], int]:
         user_doc = users.get(user_id, {}) or {}
         paper = user_doc.get("paperTrading", True)
         account = accounts.get(dep.get("brokerAccountId", ""))
-        access_token = _get_token(account) if not paper else "paper_token"
         user_name = user_doc.get("username") or user_doc.get("email") or "User"
         broker = dep.get("brokerName", "upstox")
+        if broker == "kotak" and not paper:
+            # The session is (re)validated asynchronously in `_ensure_kotak_sessions`.
+            access_token = "kotak_pending" if (account and account.get("isConnected")) else None
+        else:
+            access_token = _get_token(account) if not paper else "paper_token"
 
         if not paper and not access_token:
             log.warning("Skipping deployment %s — no valid broker token.", dep["id"])
@@ -410,11 +534,60 @@ def _stage_nifty_deployments(today: str) -> tuple[list[dict], int]:
     return staged, skipped
 
 
+async def _ensure_kotak_sessions(staged: list[dict], today: str) -> list[dict]:
+    """Swap the placeholder token of every live Kotak item for a fresh session handle.
+
+    Runs in the pre-stage window; logs in (TOTP + MPIN) if today's session is missing.
+    Items whose login fails are dropped with an activity-log warning. Returns kept items.
+    """
+    from services import kotak_service
+
+    kotak_items = [i for i in staged if i["broker"] == "kotak" and not i["paper"]]
+    if not kotak_items:
+        return staged
+    account_ids = sorted({i["dep"].get("brokerAccountId") for i in kotak_items})
+
+    async def _one(acc_id: str):
+        try:
+            return acc_id, await kotak_service.ensure_session(acc_id), None
+        except Exception as exc:  # noqa: BLE001
+            return acc_id, None, exc
+
+    results = await asyncio.gather(*[_one(a) for a in account_ids])
+    handles = {a: (sess.to_handle() if sess else None) for a, sess, _ in results}
+    errors = {a: err for a, _, err in results if err}
+    for acc_id, err in errors.items():
+        kotak_service.mark_login_failed(acc_id, str(err))
+
+    kept = []
+    for item in staged:
+        if item["broker"] != "kotak" or item["paper"]:
+            kept.append(item)
+            continue
+        acc_id = item["dep"].get("brokerAccountId")
+        if handles.get(acc_id):
+            item["access_token"] = handles[acc_id]
+            kept.append(item)
+            continue
+        _log(
+            "token_invalid",
+            f"Skipped entry — Kotak login failed: {errors.get(acc_id)}",
+            severity="error",
+            date_str=today,
+            user_id=item["user_id"],
+            user_name=item["user_name"],
+            strategy_id=item["dep"].get("strategyId"),
+            paper=False,
+        )
+    return kept
+
+
 async def _resolve_leg_instruments(staged: list[dict], atm_data: dict) -> None:
     """Attach the broker instrument key + reference LTP to every leg, in place.
 
-    Upstox keys come straight from the option chain; Jainam needs one lookup per leg.
-    All lookups run concurrently and still inside the pre-stage window.
+    Upstox keys come straight from the option chain; Jainam needs one lookup per leg; Kotak
+    needs one option-chain call per account. All lookups run concurrently and still inside
+    the pre-stage window.
     """
     from services import jainam_service
 
@@ -442,14 +615,44 @@ async def _resolve_leg_instruments(staged: list[dict], atm_data: dict) -> None:
                 "instrument_key": key,
                 "ltp": ltp,
                 "error": None,
+                "exchange": "NSE",
+                "symbol": f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}",
+                "pnl_multiplier": 1.0,
+                "extra": {},
             }
             item["orders"].append(order)
 
             if item["md_token"]:
                 lookups.append(_resolve_jainam_key(order, item, leg, option_type, jainam_service))
 
+        if item["broker"] == "kotak" and not item["paper"]:
+            lookups.append(_resolve_kotak_nifty_keys(item, atm_data))
+
     if lookups:
         await asyncio.gather(*lookups, return_exceptions=True)
+
+
+async def _resolve_kotak_nifty_keys(item: dict, atm_data: dict) -> None:
+    """Kotak keys/LTPs for the Nifty ATM CE + PE from Kotak's own option chain."""
+    from services import kotak_service
+    try:
+        legs = await kotak_service.option_legs(
+            item["access_token"], exchange="nse_fo", underlying="NIFTY",
+            expiry=atm_data["expiry"], strike=atm_data["atm_strike"],
+        )
+        lot = int(legs.get("lot") or 0)
+        for order in item["orders"]:
+            leg = legs[order["option_type"]]
+            if lot and order["qty"] % lot:
+                raise RuntimeError(f"quantity {order['qty']} is not a multiple of Kotak's lot {lot}")
+            order["instrument_key"] = leg["key"]
+            order["ltp"] = leg["ltp"] or order["ltp"]
+            order["symbol"] = leg["symbol"] or order["symbol"]
+            order["extra"]["marketDataKey"] = (atm_data["ce_key"] if order["option_type"] == "CE"
+                                               else atm_data["pe_key"])
+    except Exception as exc:  # noqa: BLE001 — fail this deployment's legs, not the others
+        for order in item["orders"]:
+            order["error"] = RuntimeError(f"Kotak instrument lookup failed: {exc}")
 
 
 async def _resolve_jainam_key(order: dict, item: dict, leg: dict, option_type: str, jainam_service) -> None:
@@ -484,6 +687,9 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
 
     # ── Stage 1 (T-lead): everything slow that the market snapshot doesn't gate ──
     staged, skipped = _stage_nifty_deployments(today)
+    n_staged = len(staged)
+    staged = await _ensure_kotak_sessions(staged, today)
+    skipped += n_staged - len(staged)
     if not staged:
         log.info("Entry: no eligible Nifty deployments (%d skipped).", skipped)
         return {"placed": 0, "failed": 0, "skipped": skipped, "elapsedSec": 0.0}
@@ -522,7 +728,22 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
     await _resolve_leg_instruments(staged, atm_data)
     all_orders = [o for item in staged for o in item["orders"]]
 
-    # ── Stage 4: fire at exactly T0 ──────────────────────────────────────────────
+    # ── Stage 4 + 5: fire at exactly T0, then protect + persist ─────────────────
+    summary = await _fire_and_protect(staged, all_orders, target, today, t_start,
+                                      default_strategy_id="nifty-straddle", default_code=NIFTY_CODE)
+    summary["skipped"] = skipped
+    log.info("Entry complete: %s", summary)
+    return summary
+
+
+async def _fire_and_protect(staged: list[dict], all_orders: list[dict], target: datetime, today: str,
+                            t_start: float, *, default_strategy_id: str, default_code: str) -> dict:
+    """Shared entry tail: SELL every leg concurrently at `target`, then SL + persist + log.
+
+    Each order dict carries: item, leg, option_type, qty, tag_prefix, instrument_key, ltp,
+    error, exchange ("NSE"/"MCX"), symbol, pnl_multiplier and `extra` (fields merged into the
+    position document).
+    """
     await _sleep_until(target, "entry")
     fired_at = _now_ist()
 
@@ -531,8 +752,10 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
             raise order["error"]
         item = order["item"]
         ltp_fn = None
-        if item["broker"] == "upstox" and not item["paper"]:
-            ltp_fn = lambda k=order["instrument_key"]: market_data_service.get_option_ltp(k)  # noqa: E731
+        if not item["paper"] and (item["broker"] in ("upstox", "kotak") or order["extra"].get("marketDataKey")):
+            probe = {"instrumentKey": order["instrument_key"], "brokerAccountId": item["dep"].get("brokerAccountId"),
+                     "marketDataKey": order["extra"].get("marketDataKey"), "symbol": order.get("symbol")}
+            ltp_fn = _ltp_fn(probe, item["access_token"], False)
         try:
             result = await order_service.place_sell_market(
                 access_token=item["access_token"],
@@ -543,6 +766,7 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
                 ltp=order["ltp"],
                 broker=item["broker"],
                 ltp_fn=ltp_fn,
+                exchange=order.get("exchange", "NSE"),
             )
         except order_service.OrderNotFilled as exc:
             if exc.filled_qty <= 0:
@@ -563,6 +787,27 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
                 result = {"order_id": exc.order_id, "fill_price": exc.avg_price}
         order["sell_result"] = result
         order["fill_price"] = result["fill_price"] or order["ltp"]
+
+        # Protect THIS leg immediately — never wait for the other legs (an MCX limit can take
+        # several re-pricing rounds) while a filled short sits without a stop-loss.
+        order["sl_price"] = None
+        order["sl_result"] = None
+        order["sl_error"] = None
+        try:
+            order["sl_price"] = item["strategy"].calculate_sl_price(order["fill_price"])
+            order["sl_result"] = await order_service.place_sl_market(
+                access_token=item["access_token"],
+                instrument_key=order["instrument_key"],
+                quantity=order["qty"],
+                trigger_price=order["sl_price"],
+                tag=f"{order['tag_prefix']}_SL",
+                paper=item["paper"],
+                broker=item["broker"],
+                exchange=order.get("exchange", "NSE"),
+            )
+        except Exception as exc:  # noqa: BLE001 — recorded below as an unprotected leg
+            log.error("Stop-loss placement failed for %s: %s", order.get("symbol"), exc)
+            order["sl_error"] = exc
         return order
 
     outcomes = await asyncio.gather(*[_sell(o) for o in all_orders], return_exceptions=True)
@@ -575,7 +820,7 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
         time.monotonic() - t_start,
     )
 
-    # ── Stage 5: attach the protective SL, persist the position, log ─────────────
+    # ── Attach the protective SL, persist the position, log ──────────────────────
     placed = failed = 0
     per_dep: dict[str, list[int]] = {item["dep"]["id"]: [0, 0] for item in staged}
 
@@ -601,29 +846,24 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
             )
             continue
 
+        sl_result = order.get("sl_result")
         try:
             leg = order["leg"]
             fill_price = order["fill_price"]
             sell_result = order["sell_result"]
+            exchange = order.get("exchange", "NSE")
 
-            # SL is computed from the ACTUAL fill price (not the pre-trade LTP).
-            sl_price = item["strategy"].calculate_sl_price(fill_price)
-            sl_result = await order_service.place_sl_market(
-                access_token=item["access_token"],
-                instrument_key=order["instrument_key"],
-                quantity=order["qty"],
-                trigger_price=sl_price,
-                tag=f"{order['tag_prefix']}_SL",
-                paper=item["paper"],
-                broker=item["broker"],
-            )
+            # SL was computed from the ACTUAL fill price and placed right after the fill.
+            if order.get("sl_error") is not None or sl_result is None:
+                raise order.get("sl_error") or RuntimeError("stop-loss was not placed")
+            sl_price = order["sl_price"]
 
-            symbol = f"NIFTY{atm_data['expiry'].replace('-', '')[-4:]}{leg['strike']}{option_type}"
+            symbol = order["symbol"]
             pos_id = position_service.create_position({
                 "date": today,
                 "userId": item["user_id"],
-                "strategyId": dep.get("strategyId", "nifty-straddle"),
-                "strategyCode": dep.get("strategyCode", "NIFTY_STRADDLE"),
+                "strategyId": dep.get("strategyId", default_strategy_id),
+                "strategyCode": dep.get("strategyCode", default_code),
                 "userStrategyId": dep["id"],
                 "brokerAccountId": dep.get("brokerAccountId"),
                 "broker": item["broker"],
@@ -634,6 +874,8 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
                 "expiry": leg["expiry"],
                 "quantity": order["qty"],
                 "lots": item["lots"],
+                "exchange": exchange,
+                "pnlMultiplier": order.get("pnl_multiplier", 1.0),
                 "entryOrderId": sell_result["order_id"],
                 "slOrderId": sl_result["order_id"],
                 "entryPrice": fill_price,
@@ -646,12 +888,13 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
                 "exitOrderId": None,
                 "exitReason": None,
                 "pnl": None,
+                **order.get("extra", {}),
             })
 
             _log(
                 "order_placed",
                 f"[{'PAPER ' if item['paper'] else ''}ENTRY] {symbol} | "
-                f"SELL {order['qty']}@₹{fill_price:.1f} | SL ₹{sl_price:.1f}",
+                f"SELL {order['qty']}@₹{fill_price:.2f} | SL ₹{sl_price:.2f}",
                 severity="success",
                 date_str=today,
                 user_id=item["user_id"],
@@ -674,9 +917,45 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
         except Exception as exc:  # noqa: BLE001
             log.error("Entry (SL/persist) failed for %s %s: %s", dep["id"], option_type, exc)
             counters[1] += 1
+            if sl_result is None and not item["paper"]:
+                # The SELL filled but no stop-loss could be placed: record the leg anyway so the
+                # exit jobs (and the UI) know about this short instead of leaving it orphaned.
+                try:
+                    position_service.create_position({
+                        "date": today,
+                        "userId": item["user_id"],
+                        "strategyId": dep.get("strategyId", default_strategy_id),
+                        "strategyCode": dep.get("strategyCode", default_code),
+                        "userStrategyId": dep["id"],
+                        "brokerAccountId": dep.get("brokerAccountId"),
+                        "broker": item["broker"],
+                        "instrumentKey": order["instrument_key"],
+                        "symbol": order["symbol"],
+                        "optionType": option_type,
+                        "strike": order["leg"]["strike"],
+                        "expiry": order["leg"]["expiry"],
+                        "quantity": order["qty"],
+                        "lots": item["lots"],
+                        "exchange": order.get("exchange", "NSE"),
+                        "pnlMultiplier": order.get("pnl_multiplier", 1.0),
+                        "entryOrderId": order["sell_result"]["order_id"],
+                        "slOrderId": None,
+                        "entryPrice": order["fill_price"],
+                        "slPrice": item["strategy"].calculate_sl_price(order["fill_price"]),
+                        "status": "open",
+                        "isPaper": False,
+                        "entryAt": fired_at,
+                        "exitAt": None, "exitPrice": None, "exitOrderId": None, "exitReason": None,
+                        "pnl": None,
+                        "slMissing": True,
+                        **order.get("extra", {}),
+                    })
+                except Exception as e2:  # noqa: BLE001
+                    log.error("Could not record unprotected leg %s: %s", order.get("symbol"), e2)
             _log(
                 "order_failed",
-                f"Entry failed for {option_type} leg (SL/persist) — {exc}",
+                f"Entry {option_type} leg SOLD but stop-loss/persist failed — {exc}. "
+                f"The leg is OPEN without a stop-loss; it will still be squared off at exit.",
                 severity="error",
                 date_str=today,
                 user_id=item["user_id"],
@@ -698,16 +977,13 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
     _refresh_live_feed()
 
     elapsed = round(time.monotonic() - t_start, 2)
-    summary = {
+    return {
         "placed": placed,
         "failed": failed,
-        "skipped": skipped,
         "elapsedSec": elapsed,
         "firedAt": fired_at.isoformat(),
         "latencySec": round((fired_at - target).total_seconds(), 3),
     }
-    log.info("Entry complete: %s", summary)
-    return summary
 
 
 def _refresh_live_feed() -> None:
@@ -750,11 +1026,11 @@ async def _broker_exit_quantity(pos: dict, access_token: str, broker: str, pos_p
     position can't be read (Upstox) — buying blind is how a net-long gets created.
     """
     recorded = int(pos.get("quantity") or 0)
-    if pos_paper or broker not in ("upstox", "jainam"):
+    if pos_paper or broker not in RECONCILABLE_BROKERS:
         return recorded, None
     snap = None
     for attempt in range(3):
-        snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker)
+        snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker, _exchange(pos))
         if snap is not None:
             break
         await asyncio.sleep(0.5 * (attempt + 1))
@@ -784,7 +1060,7 @@ def _record_closed_externally(pos: dict, snap: dict | None, today: str, user_nam
     if realised is not None:
         pnl = float(realised)
     elif exit_price > 0:
-        pnl = (entry - exit_price) * qty
+        pnl = _pnl(pos, exit_price, qty)
     else:
         pnl = 0.0
     position_service.update_position(pos["id"], {
@@ -820,9 +1096,9 @@ async def _reconcile_failed_exit(pos: dict, access_token: str, broker: str, pos_
     or let the retry pass buy again (that is how a net-long gets created).
     Returns True when the leg was found flat and reconciled.
     """
-    if pos_paper or broker not in ("upstox", "jainam"):
+    if pos_paper or broker not in RECONCILABLE_BROKERS:
         return False
-    snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker)
+    snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker, _exchange(pos))
     if snap is None or snap["net_qty"] != 0:
         return False
     _record_closed_externally(pos, snap, today, user_name, pos_paper, exit_reason=exit_reason,
@@ -832,9 +1108,10 @@ async def _reconcile_failed_exit(pos: dict, access_token: str, broker: str, pos_
 
 async def _reconcile_ambiguous_sell(order: dict, item: dict, exc) -> dict | None:
     """Entry SELL outcome unknown: if the broker shows a short, the leg IS open - keep it."""
-    if item["paper"] or item["broker"] not in ("upstox", "jainam"):
+    if item["paper"] or item["broker"] not in RECONCILABLE_BROKERS:
         return None
-    snap = await order_service.get_net_position(item["access_token"], order["instrument_key"], item["broker"])
+    snap = await order_service.get_net_position(item["access_token"], order["instrument_key"], item["broker"],
+                                                order.get("exchange", "NSE"))
     if not snap or snap["net_qty"] >= 0:
         return None
     qty = min(-snap["net_qty"], int(order["qty"]))
@@ -849,14 +1126,14 @@ async def _rearm_sl_after_failed_exit(pos: dict, access_token: str, broker: str,
     """
     try:
         ltp = 0.0
-        if broker == "upstox":
-            ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+        if broker in ("upstox", "kotak") or pos.get("marketDataKey"):
+            ltp = await _position_ltp(pos, access_token)
         trigger = float(pos.get("slPrice") or 0.0)
         if ltp > 0 and trigger <= ltp * 1.02:
             trigger = ltp * 1.10          # a BUY stop's trigger must sit above the market
         if trigger <= 0:
             return None
-        trigger = order_service._round_up_tick(trigger)
+        trigger = order_service._round_up_tick(trigger, order_service.tick_for(_exchange(pos)))
         res = await order_service.place_sl_market(
             access_token=access_token,
             instrument_key=pos["instrumentKey"],
@@ -865,6 +1142,7 @@ async def _rearm_sl_after_failed_exit(pos: dict, access_token: str, broker: str,
             tag=f"SQ_RE_{pos['id'][:8].upper()}",
             paper=False,
             broker=broker,
+            exchange=_exchange(pos),
         )
         position_service.update_position(pos["id"], {"slOrderId": res["order_id"], "slPrice": trigger})
         return res["order_id"]
@@ -895,11 +1173,19 @@ async def _handle_failed_exit(pos: dict, exc: Exception, access_token: str, brok
         except Exception as e:  # noqa: BLE001
             log.error("Could not record partial exit on %s: %s", pos.get("id"), e)
         notes.append(f"partially filled {exc.filled_qty}, {qty} still open")
-    if sl_cancelled and qty > 0 and broker in ("upstox", "jainam"):
+    if sl_cancelled and qty > 0 and broker in RECONCILABLE_BROKERS:
+        stray_id = getattr(exc, "order_id", "") if getattr(exc, "ambiguous", False) else ""
+        if stray_id:
+            # The exit BUY's outcome is unknown and it may still be resting (MCX DAY limit).
+            # A stop-loss on top of a live BUY could leave the client net long — kill it first.
+            st = await order_service.cancel_until_terminal(access_token, stray_id, broker, total_seconds=10.0)
+            if not st or not st.get("terminal"):
+                notes.append(f"exit order {stray_id} may still be LIVE - stop-loss NOT re-armed; check the broker app")
+                return "; ".join(notes)
         if getattr(exc, "ambiguous", False):
             # The BUY may have filled. A stop-loss on a flat leg would open a LONG when it
             # triggers, so only re-arm if the broker confirms we are still short.
-            snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker)
+            snap = await order_service.get_net_position(access_token, pos["instrumentKey"], broker, _exchange(pos))
             if snap is None or snap["net_qty"] >= 0:
                 notes.append("BUY outcome unknown and broker position unreadable - stop-loss NOT re-armed; "
                              "check the broker app")
@@ -911,7 +1197,8 @@ async def _handle_failed_exit(pos: dict, exc: Exception, access_token: str, brok
 
 # ── 15:29 — Execute exit ──────────────────────────────────────────────────────
 
-async def execute_exit(retry: bool = False) -> dict:
+async def execute_exit(retry: bool = False, strategy_codes: tuple[str, ...] | None = None,
+                       label: str = "15:29") -> dict:
     """Square off all remaining open positions at 15:29 PM.
 
     Deployments the user has stopped (disabled_today / stopped / paused) are skipped, and
@@ -928,20 +1215,37 @@ async def execute_exit(retry: bool = False) -> dict:
     """
     today = _today()
     paper = firebase_service.is_paper_trading()
-    # This is the 15:29 EOD exit for intraday (Nifty) strategies only.
-    # BTC exits at 17:29 via execute_btc_exit — never square it off here.
-    open_positions = [
-        p for p in position_service.get_exitable_positions_for_date(today)
-        if p.get("strategyCode") != "BTC_OPTION_SELLING"
-    ]
+    # Default: the 15:29 EOD exit for the NSE intraday (Nifty) strategy. BTC exits at 17:29
+    # (execute_btc_exit) and Crude at 23:24 (strategy_codes=(CRUDE_CODE,)) — never here.
+    if strategy_codes:
+        wanted = set(strategy_codes)
+        open_positions = [
+            p for p in position_service.get_exitable_positions_for_date(today)
+            if p.get("strategyCode") in wanted
+        ]
+        if CRUDE_CODE in wanted:
+            # MCX legs are carry-forward (NRML): a leg whose exit failed on an earlier day is
+            # still open at the broker — close it now rather than let it ride indefinitely.
+            try:
+                seen = {p["id"] for p in open_positions}
+                open_positions += [p for p in position_service.get_stale_open_positions(today)
+                                   if p.get("strategyCode") in wanted and p["id"] not in seen]
+            except Exception as exc:  # noqa: BLE001
+                log.warning("Could not load earlier open %s legs: %s", wanted, exc)
+    else:
+        open_positions = [
+            p for p in position_service.get_exitable_positions_for_date(today)
+            if p.get("strategyCode") not in (BTC_CODE, CRUDE_CODE)
+        ]
     if retry:
         open_positions = [p for p in open_positions if p.get("exitFailedAt")]
     accounts = _accounts_by_id()
 
     if not open_positions:
-        log.info("No open positions at exit time.")
-        _log("exit_skipped", "15:29 exit — no open positions found.", "info",
-             date_str=today, paper=paper)
+        log.info("No open positions at %s exit time.", label)
+        if not retry:
+            _log("exit_skipped", f"{label} exit — no open positions found.", "info",
+                 date_str=today, paper=paper)
         return {"closed": 0, "failed": 0}
 
     closed = failed = 0
@@ -976,7 +1280,7 @@ async def execute_exit(retry: bool = False) -> dict:
         pos_paper = pos.get("isPaper", paper)
         # Get access token for this position's account
         account = accounts.get(pos.get("brokerAccountId", ""))
-        access_token = _get_token(account) if not pos_paper else "paper_token"
+        access_token = await _aget_token(account) if not pos_paper else "paper_token"
         broker = pos.get("broker", "upstox")
 
         user_name = "User"
@@ -1007,7 +1311,7 @@ async def execute_exit(retry: bool = False) -> dict:
             if sl_state["state"] == "filled":
                 # The SL already closed the short. Reconcile from the SL fill; do NOT buy again.
                 exit_price = sl_state.get("fill_price") or pos.get("slPrice") or pos["entryPrice"]
-                pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+                pnl = _pnl(pos, exit_price)
                 position_service.update_position(pos["id"], {
                     "status": "squared_off",
                     "exitReason": "sl_hit",
@@ -1034,6 +1338,16 @@ async def execute_exit(retry: bool = False) -> dict:
                 continue
 
             sl_cancelled = bool(sl_order_id) and not pos_paper
+            if not sl_order_id and not pos_paper and broker == "kotak":
+                # No stop-loss on record (its placement failed or timed out). If one reached
+                # Kotak anyway it would open a LONG after this buy-back — cancel any open BUY.
+                from services import kotak_service
+                try:
+                    stray = await kotak_service.cancel_open_orders(access_token, pos["instrumentKey"], "B")
+                    if stray:
+                        log.warning("Cancelled stray open BUY order(s) %s on %s before exit.", stray, pos.get("symbol"))
+                except Exception as exc:  # noqa: BLE001
+                    raise RuntimeError(f"could not verify there is no stray stop-loss order: {exc}") from exc
 
             # Step 1b: trust the BROKER, not our record. Already flat -> nothing to buy;
             # smaller than recorded -> buy only what is really short.
@@ -1048,10 +1362,10 @@ async def execute_exit(retry: bool = False) -> dict:
             current_ltp = 0.0
             ltp_fn = None
             if pos_paper:
-                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
-            elif broker == "upstox":
-                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
-                ltp_fn = lambda k=pos["instrumentKey"]: market_data_service.get_option_ltp(k)  # noqa: E731
+                current_ltp = await _position_ltp(pos)
+            elif broker in ("upstox", "kotak") or pos.get("marketDataKey"):
+                current_ltp = await _position_ltp(pos, access_token)
+                ltp_fn = _ltp_fn(pos, access_token, False)
 
             # Step 3: BUY to square off (SL is confirmed cancelled). Brokers no longer take
             # API MARKET orders, so this is a protected IOC limit; it raises OrderNotFilled
@@ -1067,11 +1381,12 @@ async def execute_exit(retry: bool = False) -> dict:
                 broker=broker,
                 ltp_fn=ltp_fn,
                 ref_fallback=float(pos.get("slPrice") or pos.get("entryPrice") or 0.0),
+                exchange=_exchange(pos),
             )
             exit_price = buy_result["fill_price"] or current_ltp or pos["entryPrice"]
 
             # Step 4: Calculate PnL (we SOLD entry, BUY to close → profit if exit < entry)
-            pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+            pnl = _pnl(pos, exit_price)
 
             position_service.update_position(pos["id"], {
                 "status": "squared_off",
@@ -1085,7 +1400,7 @@ async def execute_exit(retry: bool = False) -> dict:
             _log(
                 "square_off",
                 f"[{'PAPER ' if pos_paper else ''}EXIT] {pos['symbol']} | "
-                f"BUY {pos['quantity']}@₹{exit_price:.1f} | PnL ₹{pnl:+.2f}",
+                f"BUY {pos['quantity']}@₹{exit_price:.2f} | PnL ₹{pnl:+.2f}",
                 severity="success" if pnl >= 0 else "warning",
                 date_str=today,
                 user_id=pos.get("userId"),
@@ -1145,14 +1460,19 @@ async def execute_exit(retry: bool = False) -> dict:
 
 # ── 15:31 — EOD cleanup ───────────────────────────────────────────────────────
 
-def eod_cleanup() -> dict:
+def eod_cleanup(strategy_codes: tuple[str, ...] | None = None, label: str = "EOD") -> dict:
     """Compute per-deployment day PnL and write a day summary to activityLogs.
 
-    Called at 15:31 PM after execute_exit has run.
+    Called at 15:31 after the Nifty exit (Crude excluded — it is still open then), and at
+    23:26 for Crude only (`strategy_codes=(CRUDE_CODE,)`).
     """
     today = _today()
     paper = firebase_service.is_paper_trading()
     positions = position_service.get_positions_for_date(today)
+    if strategy_codes:
+        positions = [p for p in positions if p.get("strategyCode") in set(strategy_codes)]
+    else:
+        positions = [p for p in positions if p.get("strategyCode") != CRUDE_CODE]
 
     # Group by userId + strategyId
     user_pnl: dict[str, float] = {}
@@ -1166,7 +1486,7 @@ def eod_cleanup() -> dict:
 
     _log(
         "day_summary",
-        f"[{'PAPER ' if paper else ''}EOD] {today} — "
+        f"[{'PAPER ' if paper else ''}{label}] {today} — "
         f"{len(positions)} legs | {len(user_pnl)} users | total PnL ₹{total_pnl:+.2f}",
         severity="info",
         date_str=today,
@@ -1232,7 +1552,7 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
 
         account = accounts.get(pos.get("brokerAccountId", ""))
         pos_paper = pos.get("isPaper", paper)  # per-position paper flag, not the global one
-        access_token = _get_token(account) if not pos_paper else "paper_token"
+        access_token = await _aget_token(account) if not pos_paper else "paper_token"
         broker = pos.get("broker", "upstox")
         delta_creds = None
         if not pos_paper and broker == "delta" and account:
@@ -1300,7 +1620,10 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
                     _record_closed_externally(pos, snap, today, user_name, pos_paper)
                     closed += 1
                     continue
-                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+                if broker == "delta":
+                    current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
+                else:
+                    current_ltp = await _position_ltp(pos, None if pos_paper else access_token)
                 tag = f"SQ_MAN_{pos['id'][:6].upper()}"
                 buy_result = await order_service.place_buy_market(
                     access_token=access_token,
@@ -1311,9 +1634,10 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
                     ltp=current_ltp,
                     broker=broker,
                     delta_creds=delta_creds,
-                    ltp_fn=(lambda k=pos["instrumentKey"]: market_data_service.get_option_ltp(k))
-                    if (broker == "upstox" and not pos_paper) else None,
+                    ltp_fn=_ltp_fn(pos, access_token, False)
+                    if (not pos_paper and (broker in ("upstox", "kotak") or pos.get("marketDataKey"))) else None,
                     ref_fallback=float(pos.get("slPrice") or pos.get("entryPrice") or 0.0),
+                    exchange=_exchange(pos),
                 )
             except Exception as exc:  # noqa: BLE001
                 log.error("Manual exit: square-off BUY failed for %s: %s", pos["id"], exc)
@@ -1346,7 +1670,7 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
             exit_reason = "manual_exit"
 
         # 4. Calculate PnL
-        pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+        pnl = _pnl(pos, exit_price)
 
         position_service.update_position(pos["id"], {
             "status": "squared_off",
@@ -1391,14 +1715,20 @@ async def _square_off_single_deployment(user_strategy_id: str) -> dict:
 async def sync_order_statuses() -> dict:
     """Sync order status for active open positions to catch stop-loss triggers."""
     now = _now_ist()
-    # Market hours check (12:00 PM to 17:30 PM IST for Nifty + BTC)
-    if not (12 <= now.hour <= 17):
+    # Trading window: Nifty 12:00–15:29, Crude 15:30–23:24, BTC 17:01–17:29.
+    if now.hour < 12:
         return {"status": "outside_market_hours", "hour": now.hour}
     if now.hour == 12 and now.minute == 0:
         return {"status": "skipping_exact_entry"}
+    crude_entry_h, crude_entry_m = (int(x) for x in str(getattr(settings, "crude_entry_time", "15:30")).split(":"))
+    crude_exit_h, crude_exit_m = (int(x) for x in str(getattr(settings, "crude_exit_time", "23:24")).split(":"))
+    if (now.hour, now.minute) in ((crude_entry_h, crude_entry_m), (crude_exit_h, crude_exit_m)):
+        return {"status": "skipping_crude_entry_exit_minute"}
 
     today = _today()
     open_positions = position_service.get_open_positions_for_date(today)
+    if now.hour >= 18 and not any(p.get("strategyCode") == CRUDE_CODE for p in open_positions):
+        return {"status": "outside_market_hours", "hour": now.hour}
 
     # At 15:29 the Nifty EOD exit runs; skip syncing then unless a BTC position is open
     # (BTC exits at 17:29, so its SL must still be monitored through 15:29).
@@ -1624,12 +1954,12 @@ async def sync_order_statuses() -> dict:
         # Paper mode trigger simulation for other strategies
         if pos.get("isPaper"):
             try:
-                current_ltp = await market_data_service.get_option_ltp(pos["instrumentKey"])
-                if current_ltp >= pos["slPrice"]:
+                current_ltp = await _position_ltp(pos)
+                if current_ltp > 0 and current_ltp >= pos["slPrice"]:
                     if not position_service.claim_position_for_exit(pos["id"]):
                         log.info("Sync: %s is already being closed — skipping paper SL.", pos["id"])
                         continue
-                    pnl = (pos["entryPrice"] - pos["slPrice"]) * pos["quantity"]
+                    pnl = _pnl(pos, pos["slPrice"])
                     position_service.update_position(pos["id"], {
                         "status": "sl_hit",
                         "exitReason": "sl_hit",
@@ -1657,7 +1987,7 @@ async def sync_order_statuses() -> dict:
         # Live trading status query
         broker = pos.get("broker", "upstox")
         account = accounts.get(pos.get("brokerAccountId", ""))
-        access_token = _get_token(account)
+        access_token = await _aget_token(account)
         if not access_token:
             continue
 
@@ -1684,11 +2014,37 @@ async def sync_order_statuses() -> dict:
                         is_hit = True
                         exit_price = float(latest.get("averageprice") or latest.get("stopPrice") or pos["slPrice"])
 
+            elif broker == "kotak":
+                from services import kotak_service
+                st = await kotak_service.order_state(access_token, sl_order_id)
+                if st["status"] == "complete":
+                    is_hit = True
+                    exit_price = float(st["avg_price"] or st["trigger"] or pos["slPrice"])
+                elif st["status"] in ("rejected", "cancelled") and st["filled_qty"] <= 0:
+                    # The stop-loss is gone without filling (e.g. rejected by RMS / price band):
+                    # the short leg is unprotected. Flag it loudly once.
+                    if not pos.get("slAlertedAt"):
+                        position_service.update_position(pos["id"], {"slAlertedAt": _now_ist(),
+                                                                     "slMissing": True})
+                        _log(
+                            "exit_error",
+                            f"Stop-loss for {pos.get('symbol')} is {st['status']} at Kotak "
+                            f"({st['message'] or 'no reason given'}) — the leg is open WITHOUT a "
+                            f"stop-loss until the scheduled exit.",
+                            severity="error",
+                            date_str=today,
+                            user_id=user_id,
+                            user_name=user_name,
+                            strategy_id=pos.get("strategyId"),
+                            position_id=pos["id"],
+                            paper=False,
+                        )
+
             if is_hit:
                 if not position_service.claim_position_for_exit(pos["id"]):
                     log.info("Sync: %s is already being closed — skipping SL reconcile.", pos["id"])
                     continue
-                pnl = (pos["entryPrice"] - exit_price) * pos["quantity"]
+                pnl = _pnl(pos, exit_price)
                 position_service.update_position(pos["id"], {
                     "status": "sl_hit",
                     "exitReason": "sl_hit",
@@ -1698,7 +2054,7 @@ async def sync_order_statuses() -> dict:
                 })
                 _log(
                     "sl_hit",
-                    f"[SL HIT] {pos['symbol']} | Triggered at ₹{exit_price:.1f} | PnL {pnl:+.2f}",
+                    f"[SL HIT] {pos['symbol']} | Triggered at ₹{exit_price:.2f} | PnL {pnl:+.2f}",
                     severity="error",
                     date_str=today,
                     user_id=user_id,
@@ -2197,6 +2553,8 @@ def refresh_broker_tokens() -> dict:
     for account in firebase_service.list_broker_accounts():
         if not account.get("isConnected"):
             continue
+        if account.get("broker") == "kotak":
+            continue  # Kotak re-logs in automatically with the stored TOTP secret.
         tokens = token_store.get_tokens(account["id"])
         if not tokens:
             continue

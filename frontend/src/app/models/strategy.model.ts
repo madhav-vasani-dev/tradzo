@@ -55,6 +55,14 @@ export interface Strategy {
   createdByUid: string;
   /** Broker required for this strategy ('upstox' | 'jainam' | 'delta'). Default: 'upstox' */
   broker?: string;
+  /** Brokers this strategy can be deployed on (e.g. ['kotak','upstox','jainam']). Absent = any. */
+  supportedBrokers?: string[];
+  /** Exchange of the traded instruments ('NSE' | 'MCX'). */
+  exchange?: string;
+  /** True when there is no backtest report — the UI hides backtest metrics/charts. */
+  noBacktest?: boolean;
+  /** Unit name for lotSize in the deploy dialog (e.g. 'barrels'). Default 'units'. */
+  lotUnitLabel?: string;
   /** Settlement currency for PnL display. Default: 'INR' */
   currency?: 'INR' | 'USD';
   /** If true, PnL is stored in USD with a parallel INR equivalent field. */
@@ -82,7 +90,7 @@ export interface UserStrategy {
   strategyCode: string;
   strategyName: string;
   brokerAccountId: string;
-  brokerName: 'upstox' | 'jainam' | 'delta';
+  brokerName: 'upstox' | 'jainam' | 'delta' | 'kotak';
   deployedAmount: number;
   multiplier: number;           // 1 = 1 lot, 2 = 2 lots, etc.
   status: UserStrategyStatus;   // live state machine status
@@ -134,6 +142,10 @@ export interface Position {
   unrealizedPnlInr?: number | null;
   /** When `unrealizedPnl` was last marked. */
   pnlUpdatedAt?: any | null;
+  /** 'NSE' | 'MCX'. */
+  exchange?: string;
+  /** Underlying units per unit of `quantity` used for P&L (e.g. 10 barrels per MCX lot). */
+  pnlMultiplier?: number;
   /** Native settlement currency for prices/PnL on this position. Falls back to 'INR' when absent. */
   currency?: string;
   /** INR equivalents (populated for non-INR-settled instruments, e.g. crypto). Preferred for display. */

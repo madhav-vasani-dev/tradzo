@@ -183,6 +183,7 @@ NIFTY_STRADDLE_DOC = {
     "stopLossPercent": 30,
     "entryTime": "12:00",
     "exitTime": "15:29",
+    "supportedBrokers": ["upstox", "jainam", "kotak"],
     "tags": ["Intraday", "Options Selling", "Straddle", "ATM"],
     "performance": {
         "cagr": 13.63,
@@ -294,6 +295,7 @@ BTC_OPTION_SELLING_DOC = {
     "entryTime": "17:01",
     "exitTime": "17:29",
     "broker": "delta",
+    "supportedBrokers": ["delta"],
     "currency": "INR",          # trades settle in USD but are displayed in INR
     "dualCurrencyPnl": False,
     "contractNotional": 0.001,  # 0.001 BTC per contract → 100 qty = 0.1 BTC
@@ -323,6 +325,47 @@ BTC_OPTION_SELLING_DOC = {
 
 
 
+# ── Crude Oil Mini Straddle (MCX CRUDEOILM) ───────────────────────────────────
+# No backtest yet — traded live by the strategy owner for ~4 months (Jun–Oct 2026).
+CRUDE_OIL_MINI_DOC = {
+    "id": "crude-oil-mini-straddle",
+    "name": "Crude Oil Mini Straddle",
+    "strategyCode": "CRUDEOILM_STRADDLE",
+    "description": (
+        "Sells the ATM MCX Crude Oil Mini (CRUDEOILM) Call + Put at 15:30 IST every trading day. "
+        "The ATM strike is taken from the 15:30 price of the same-month CRUDEOILM futures. Each "
+        "leg gets a 20% stop-loss (stop-limit order) placed right after entry, and anything still "
+        "open is squared off at 23:24 IST. Monthly options; on the options' expiry day the "
+        "strategy trades the next month's contract."
+    ),
+    "category": "Options",
+    "instrumentType": "MCX Crude Oil Mini Monthly Options",
+    "riskLevel": "High",
+    "isVisible": True,
+    "minimumAmount": 60000.0,   # ≈ margin for 1 lot short straddle (Oct 2026)
+    "lotSize": 10,              # 1 lot = 10 barrels
+    "lotUnitLabel": "barrels",
+    "stopLossPercent": 20,
+    "entryTime": "15:30",
+    "exitTime": "23:24",
+    "exchange": "MCX",
+    "supportedBrokers": ["kotak", "upstox", "jainam"],
+    "currency": "INR",
+    "underlyingSymbol": "CRUDEOILM",
+    "noBacktest": True,
+    "equityNote": "No backtest report yet — this strategy has been traded live for about 4 months.",
+    "tags": ["Commodity", "MCX", "Crude Oil", "Options Selling", "Straddle", "ATM"],
+    "performance": {
+        "cagr": 0, "sharpeRatio": 0, "maxDrawdown": 0, "winRate": 0, "totalTrades": 0,
+        "avgTradeReturn": 0, "avgTradeDurationMinutes": 474, "profitFactor": 0, "calmarRatio": 0,
+        "expectancy": 0, "backtestStartDate": "", "backtestEndDate": "",
+        "monthlyReturns": [], "yearlyReturns": [], "equityCurve": [],
+    },
+    "createdAt": datetime.now(IST),
+    "updatedAt": datetime.now(IST),
+    "createdByUid": "system",
+}
+
 
 def seed():
     print("Initialising Firebase…")
@@ -338,6 +381,11 @@ def seed():
     btc_ref = db.collection("strategies").document("btc-option-selling")
     btc_ref.set(BTC_OPTION_SELLING_DOC)
     print("[OK] Created/updated strategies/btc-option-selling (Delta Exchange)")
+
+    # ── strategies/crude-oil-mini-straddle ─────────────────────────────────
+    crude_ref = db.collection("strategies").document("crude-oil-mini-straddle")
+    crude_ref.set(CRUDE_OIL_MINI_DOC)
+    print("[OK] Created/updated strategies/crude-oil-mini-straddle (MCX CRUDEOILM)")
 
     # ── settings/tradingMode ──────────────────────────────────────────────
     settings_ref = db.collection("settings").document("tradingMode")

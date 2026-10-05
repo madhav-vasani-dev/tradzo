@@ -43,12 +43,19 @@
       <p class="hero-instrument">{{ strategy.instrumentType }}</p>
       <p class="hero-description">{{ strategy.description }}</p>
 
-      <div class="backtest-info">
-        <i class="pi pi-calendar-clock"></i>
-        Backtested: {{ strategy.performance.backtestStartDate | date:'MMM yyyy' }}
-        — {{ strategy.performance.backtestEndDate | date:'MMM yyyy' }}
-        ({{ strategy.performance.totalTrades }} trades)
-      </div>
+      @if (strategy.noBacktest) {
+        <div class="backtest-info">
+          <i class="pi pi-info-circle"></i>
+          {{ strategy.equityNote || 'No backtest report is available for this strategy yet.' }}
+        </div>
+      } @else {
+        <div class="backtest-info">
+          <i class="pi pi-calendar-clock"></i>
+          Backtested: {{ strategy.performance.backtestStartDate | date:'MMM yyyy' }}
+          — {{ strategy.performance.backtestEndDate | date:'MMM yyyy' }}
+          ({{ strategy.performance.totalTrades }} trades)
+        </div>
+      }
     </div>
 
     <!-- Deploy / Status panel -->
@@ -103,6 +110,32 @@
     </div>
   </div>
 
+  @if (strategy.noBacktest) {
+    <div class="metrics-section">
+      <div class="metrics-secondary glass-card">
+        <div class="sec-metric">
+          <div class="sec-label">Entry</div>
+          <div class="sec-value">{{ strategy.entryTime }} IST</div>
+        </div>
+        <div class="sec-metric">
+          <div class="sec-label">Exit</div>
+          <div class="sec-value">{{ strategy.exitTime }} IST</div>
+        </div>
+        <div class="sec-metric">
+          <div class="sec-label">Stop-loss</div>
+          <div class="sec-value">{{ strategy.stopLossPercent }}% per leg</div>
+        </div>
+        <div class="sec-metric">
+          <div class="sec-label">1 Lot</div>
+          <div class="sec-value">{{ strategy.lotSize }} {{ strategy.lotUnitLabel || 'units' }}</div>
+        </div>
+        <div class="sec-metric">
+          <div class="sec-label">Exchange</div>
+          <div class="sec-value">{{ strategy.exchange || 'NSE' }}</div>
+        </div>
+      </div>
+    </div>
+  } @else {
   <!-- ── Key Metrics Row ────────────────────────────────────────────────── -->
   <div class="metrics-section">
     <div class="metrics-primary">
@@ -239,6 +272,7 @@
       </tbody>
     </table>
   </div>
+  }
 
   <!-- Deploy Dialog -->
   @if (strategy) {

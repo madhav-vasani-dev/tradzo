@@ -193,6 +193,12 @@
     border: 1px solid rgba(0, 194, 232, 0.2);
     color: $primary-cyan;
   }
+
+  &.logo-kotak {
+    background: linear-gradient(135deg, rgba(237, 28, 36, 0.18), rgba(0, 56, 116, 0.12));
+    border: 1px solid rgba(237, 28, 36, 0.3);
+    color: #ff5a60;
+  }
 }
 
 .broker-initial {

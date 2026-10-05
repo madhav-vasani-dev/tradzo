@@ -8,6 +8,17 @@ Nifty straddle (Mon–Fri):
   15:29:30  execute_exit (retry)  — re-run ONLY legs the first pass tried and failed to close
   15:31     eod_cleanup           — compute PnL, log day summary
 
+Crude Oil Mini — MCX CRUDEOILM straddle (Mon–Fri):
+  15:25     pre_entry_check_crude — Kotak logins, warm MCX instruments, status="ready"
+  15:29:45  execute_crude_entry   — pre-stage, then sell ATM CE + PE at 15:30:00 + 20% SL
+  23:24     execute_crude_exit    — cancel SL orders, square off remaining
+  23:24:30  execute_crude_exit (retry)
+  23:27     execute_crude_exit (last retry, before the 23:30 close)
+  23:28     eod_cleanup_crude
+
+Kotak Neo (Mon–Fri):
+  08:45     kotak_daily_login     — fresh TOTP + MPIN session for every connected account
+
 BTC option selling (every day):
   16:56     pre_entry_check_btc   — validate Delta accounts, set status="ready"
   17:00:45  execute_btc_entry     — pre-stage, then sell ATM BTC CE + PE at 17:01:00
@@ -29,7 +40,7 @@ from apscheduler.schedulers.asyncio import AsyncIOScheduler
 from apscheduler.triggers.cron import CronTrigger
 
 from config import IST, settings
-from services import execution_service
+from services import crude_execution, execution_service, kotak_service
 
 log = logging.getLogger("tradzo.scheduler")
 
@@ -51,6 +62,11 @@ def _prestage_trigger(entry_time: str, day_of_week: str) -> CronTrigger:
         second=fire_at.second,
         timezone=IST,
     )
+
+
+def _hm(value: str) -> tuple[int, int]:
+    hour, minute = (int(part) for part in str(value).split(":", 1))
+    return hour, minute
 
 
 def _run_async(coro_fn):
@@ -132,6 +148,66 @@ def start_scheduler() -> AsyncIOScheduler | None:
         _run_sync(execution_service.eod_cleanup),
         CronTrigger(day_of_week=_WEEKDAYS, hour=15, minute=31, timezone=IST),
         id="eod_cleanup",
+        replace_existing=True,
+    )
+
+    # ── Kotak Neo — daily automatic login (TOTP + MPIN) ──────────────────
+    k_h, k_m = _hm(getattr(settings, "kotak_daily_login_time", "08:45"))
+    _scheduler.add_job(
+        _run_async(kotak_service.daily_login_all),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=k_h, minute=k_m, timezone=IST),
+        id="kotak_daily_login",
+        replace_existing=True,
+        misfire_grace_time=600,
+    )
+
+    # ── Crude Oil Mini (MCX) — 15:30 entry, 23:24 exit ────────────────────
+    ce_h, ce_m = _hm(crude_execution.entry_time())
+    pre_at = datetime(2000, 1, 1, ce_h, ce_m) - timedelta(minutes=5)
+    _scheduler.add_job(
+        _run_sync(crude_execution.pre_entry_check_crude),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=pre_at.hour, minute=pre_at.minute, timezone=IST),
+        id="pre_entry_check_crude",
+        replace_existing=True,
+        misfire_grace_time=120,
+    )
+    _scheduler.add_job(
+        _run_async(crude_execution.execute_crude_entry),
+        _prestage_trigger(crude_execution.entry_time(), _WEEKDAYS),
+        id="execute_crude_entry",
+        replace_existing=True,
+        misfire_grace_time=10,
+    )
+    cx_h, cx_m = _hm(crude_execution.exit_time())
+    _scheduler.add_job(
+        _run_async(crude_execution.execute_crude_exit),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=cx_h, minute=cx_m, timezone=IST),
+        id="execute_crude_exit",
+        replace_existing=True,
+        misfire_grace_time=45,
+    )
+    _scheduler.add_job(
+        _run_async(lambda: crude_execution.execute_crude_exit(retry=True)),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=cx_h, minute=cx_m, second=30, timezone=IST),
+        id="execute_crude_exit_retry",
+        replace_existing=True,
+        misfire_grace_time=20,
+    )
+    # Last-chance pass ~3 min later — still before the 23:30 MCX close (US summer time) —
+    # for any leg whose exit failed twice; an MCX leg left open carries overnight (NRML).
+    late = datetime(2000, 1, 1, cx_h, cx_m) + timedelta(minutes=3)
+    _scheduler.add_job(
+        _run_async(lambda: crude_execution.execute_crude_exit(retry=True)),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=late.hour, minute=late.minute, timezone=IST),
+        id="execute_crude_exit_last_retry",
+        replace_existing=True,
+        misfire_grace_time=30,
+    )
+    eod_at = datetime(2000, 1, 1, cx_h, cx_m) + timedelta(minutes=4)
+    _scheduler.add_job(
+        _run_sync(crude_execution.eod_cleanup_crude),
+        CronTrigger(day_of_week=_WEEKDAYS, hour=eod_at.hour, minute=eod_at.minute, timezone=IST),
+        id="eod_cleanup_crude",
         replace_existing=True,
     )
 

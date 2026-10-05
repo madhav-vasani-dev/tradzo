@@ -6,13 +6,15 @@ backend (never Firestore/frontend). Firestore holds only account metadata.
   POST /broker/upstox/connect   {userId, apiKey, apiSecret}  -> { auth_url }
   GET  /broker/upstox/callback  ?code=&state=                -> 302 to frontend
   POST /broker/jainam/connect   {userId, interactive/marketData keys}
+  POST /broker/kotak/connect    {userId, accessToken, ucc, mobileNumber, mpin, totpSecret}
+  GET  /broker/kotak/status/{account_id}  -> live session + static-IP check
   POST /broker/disconnect/{account_id}
 
 Firestore field names mirror the frontend BrokerAccount model:
   brokerAccountId, displayName, isConnected, connectedAt, lastRefreshedAt, expiresAt
 """
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 
 import pytz
 from fastapi import APIRouter, HTTPException, Request, Depends
@@ -20,7 +22,7 @@ from fastapi.responses import RedirectResponse
 from pydantic import BaseModel, Field
 
 from config import settings
-from services import firebase_service, jainam_service, upstox_service
+from services import firebase_service, jainam_service, kotak_service, upstox_service
 from utils import credentials_store
 from utils import logger as activity
 from utils import token_store
@@ -287,6 +289,134 @@ async def jainam_connect(req: JainamConnectRequest, current_user: dict = Depends
     return await _login_and_persist_jainam(req.userId, creds, set_connected_at=True)
 
 
+# ── Kotak Neo (Neo Trade API — TOTP + MPIN, no redirect) ─────────────────────
+
+class KotakConnectRequest(BaseModel):
+    userId: str = Field(..., min_length=1)
+    accessToken: str = Field(..., min_length=1)
+    ucc: str = Field(..., min_length=1)
+    mobileNumber: str = Field(..., min_length=10)
+    mpin: str = Field(..., min_length=4, max_length=6)
+    totpSecret: str = Field(..., min_length=16)
+    displayName: str = Field(default="")
+
+
+def _check_owner_or_admin(account: dict, current_user: dict) -> None:
+    if account.get("userId") == current_user["uid"]:
+        return
+    admin_doc = firebase_service.get_db().collection("users").document(current_user["uid"]).get()
+    data = admin_doc.to_dict() if admin_doc.exists else {}
+    if not (data.get("isAdmin") or data.get("isSuperUser")):
+        raise HTTPException(status_code=403, detail="Forbidden: You do not own this broker account.")
+
+
+async def _login_and_persist_kotak(user_id: str, creds: dict, *, account_id: str | None,
+                                   display_name: str = "") -> dict:
+    """Log in to Kotak Neo with the given credentials and persist account + session + creds.
+
+    The login is done BEFORE anything is stored, so wrong credentials never create an account.
+    """
+    ucc = str(creds["ucc"]).strip().upper()
+    temp_id = account_id or f"pending-{user_id}-{ucc}"
+    try:
+        kotak_service.validate_credentials(creds)
+        sess = await kotak_service.login(temp_id, creds)
+    except (ValueError, kotak_service.KotakError) as exc:
+        if account_id:
+            kotak_service.mark_login_failed(account_id, str(exc))
+        raise HTTPException(status_code=400, detail=f"Kotak login failed: {exc}")
+
+    now = datetime.now(IST)
+    name = display_name.strip() or sess.extra.get("greetingName") or ucc
+    account_data = {
+        "userId": user_id,
+        "broker": "kotak",
+        "brokerAccountId": sess.ucc or ucc,
+        "displayName": f"Kotak Neo - {name}",
+        "isConnected": True,
+        "needsReauth": False,
+        "expiresAt": sess.expires_dt() or (now + timedelta(hours=18)),
+        "lastRefreshedAt": now,
+        "lastLoginAt": now,
+        "lastLoginError": None,
+        "autoLogin": True,
+    }
+    if not account_id:
+        account_data["connectedAt"] = now
+    new_id = firebase_service.upsert_broker_account(account_data)
+
+    stored = {
+        "accessToken": str(creds["accessToken"]).strip(),
+        "ucc": ucc,
+        "mobileNumber": kotak_service.normalise_mobile(creds["mobileNumber"]),
+        "mpin": str(creds["mpin"]).strip(),
+        "totpSecret": "".join(str(creds["totpSecret"]).split()).upper(),
+    }
+    credentials_store.save_credentials(new_id, stored)
+    sess.account_id = new_id
+    kotak_service.forget(temp_id)
+    kotak_service._remember(sess)
+
+    ip = await kotak_service._check_static_ip(sess)
+    activity.log_activity(
+        type="broker_connected",
+        message=f"Kotak Neo account {'reconnected' if account_id else 'connected'} ({account_data['displayName']}).",
+        severity="success",
+        userId=user_id,
+        metadata={"broker": "kotak", "brokerAccountId": account_data["brokerAccountId"], "serverIp": ip},
+    )
+    return {"status": "connected", "accountId": new_id, "brokerAccountId": account_data["brokerAccountId"],
+            "serverIp": ip}
+
+
+@router.post("/kotak/connect")
+async def kotak_connect(req: KotakConnectRequest, current_user: dict = Depends(get_current_user)):
+    """Connect a Kotak Neo account (Neo Trade API).
+
+    Validates the credentials with a real TOTP + MPIN login, then stores them encrypted so
+    the backend can log in automatically every trading day.
+    """
+    _require_firestore()
+    if req.userId != current_user["uid"]:
+        raise HTTPException(status_code=403, detail="Forbidden: Cannot connect broker account for another user.")
+    creds = req.model_dump(exclude={"userId", "displayName"})
+    return await _login_and_persist_kotak(req.userId, creds, account_id=None, display_name=req.displayName)
+
+
+@router.get("/kotak/status/{account_id}")
+async def kotak_status(account_id: str, current_user: dict = Depends(get_current_user)):
+    """Health check for a Kotak account: session, the IP Kotak sees, funds summary.
+
+    Use it after connecting to confirm the static-IP whitelist matches this server.
+    """
+    _require_firestore()
+    account = firebase_service.get_broker_account(account_id)
+    if not account or account.get("broker") != "kotak":
+        raise HTTPException(status_code=404, detail="Kotak account not found.")
+    _check_owner_or_admin(account, current_user)
+    try:
+        sess = await kotak_service.ensure_session(account_id)
+    except Exception as exc:  # noqa: BLE001
+        kotak_service.mark_login_failed(account_id, str(exc))
+        return {"connected": False, "error": str(exc)}
+    ip = await kotak_service._check_static_ip(sess)
+    funds: dict = {}
+    try:
+        lim = await kotak_service.limits(sess)
+        funds = {k: lim.get(k) for k in ("Net", "MarginUsed", "CollateralValue") if isinstance(lim, dict)}
+    except Exception as exc:  # noqa: BLE001
+        funds = {"error": str(exc)}
+    return {
+        "connected": True,
+        "ucc": sess.ucc,
+        "sessionCreatedAt": sess.created_at,
+        "sessionExpiresAt": sess.expires_at,
+        "serverIpSeenByKotak": ip,
+        "expectedStaticIp": settings.kotak_expected_static_ip or None,
+        "funds": funds,
+    }
+
+
 # ── Reconnect (reuses stored credentials — no re-entering keys) ──────────────
 
 @router.post("/reconnect/{account_id}")
@@ -335,6 +465,9 @@ async def reconnect(account_id: str, current_user: dict = Depends(get_current_us
 
     if broker == "jainam":
         return await _login_and_persist_jainam(user_id, creds, set_connected_at=False)
+
+    if broker == "kotak":
+        return await _login_and_persist_kotak(user_id, creds, account_id=account_id)
 
     if broker == "delta":
         from services import delta_service
@@ -396,6 +529,7 @@ def disconnect(account_id: str, current_user: dict = Depends(get_current_user)):
         raise HTTPException(status_code=403, detail="Forbidden: You do not own this broker account.")
 
     token_store.delete_tokens(account_id)
+    kotak_service.forget(account_id)
 
     firebase_service.update_broker_account(
         account_id,
@@ -441,6 +575,7 @@ def remove(account_id: str, current_user: dict = Depends(get_current_user)):
 
     token_store.delete_tokens(account_id)
     credentials_store.delete_credentials(account_id)
+    kotak_service.forget(account_id)
 
     firebase_service.delete_broker_account(account_id)
     firebase_service.disable_user_strategies_for_account(account_id)

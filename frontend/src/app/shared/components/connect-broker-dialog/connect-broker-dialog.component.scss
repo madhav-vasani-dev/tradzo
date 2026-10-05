@@ -53,6 +53,7 @@
   background: linear-gradient(135deg, $primary-cyan, #0086a3);
 
   &.logo-jainam { background: linear-gradient(135deg, $primary-gold, #c98a1a); }
+  &.logo-kotak { background: linear-gradient(135deg, #ED1C24, #003874); }
 }
 
 .cbd-title {
@@ -74,6 +75,19 @@
 }
 
 // ── Help note ─────────────────────────────────────────────────────────────────
+.cbd-steps {
+  margin: 0;
+  padding: 0.7rem 0.85rem 0.7rem 2rem;
+  font-size: 0.78rem;
+  line-height: 1.5;
+  color: $text-secondary;
+  background: $card-bg;
+  border: 1px solid $border-default;
+  border-radius: 10px;
+
+  li + li { margin-top: 0.35rem; }
+}
+
 .cbd-help {
   display: flex;
   gap: 0.6rem;

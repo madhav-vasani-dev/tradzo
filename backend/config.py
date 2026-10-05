@@ -29,6 +29,17 @@ class Settings(BaseSettings):
     # XTS login "source": WebAPI for retail, WEBAPI/DEALERAPI variants exist.
     jainam_xts_source: str = "WebAPI"
 
+    # Kotak Neo — Neo Trade API (TOTP + MPIN). Login always goes to this host; every other
+    # call goes to the per-account `baseUrl` Kotak returns at login.
+    kotak_login_base_url: str = "https://mis.kotaksecurities.com"
+    kotak_http_timeout_seconds: float = 15.0
+    # Daily automatic login for every connected Kotak account (IST, Mon–Fri), so sessions are
+    # fresh well before the first entry. Accounts are also re-logged lazily when needed.
+    kotak_daily_login_time: str = "08:45"
+    # Optional: the server's public IP the clients whitelist on the Neo API dashboard. When set,
+    # a mismatch with the IP Kotak reports at login is flagged on the account.
+    kotak_expected_static_ip: str = ""
+
     # Delta Exchange — Indian endpoint for BTC option strategies.
     delta_exchange_base_url: str = "https://api.india.delta.exchange/v2"
     # USD → INR conversion rate used for BTC option PnL display.
@@ -71,6 +82,20 @@ class Settings(BaseSettings):
     order_max_attempts: int = 4
     # How long to wait for a broker to report an order's terminal state.
     order_status_timeout_seconds: float = 3.0
+
+    # MCX Crude Oil Mini (CRUDEOILM) straddle.
+    crude_entry_time: str = "15:30"
+    crude_exit_time: str = "23:24"
+    # Contract selection near option expiry: trade the nearest option expiry that is at least
+    # this many calendar days away. 1 = roll to next month ON expiry day (never trade the
+    # expiring contract); 0 = trade the expiring contract through its expiry day.
+    crude_min_days_to_expiry: int = 1
+    # MCX only accepts DAY validity (no IOC), so a protected limit order rests for this long
+    # before it is cancelled and re-priced.
+    mcx_order_wait_seconds: float = 4.0
+    upstox_mcx_instruments_url: str = (
+        "https://assets.upstox.com/market-quote/instruments/exchange/MCX.json.gz"
+    )
 
     # Live market data feed (websocket) — drives live mark-to-market P&L on open positions.
     enable_live_feed: bool = True

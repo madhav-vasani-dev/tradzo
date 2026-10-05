@@ -91,7 +91,10 @@
         @if (!loadingBrokers && !hasConnectedBrokers) {
           <div class="no-brokers">
             <div class="no-brokers-icon"><i class="pi pi-link"></i></div>
-            <p class="no-brokers-text">No broker accounts connected yet.</p>
+            <p class="no-brokers-text">
+              No connected broker account can run this strategy.
+              @if (supportedBrokerLabel) { <br><small>Supported: {{ supportedBrokerLabel }}</small> }
+            </p>
             <a href="/broker-accounts" class="no-brokers-link">
               <i class="pi pi-external-link"></i>
               Connect a broker account
@@ -111,7 +114,7 @@
 
         <div class="amount-section">
           <div class="min-amount-info">
-            <span class="min-label">Base Margin (1 Lot = {{ strategy.lotSize }} units)</span>
+            <span class="min-label">Base Margin (1 Lot = {{ strategy.lotSize }} {{ unitLabel }})</span>
             <span class="min-value">{{ formatMoney(strategy.minimumAmount) }}</span>
           </div>
 
@@ -148,7 +151,7 @@
           <div class="capital-preview-card">
             <div class="preview-label">Estimated Total Margin Required:</div>
             <div class="preview-value">{{ formatMoney(deployedCapital) }}</div>
-            <div class="preview-subtext">Lots: {{ multiplier }} | Total Units: {{ multiplier * strategy.lotSize }}</div>
+            <div class="preview-subtext">Lots: {{ multiplier }} | Total {{ unitLabel | titlecase }}: {{ multiplier * strategy.lotSize }}</div>
           </div>
         </div>
       </div>
@@ -185,7 +188,7 @@
           </div>
           <div class="confirm-row">
             <span class="confirm-label">Lot Multiplier</span>
-            <span class="confirm-value">{{ multiplier }}x ({{ multiplier * strategy.lotSize }} units)</span>
+            <span class="confirm-value">{{ multiplier }}x ({{ multiplier * strategy.lotSize }} {{ unitLabel }})</span>
           </div>
           <div class="confirm-row highlight">
             <span class="confirm-label">Total Capital Deployed</span>

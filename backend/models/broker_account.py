@@ -8,7 +8,7 @@ from typing import Literal, Optional
 
 from pydantic import BaseModel
 
-BrokerName = Literal["upstox", "jainam"]
+BrokerName = Literal["upstox", "jainam", "delta", "kotak"]
 
 
 class BrokerAccount(BaseModel):

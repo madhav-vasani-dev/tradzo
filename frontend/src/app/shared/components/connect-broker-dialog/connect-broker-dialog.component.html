@@ -31,6 +31,15 @@
         </div>
       }
 
+      <!-- Ordered setup steps (e.g. Kotak Neo: token, TOTP secret, static IP) -->
+      @if (meta.setupSteps?.length) {
+        <ol class="cbd-steps">
+          @for (step of meta.setupSteps; track $index) {
+            <li>{{ step }}</li>
+          }
+        </ol>
+      }
+
       <!-- URLs to register in the broker's developer app (copyable) -->
       @if (meta.setupUrls?.length) {
         <div class="cbd-urls">

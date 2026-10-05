@@ -53,7 +53,11 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
     const user = this.auth.currentUser;
     if (user) {
       this.sub = this.brokerService.getUserBrokerAccounts(user.uid).subscribe((accounts: BrokerAccount[]) => {
-        this.brokerAccounts = accounts.filter((a: BrokerAccount) => a.isConnected);
+        const allowed = this.strategy?.supportedBrokers?.length
+          ? this.strategy.supportedBrokers
+          : (this.strategy?.broker ? [this.strategy.broker] : null);
+        this.brokerAccounts = accounts.filter((a: BrokerAccount) =>
+          a.isConnected && (!allowed || allowed.includes(a.broker)));
         if (this.strategy?.broker) {
           const matching = this.brokerAccounts.find((a: BrokerAccount) => a.broker === this.strategy.broker);
           if (matching) {
@@ -74,6 +78,16 @@ export class DeployStrategyDialogComponent implements OnInit, OnDestroy {
     this.selectedBroker = null;
     this.multiplier = 1;
     this.isDeploying = false;
+  }
+
+  get unitLabel(): string {
+    return this.strategy?.lotUnitLabel || 'units';
+  }
+
+  get supportedBrokerLabel(): string {
+    const names: Record<string, string> = { upstox: 'Upstox', jainam: 'Jainam', kotak: 'Kotak Neo', delta: 'Delta Exchange' };
+    const list = this.strategy?.supportedBrokers ?? (this.strategy?.broker ? [this.strategy.broker] : []);
+    return list.map(b => names[b] ?? b).join(', ');
   }
 
   get hasConnectedBrokers(): boolean {

@@ -230,3 +230,42 @@ async def trigger_btc_exit(admin: dict = Depends(get_current_admin)):
     _require_firestore()
     summary = await execution_service.execute_btc_exit()
     return {"status": "executed_btc_exit", **summary}
+
+
+# ── Crude Oil Mini (MCX) ─────────────────────────────────────────────────────
+
+@router.post("/crude-pre-entry-check")
+def run_crude_pre_entry_check(admin: dict = Depends(get_current_admin)):
+    """Manually run the 15:25 Crude pre-entry check (Kotak logins + readiness)."""
+    _require_firestore()
+    from services import crude_execution
+    return crude_execution.pre_entry_check_crude()
+
+
+@router.post("/trigger-crude-entry")
+async def trigger_crude_entry(admin: dict = Depends(get_current_admin)):
+    """Manually trigger the Crude Oil Mini entry NOW (sells the ATM straddle immediately)."""
+    _require_firestore()
+    from services import crude_execution
+    from datetime import datetime
+    import pytz
+    now = datetime.now(pytz.timezone("Asia/Kolkata"))
+    summary = await crude_execution.execute_crude_entry(entry=now.strftime("%H:%M"))
+    return {"status": "executed_crude_entry", **summary}
+
+
+@router.post("/trigger-crude-exit")
+async def trigger_crude_exit(admin: dict = Depends(get_current_admin)):
+    """Manually trigger the 23:24 Crude Oil Mini exit."""
+    _require_firestore()
+    from services import crude_execution
+    summary = await crude_execution.execute_crude_exit()
+    return {"status": "executed_crude_exit", **summary}
+
+
+@router.post("/kotak-login-all")
+async def trigger_kotak_login_all(admin: dict = Depends(get_current_admin)):
+    """Run the daily Kotak auto-login for every connected Kotak account now."""
+    _require_firestore()
+    from services import kotak_service
+    return await kotak_service.daily_login_all()

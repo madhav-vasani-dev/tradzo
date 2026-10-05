@@ -99,26 +99,38 @@ async def modify_order(token: str, modification: dict) -> dict:
     return body
 
 
+# XTS exchange segments (numeric ids used by the market-data instrument APIs).
+XTS_SEGMENT_IDS = {"NSEFO": 2, "MCXFO": 51}
+
+
 async def get_option_instrument(
     token: str,
     symbol: str,
     expiry_date_str: str,
     option_type: str,
     strike_price: float,
+    exchange_segment: str = "NSEFO",
+    series: str = "OPTIDX",
 ) -> dict:
-    """Resolve an option contract strike and expiry to Jainam exchangeInstrumentID."""
+    """Resolve an option contract strike and expiry to Jainam exchangeInstrumentID.
+
+    NSE index options: exchange_segment="NSEFO", series="OPTIDX".
+    MCX options on futures (e.g. CRUDEOILM): exchange_segment="MCXFO", series="OPTFUT".
+    Returns the instrument dict; `exchangeInstrumentID` is guaranteed, `lotSize` when XTS
+    reports it.
+    """
     from datetime import datetime
     dt = datetime.strptime(expiry_date_str, "%Y-%m-%d")
     formatted_expiry = dt.strftime("%d%b%Y")  # e.g. 21Jul2026
     
     headers = {"Content-Type": "application/json", "authorization": token}
     params = {
-        "exchangeSegment": 2,  # NSEFO
-        "series": "OPTIDX",
+        "exchangeSegment": XTS_SEGMENT_IDS.get(exchange_segment, 2),
+        "series": series,
         "symbol": symbol,
         "expiryDate": formatted_expiry,
         "optionType": option_type,
-        "strikePrice": int(strike_price),
+        "strikePrice": int(strike_price) if float(strike_price).is_integer() else strike_price,
     }
     
     async with httpx.AsyncClient(timeout=20) as client:
@@ -135,10 +147,22 @@ async def get_option_instrument(
         raise RuntimeError(f"optionsymbol_resolution_failed: {desc}")
         
     result = body.get("result", {})
-    instrument_id = result.get("exchangeInstrumentID")
+    if isinstance(result, list):
+        # Some XTS builds return a list of matching instruments.
+        result = result[0] if result else {}
+    lowered = {str(k).lower(): v for k, v in (result or {}).items()}
+    instrument_id = lowered.get("exchangeinstrumentid")
     if not instrument_id:
         raise RuntimeError("optionsymbol_resolution_failed: no exchangeInstrumentID in result")
-    return result
+    out = dict(result)
+    out["exchangeInstrumentID"] = instrument_id
+    lot = lowered.get("lotsize")
+    if lot not in (None, ""):
+        try:
+            out["lotSize"] = int(float(lot))
+        except (TypeError, ValueError):
+            pass
+    return out
 
 
 async def get_order_history(token: str, app_order_id: str) -> list[dict]:

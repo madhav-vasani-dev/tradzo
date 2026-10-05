@@ -20,6 +20,11 @@ Instrument keys
 Upstox keys look like "NSE_FO|43427". Jainam stores the bare NSE token as `instrumentKey`,
 which is the same number, so a Jainam position is subscribed as "NSE_FO|<instrumentKey>".
 
+Kotak keys ("mcx_fo|<token>|<symbol>") are not Upstox keys: a Kotak position is marked from
+its `marketDataKey` (the matching Upstox key, when one was recorded at entry) or else from
+Kotak's own quotes API through the client's session. Jainam MCX positions carry a
+`marketDataKey` too, because their bare token is not an NSE_FO token.
+
 Delta Exchange (BTC) is not on this websocket — its positions are marked from the existing
 Delta REST LTP endpoint on the same interval. BTC trades in a 30-minute window with two
 legs, so the request volume is negligible.
@@ -63,11 +68,18 @@ def get_cached_ltp(instrument_key: str) -> float | None:
 
 def upstox_key_for(position: dict) -> str | None:
     """Upstox instrument key for an NSE position, or None if it isn't an NSE leg."""
+    md = str(position.get("marketDataKey") or "").strip()
+    if md:
+        return md
     raw = str(position.get("instrumentKey") or "").strip()
     if not raw:
         return None
     if position.get("strategyCode") == "BTC_OPTION_SELLING" or position.get("broker") == "delta":
         return None
+    if position.get("broker") == "kotak" or raw.count("|") >= 2:
+        return None                                  # Kotak key — marked via Kotak quotes
+    if str(position.get("exchange") or "NSE").upper() == "MCX" and "|" not in raw:
+        return None                                  # bare MCX token without an Upstox key
     if "|" in raw:
         return raw
     return f"NSE_FO|{raw}"
@@ -298,6 +310,9 @@ async def _resolve_ltp(position: dict) -> float:
 
     key = upstox_key_for(position)
     if not key:
+        if position.get("broker") == "kotak" or str(position.get("instrumentKey") or "").count("|") >= 2:
+            from services import execution_service
+            return float(await execution_service._position_ltp(position))
         return 0.0
     cached = _ltp_cache.get(key)
     if cached:
@@ -335,7 +350,8 @@ async def mark_open_positions() -> dict:
 
         entry = float(pos.get("entryPrice") or 0.0)
         qty = float(pos.get("quantity") or 0)
-        pnl = round((entry - ltp) * qty, 6)   # every leg is short
+        units = float(pos.get("pnlMultiplier") or 1.0)    # e.g. 10 barrels per Kotak MCX lot
+        pnl = round((entry - ltp) * qty * units, 6)   # every leg is short
 
         # Deliberately NOT `pnl`: that field is the booked result written by the exit
         # paths. Marking into a separate field means a mark can never land on top of a

@@ -13,6 +13,26 @@
   <div class="card-instrument">{{ strategy.instrumentType }}</div>
 
   <!-- Performance grid -->
+  @if (strategy.noBacktest) {
+  <div class="metrics-grid">
+    <div class="metric">
+      <div class="metric-value">{{ strategy.entryTime }}</div>
+      <div class="metric-label">Entry</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">{{ strategy.exitTime }}</div>
+      <div class="metric-label">Exit</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">{{ strategy.stopLossPercent }}%</div>
+      <div class="metric-label">SL / leg</div>
+    </div>
+    <div class="metric">
+      <div class="metric-value">{{ strategy.exchange || 'NSE' }}</div>
+      <div class="metric-label">Live only</div>
+    </div>
+  </div>
+  } @else {
   <div class="metrics-grid">
     <div class="metric">
       <div class="metric-value positive">{{ formatPercent(strategy.performance.cagr) }}</div>
@@ -31,6 +51,7 @@
       <div class="metric-label">Sharpe</div>
     </div>
   </div>
+  }
 
   <!-- Footer: Min amount + CTA -->
   <div class="card-footer">

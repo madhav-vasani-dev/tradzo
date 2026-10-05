@@ -244,3 +244,33 @@ async def get_option_ltp(
     except Exception as exc:  # noqa: BLE001
         log.warning("LTP fetch failed for %s: %s", instrument_key, exc)
     return 0.0
+
+
+async def get_ltps(instrument_keys: list[str], access_token: str | None = None) -> dict[str, float]:
+    """LTPs for several Upstox instrument keys in one call → {instrument_key: ltp}.
+
+    Upstox keys the response by "EXCHANGE:TRADINGSYMBOL", so each row is matched back to the
+    requested key through its `instrument_token` field. Missing/failed keys are omitted.
+    """
+    keys = [k for k in dict.fromkeys(instrument_keys) if k]
+    if not keys:
+        return {}
+    token = access_token or _get_market_data_token()
+    if not token:
+        raise RuntimeError("No valid Upstox market-data token (connect the admin Upstox account).")
+    async with httpx.AsyncClient(timeout=10) as client:
+        resp = await client.get(f"{UPSTOX_BASE}/market-quote/ltp",
+                                params={"instrument_key": ",".join(keys)},
+                                headers=_auth_headers(token))
+    if resp.status_code != 200:
+        raise RuntimeError(f"Upstox LTP fetch failed: {resp.status_code} {resp.text[:200]}")
+    out: dict[str, float] = {}
+    rows = (resp.json() or {}).get("data", {}) or {}
+    for name, val in rows.items():
+        key = str(val.get("instrument_token") or "")
+        ltp = float(val.get("last_price") or val.get("ltp") or 0.0)
+        if key in keys and ltp > 0:
+            out[key] = ltp
+        elif len(keys) == 1 and ltp > 0:
+            out[keys[0]] = ltp
+    return out

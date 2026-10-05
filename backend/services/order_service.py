@@ -34,6 +34,15 @@ Either way the fill is VERIFIED against the broker (never assumed from the LTP),
 order can't be filled the call RAISES `OrderNotFilled` — callers must never assume a fill.
 Delta Exchange keeps its own market_order path.
 
+Exchanges / brokers
+-------------------
+`exchange` is "NSE" (Nifty F&O) or "MCX" (commodity options). MCX options never take market
+orders (brokers reject them) and MCX accepts DAY validity only, so every MCX entry/exit is a
+DAY limit priced past the LTP that is cancelled and re-priced if it does not fill within
+`mcx_order_wait_seconds`, and every MCX stop-loss is a stop-LIMIT from the start.
+Kotak Neo always gets limit orders (Kotak converts API market orders into its own protected
+limits anyway, and recommends sending limits); its stop-losses are always SL (stop-limit).
+
 Stop-loss orders
 ----------------
 Every SL is placed as a stop-MARKET. NSE discontinued SL-M in the F&O segment, so an
@@ -61,6 +70,17 @@ MODIFY_ORDER_URL = f"{UPSTOX_BASE}/order/modify"
 
 # NSE quotes options in 5-paise ticks; a limit price off-tick is rejected.
 NSE_TICK = 0.05
+# MCX crude options: prices are kept on a 10-paise grid, which is valid whether the contract's
+# tick is 0.05 or 0.10.
+MCX_TICK = 0.10
+
+
+def tick_for(exchange: str | None) -> float:
+    return MCX_TICK if str(exchange or "").upper() == "MCX" else NSE_TICK
+
+
+def _is_mcx(exchange: str | None) -> bool:
+    return str(exchange or "").upper() == "MCX"
 
 
 # ── Product-type helpers ──────────────────────────────────────────────────────
@@ -79,20 +99,32 @@ def jainam_product() -> str:
     return "NRML" if _is_delivery() else "MIS"
 
 
+def kotak_product(exchange: str | None = "NSE") -> str:
+    """Kotak Neo product: NRML (carry-forward) / MIS. Kotak does not allow MIS in commodity
+    options, so MCX legs are always NRML."""
+    if _is_mcx(exchange):
+        return "NRML"
+    return "NRML" if _is_delivery() else "MIS"
+
+
+def jainam_segment(exchange: str | None) -> str:
+    return "MCXFO" if _is_mcx(exchange) else "NSEFO"
+
+
 # ── Stop-loss price helpers ───────────────────────────────────────────────────
 
 def _round_up_tick(price: float, tick: float = NSE_TICK) -> float:
-    return round(math.ceil(price / tick) * tick, 2)
+    return round(math.ceil(round(price / tick, 6)) * tick, 2)
 
 
-def sl_limit_price(trigger_price: float) -> float:
+def sl_limit_price(trigger_price: float, tick: float = NSE_TICK) -> float:
     """Protective limit price for a BUY stop order that must fill through a spike.
 
     Sits `sl_limit_buffer_pct` ABOVE the trigger so the order behaves like a market
     order once triggered, while capping the worst fill.
     """
     buffer_pct = float(getattr(settings, "sl_limit_buffer_pct", 10.0))
-    return _round_up_tick(trigger_price * (1 + buffer_pct / 100.0))
+    return _round_up_tick(trigger_price * (1 + buffer_pct / 100.0), tick)
 
 
 # ── Paper-mode helpers ────────────────────────────────────────────────────────
@@ -238,19 +270,19 @@ class OrderNotFilled(RuntimeError):
 
 
 def _round_down_tick(price: float, tick: float = NSE_TICK) -> float:
-    return round(math.floor(price / tick) * tick, 2)
+    return round(math.floor(round(price / tick, 6)) * tick, 2)
 
 
-def protected_limit_price(ref_price: float, side: str, buffer_pct: float) -> float:
+def protected_limit_price(ref_price: float, side: str, buffer_pct: float, tick: float = NSE_TICK) -> float:
     """Limit price that behaves like a market order but caps the worst fill.
 
     BUY sits `buffer_pct` above the reference (LTP), SELL sits below it, tick-aligned.
     The pad is at least two ticks so very cheap options still get a marketable price.
     """
-    pad = max(ref_price * buffer_pct / 100.0, 2 * NSE_TICK)
+    pad = max(ref_price * buffer_pct / 100.0, 2 * tick)
     if side == "BUY":
-        return _round_up_tick(ref_price + pad)
-    return max(_round_down_tick(ref_price - pad), NSE_TICK)
+        return _round_up_tick(ref_price + pad, tick)
+    return max(_round_down_tick(ref_price - pad, tick), tick)
 
 
 def _ci(row: dict, *keys, default=None):
@@ -268,6 +300,12 @@ async def _order_fill_state(access_token: str, order_id: str, broker: str) -> di
 
     status is one of "complete" | "cancelled" | "rejected" | "open" | "unknown".
     """
+    if broker == "kotak":
+        from services import kotak_service
+        st = await kotak_service.order_state(access_token, order_id)
+        return {"terminal": st["terminal"], "status": st["status"], "filled_qty": st["filled_qty"],
+                "avg_price": st["avg_price"], "message": st["message"]}
+
     if broker == "jainam":
         from services import jainam_service
         hist = await jainam_service.get_order_history(access_token, order_id)
@@ -305,22 +343,37 @@ async def _order_fill_state(access_token: str, order_id: str, broker: str) -> di
 
 async def _submit_limit(
     access_token: str, instrument_key: str, quantity: int, side: str,
-    price: float | None, tag: str, broker: str,
+    price: float | None, tag: str, broker: str, exchange: str = "NSE",
 ) -> str:
     """Send one order and return the broker order id.
 
-    price=None sends a plain MARKET/DAY order; otherwise an IOC LIMIT at `price`.
+    price=None sends a plain MARKET/DAY order; otherwise a LIMIT at `price` — IOC on NSE,
+    DAY on MCX (MCX has no IOC; `_place_protected` cancels it if it does not fill).
     """
     is_market = price is None
+    mcx = _is_mcx(exchange)
+    if is_market and (mcx or broker == "kotak"):
+        raise RuntimeError("market orders are not used for this broker/exchange — a limit price is required")
+    limit_tif = "DAY" if mcx else "IOC"
+
+    if broker == "kotak":
+        from services import kotak_service
+        seg, _tok, sym = kotak_service.parse_instrument_key(instrument_key)
+        return await kotak_service.place_order(
+            access_token, segment=seg, trading_symbol=sym, side=side, quantity=quantity,
+            order_type="L", price=price, product=kotak_product(exchange),
+            validity=limit_tif, tag=tag,
+        )
+
     if broker == "jainam":
         from services import jainam_service
         resp = await jainam_service.place_order(access_token, {
-            "exchangeSegment": "NSEFO",
+            "exchangeSegment": jainam_segment(exchange),
             "exchangeInstrumentID": int(instrument_key),
             "productType": jainam_product(),
             "orderType": "Market" if is_market else "Limit",
             "orderSide": side,
-            "timeInForce": "DAY" if is_market else "IOC",
+            "timeInForce": "DAY" if is_market else limit_tif,
             "disclosedQuantity": 0,
             "orderQuantity": quantity,
             "limitPrice": 0.0 if is_market else price,
@@ -338,7 +391,7 @@ async def _submit_limit(
         "order_type": "MARKET" if is_market else "LIMIT",
         "transaction_type": side,
         "product": upstox_product(),
-        "validity": "DAY" if is_market else "IOC",
+        "validity": "DAY" if is_market else limit_tif,
         "price": 0 if is_market else price,    # Upstox requires price=0 for MARKET (UDAPI1008)
         "disclosed_quantity": 0,
         "trigger_price": 0,
@@ -355,6 +408,8 @@ async def _await_terminal(access_token: str, order_id: str, broker: str, timeout
     """Poll until the order reaches a terminal state, or `timeout` seconds pass."""
     deadline = time.monotonic() + timeout
     state = None
+    # Kotak allows ~10 requests/second across all APIs — poll it more gently.
+    interval = 0.5 if broker == "kotak" else 0.25
     while True:
         try:
             state = await _order_fill_state(access_token, order_id, broker)
@@ -364,7 +419,28 @@ async def _await_terminal(access_token: str, order_id: str, broker: str, timeout
             log.warning("Order state poll failed for %s: %s", order_id, exc)
         if time.monotonic() >= deadline:
             return state
-        await asyncio.sleep(0.25)
+        await asyncio.sleep(interval)
+
+
+async def cancel_until_terminal(access_token: str, order_id: str, broker: str,
+                                total_seconds: float = 20.0) -> dict | None:
+    """Cancel a resting order and keep re-sending the cancel until the broker reports it
+    terminal (or `total_seconds` pass). Returns the last known state.
+
+    Used for DAY limits (MCX has no IOC): giving up while the order still rests would leave a
+    live order that can fill later, untracked.
+    """
+    deadline = time.monotonic() + total_seconds
+    state = None
+    while True:
+        try:
+            await cancel_order(access_token, order_id, paper=False, broker=broker)
+        except Exception as exc:  # noqa: BLE001 — "already complete/cancelled" lands here too
+            log.info("Cancel of %s raised (will verify state): %s", order_id, exc)
+        state = await _await_terminal(access_token, order_id, broker, min(3.0, max(0.5, deadline - time.monotonic())))
+        if (state and state["terminal"]) or time.monotonic() >= deadline:
+            return state
+        log.warning("Order %s still not terminal after cancel — re-sending cancel.", order_id)
 
 
 async def _place_protected(
@@ -378,6 +454,7 @@ async def _place_protected(
     broker: str,
     ltp_fn=None,
     reference_fallback: float = 0.0,
+    exchange: str = "NSE",
 ) -> dict:
     """Fill `quantity` and verify it, retrying on a miss.
 
@@ -393,6 +470,12 @@ async def _place_protected(
     attempts = int(getattr(settings, "order_max_attempts", 4))
     timeout = float(getattr(settings, "order_status_timeout_seconds", 3.0))
     use_market = str(getattr(settings, "order_style", "market")).lower() != "limit"
+    tick = tick_for(exchange)
+    if _is_mcx(exchange) or broker == "kotak":
+        use_market = False
+    if _is_mcx(exchange):
+        # A DAY limit can legitimately rest for a moment before it trades.
+        timeout = max(timeout, float(getattr(settings, "mcx_order_wait_seconds", 4.0)))
 
     remaining = quantity
     filled_total = 0
@@ -422,25 +505,31 @@ async def _place_protected(
             if ref <= 0:
                 raise _fail("no reference price (LTP) available to price a protected limit order")
             buffer_pct = min(start * (2 ** attempt), cap)
-            price = protected_limit_price(ref, side, buffer_pct)
+            price = protected_limit_price(ref, side, buffer_pct, tick)
         attempt_tag = tag if attempt == 0 else f"{tag}_{attempt}"
 
         try:
-            order_id = await _submit_limit(access_token, instrument_key, remaining, side, price, attempt_tag, broker)
+            order_id = await _submit_limit(access_token, instrument_key, remaining, side, price, attempt_tag,
+                                           broker, exchange)
         except Exception as exc:  # noqa: BLE001 — outcome ambiguous (timeout) or rejected: stop, don't stack orders
             raise _fail(f"order submit failed on attempt {attempt + 1}: {exc}", ambiguous=True) from exc
         order_ids.append(order_id)
 
         state = await _await_terminal(access_token, order_id, broker, timeout)
         if state is None or not state["terminal"]:
-            # IOC should be terminal almost instantly. Try to kill it, then re-check once.
-            try:
-                await cancel_order(access_token, order_id, paper=False, broker=broker)
-            except Exception as exc:  # noqa: BLE001
-                log.warning("Cancel of unresolved order %s failed: %s", order_id, exc)
-            state = await _await_terminal(access_token, order_id, broker, timeout)
+            # IOC should be terminal almost instantly; an MCX DAY limit that hasn't traded is
+            # still resting. Either way: cancel it and CONFIRM it is dead before re-pricing.
+            if _is_mcx(exchange) or broker == "kotak":
+                state = await cancel_until_terminal(access_token, order_id, broker)
+            else:
+                try:
+                    await cancel_order(access_token, order_id, paper=False, broker=broker)
+                except Exception as exc:  # noqa: BLE001
+                    log.warning("Cancel of unresolved order %s failed: %s", order_id, exc)
+                state = await _await_terminal(access_token, order_id, broker, timeout)
             if state is None or not state["terminal"]:
-                raise _fail(f"order {order_id} state unknown — not retrying to avoid a duplicate", ambiguous=True)
+                raise _fail(f"order {order_id} state unknown (it may still be LIVE at the broker) — "
+                            f"not retrying to avoid a duplicate", ambiguous=True)
 
         filled = state["filled_qty"]
         if state["status"] == "complete" and filled <= 0:
@@ -480,6 +569,7 @@ async def place_sell_market(
     delta_creds: dict | None = None,
     ltp_fn=None,
     ref_fallback: float = 0.0,
+    exchange: str = "NSE",
 ) -> dict:
     """Sell (short) an instrument "at market" (verified fill; see settings.order_style).
 
@@ -520,6 +610,7 @@ async def place_sell_market(
         broker=broker,
         ltp_fn=ltp_fn,
         reference_fallback=ref_fallback,
+        exchange=exchange,
     )
 
 
@@ -532,6 +623,7 @@ async def place_sl_market(
     paper: bool,
     broker: str = "upstox",
     delta_creds: dict | None = None,
+    exchange: str = "NSE",
 ) -> dict:
     """Place a BUY SL-M order (stop-loss for a short leg).
 
@@ -568,14 +660,28 @@ async def place_sl_market(
         )
         return {"order_id": str(result.get("id", ""))}
 
-    protective_limit = sl_limit_price(trigger_price)
+    tick = tick_for(exchange)
+    trigger_price = _round_up_tick(trigger_price, tick)
+    protective_limit = sl_limit_price(trigger_price, tick)
+    mcx = _is_mcx(exchange)
+
+    if broker == "kotak":
+        # Kotak: always a stop-LIMIT (SL-M is restricted in F&O and not offered on MCX options).
+        from services import kotak_service
+        seg, _tok, sym = kotak_service.parse_instrument_key(instrument_key)
+        order_no = await kotak_service.place_order(
+            access_token, segment=seg, trading_symbol=sym, side="BUY", quantity=quantity,
+            order_type="SL", price=protective_limit, trigger_price=trigger_price,
+            product=kotak_product(exchange), validity="DAY", tag=tag,
+        )
+        return {"order_id": order_no}
 
     if broker == "jainam":
         from services import jainam_service
 
         async def _place_jainam_sl(order_type: str, limit: float) -> str:
             resp = await jainam_service.place_order(access_token, {
-                "exchangeSegment": "NSEFO",
+                "exchangeSegment": jainam_segment(exchange),
                 "exchangeInstrumentID": int(instrument_key),
                 "productType": jainam_product(),
                 "orderType": order_type,
@@ -592,6 +698,9 @@ async def place_sl_market(
                 raise RuntimeError(f"Jainam {order_type} SL placement failed: no appOrderID returned")
             return str(oid)
 
+        if mcx:
+            # MCX options take no stop-market orders — go straight to a protective stop-limit.
+            return {"order_id": await _place_jainam_sl("StopLimit", protective_limit)}
         try:
             app_order_id = await _place_jainam_sl("StopMarket", 0.0)
         except Exception as exc:  # noqa: BLE001 — NSE F&O rejects SL-M; fall back immediately.
@@ -620,6 +729,9 @@ async def place_sl_market(
         })
         return resp.get("data", {}).get("order_id", "")
 
+    if mcx:
+        # MCX options take no stop-market orders — go straight to a protective stop-limit.
+        return {"order_id": await _place_upstox_sl("SL", protective_limit)}
     try:
         # SL-M becomes a MARKET order once triggered; Upstox requires price=0 for it.
         order_id = await _place_upstox_sl("SL-M", 0)
@@ -791,6 +903,7 @@ async def place_buy_market(
     delta_creds: dict | None = None,
     ltp_fn=None,
     ref_fallback: float = 0.0,
+    exchange: str = "NSE",
 ) -> dict:
     """Buy (square-off a short leg) "at market" (verified fill; see settings.order_style).
 
@@ -831,6 +944,7 @@ async def place_buy_market(
         broker=broker,
         ltp_fn=ltp_fn,
         reference_fallback=ref_fallback,
+        exchange=exchange,
     )
 
 
@@ -869,6 +983,11 @@ async def cancel_order(
         await jainam_service.cancel_order(access_token, order_id)
         return {"status": "cancelled"}
 
+    if broker == "kotak":
+        from services import kotak_service
+        await kotak_service.cancel_order(access_token, order_id)
+        return {"status": "cancelled"}
+
     resp = await _real_cancel(access_token, order_id)
     return {"status": resp.get("data", {}).get("status", "cancelled")}
 
@@ -899,6 +1018,20 @@ async def _sl_order_state(
                 return "cancelled", None, state
             return "unknown", None, state or "empty"
 
+        if broker == "kotak":
+            from services import kotak_service
+            st = await kotak_service.order_state(access_token, order_id)
+            if st["status"] == "complete":
+                return "filled", (st["avg_price"] or None), st.get("raw_status") or "complete"
+            if st["status"] in ("cancelled", "rejected"):
+                # Even after a partial fill, a cancelled stop can no longer trade. The exit sizes
+                # its BUY from the broker's net position, so a partly-filled stop is handled.
+                detail = st.get("raw_status") or st["status"]
+                if st["filled_qty"] > 0:
+                    detail += f" (stop partly filled {st['filled_qty']} @ {st['avg_price']})"
+                return "cancelled", None, detail
+            return "unknown", None, st.get("raw_status") or st["status"]
+
         if broker == "jainam":
             from services import jainam_service
             hist = await jainam_service.get_order_history(access_token, order_id)
@@ -925,7 +1058,8 @@ async def _sl_order_state(
         return "unknown", None, f"status query failed: {e}"
 
 
-async def get_net_position(access_token: str, instrument_key: str, broker: str) -> dict | None:
+async def get_net_position(access_token: str, instrument_key: str, broker: str,
+                           exchange: str = "NSE") -> dict | None:
     """The broker's current NET position in one instrument.
 
     Returns {"net_qty": int (negative = short), "buy_price": float, "sell_price": float,
@@ -934,10 +1068,21 @@ async def get_net_position(access_token: str, instrument_key: str, broker: str) 
     stale (leg closed by hand in the broker app, SL filled, partial fills, ...).
     """
     try:
+        if broker == "kotak":
+            from services import kotak_service
+            snap = await kotak_service.net_position(access_token, instrument_key)
+            # Kotak lists every instrument traded today (closed ones with net 0). A leg we sold
+            # today with NO row means the read is incomplete — never treat it as "flat".
+            return snap if snap.get("found") else None
+
         if broker == "jainam":
             from services import jainam_service
             rows = await jainam_service.get_positions(access_token)
+            want_seg = jainam_segment(exchange)
             for r in rows:
+                seg = str(_ci(r, "exchangesegment", default="") or "").upper()
+                if seg and seg != want_seg:
+                    continue                                  # same token, other exchange
                 if str(_ci(r, "exchangeinstrumentid", "exchangeinstrumentidstr", default="")) == str(instrument_key):
                     qty = _ci(r, "quantity", "netquantity")
                     if qty is None:

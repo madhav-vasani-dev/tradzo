@@ -1,4 +1,4 @@
-export type BrokerName = 'upstox' | 'jainam' | 'delta';
+export type BrokerName = 'upstox' | 'jainam' | 'delta' | 'kotak';
 
 export interface BrokerAccount {
   id: string;                     // Firestore doc ID
@@ -11,6 +11,13 @@ export interface BrokerAccount {
   connectedAt: any | null;        // Firestore Timestamp
   lastRefreshedAt: any | null;
   expiresAt: any | null;          // When the access token expires (display only — token itself is in backend)
+  /** Kotak: the backend logs in automatically every trading day with the stored TOTP secret. */
+  autoLogin?: boolean;
+  lastLoginAt?: any | null;
+  /** Last automatic-login / static-IP problem reported by the backend (null when healthy). */
+  lastLoginError?: string | null;
+  /** Kotak: the server IP Kotak saw at the last login — must be whitelisted on the Neo API dashboard. */
+  kotakSeenIp?: string | null;
 }
 
 /** A single credential input the user must provide to connect a broker (BYOK). */
@@ -47,6 +54,8 @@ export interface BrokerMeta {
   credentialFields: BrokerCredentialField[];
   setupUrls?: BrokerSetupUrl[];   // URLs to register in the broker's developer app
   helpText?: string;      // where to obtain the keys
+  /** Ordered setup steps shown in the connect dialog (optional). */
+  setupSteps?: string[];
   comingSoon?: boolean;
 }
 
@@ -105,6 +114,36 @@ export const BROKER_REGISTRY: BrokerMeta[] = [
     helpText:
       'Request XTS API activation from Jainam support for your client ID. They email you the ' +
       'Interactive and Market Data API key/secret pairs — enter them here.',
+    comingSoon: false,
+  },
+  {
+    name: 'kotak',
+    label: 'Kotak Neo',
+    description: 'Connect your Kotak Neo account via the Neo Trade API. Logs in automatically every trading day — supports Nifty options and MCX commodity options.',
+    logoUrl: '',
+    authType: 'session',
+    credentialFields: [
+      { key: 'accessToken', label: 'Trade API Access Token', secret: true, required: true,
+        hint: 'Neo app/web → More → Trade API → your application → copy the token.' },
+      { key: 'ucc', label: 'Client Code (UCC)', required: true, hint: 'Neo app → Profile, e.g. "AB123".' },
+      { key: 'mobileNumber', label: 'Registered Mobile Number', required: true, hint: 'With country code, e.g. +919876543210.' },
+      { key: 'mpin', label: 'MPIN', secret: true, required: true, hint: 'Your 6-digit Kotak Neo MPIN.' },
+      { key: 'totpSecret', label: 'TOTP Secret Key', secret: true, required: true,
+        hint: 'The text key shown under the QR code during TOTP registration (not the 6-digit code).' },
+      { key: 'displayName', label: 'Display Name', required: false, hint: 'Optional label, e.g. the client\'s name.' },
+    ],
+    helpText:
+      'Neo Trade API with automatic daily login: we generate the TOTP from your secret key, so you never ' +
+      'have to log in by hand. Orders are only accepted from the static IP you whitelist.',
+    setupSteps: [
+      'Neo app or neo.kotaksecurities.com → More → Trade API → Create Application. Copy the access token.',
+      'On the same API dashboard open "TOTP Registration", verify with mobile + OTP, and when the QR code ' +
+        'appears ALSO copy the secret key text shown with it. Scan the QR in Google/Microsoft Authenticator and ' +
+        'confirm the 6-digit code to finish registration.',
+      'API dashboard → your application → Add IP: whitelist the Tradzo server IP (ask the Tradzo admin) as the ' +
+        'primary IP. SEBI rules reject orders from any other IP.',
+      'Enter the token, client code, mobile, MPIN and TOTP secret below.',
+    ],
     comingSoon: false,
   },
   {

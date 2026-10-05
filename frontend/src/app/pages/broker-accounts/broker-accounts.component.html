@@ -106,14 +106,32 @@
                 <span class="ad-label">Connected On</span>
                 <span class="ad-value">{{ formatDate(account?.connectedAt) }}</span>
               </div>
-              <div class="account-row">
-                <span class="ad-label">Token Status</span>
-                <span class="ad-value expiry">{{ formatExpiry(account?.expiresAt) }}</span>
-              </div>
+              @if (meta.name === 'kotak') {
+                <div class="account-row">
+                  <span class="ad-label">Daily Login</span>
+                  <span class="ad-value">Automatic (TOTP) · last {{ formatDate(account?.lastLoginAt) }}</span>
+                </div>
+                <div class="account-row">
+                  <span class="ad-label">Server IP (whitelist)</span>
+                  <span class="ad-value">{{ account?.kotakSeenIp || '—' }}</span>
+                </div>
+              } @else {
+                <div class="account-row">
+                  <span class="ad-label">Token Status</span>
+                  <span class="ad-value expiry">{{ formatExpiry(account?.expiresAt) }}</span>
+                </div>
+              }
             </div>
 
+            @if (meta.name === 'kotak' && account?.lastLoginError) {
+              <div class="reauth-banner">
+                <i class="pi pi-exclamation-triangle"></i>
+                <span>{{ account?.lastLoginError }}</span>
+              </div>
+            }
+
             <!-- Re-auth needed banner (token lapsed) -->
-            @if (account?.needsReauth) {
+            @if (account?.needsReauth && meta.name !== 'kotak') {
               <div class="reauth-banner">
                 <i class="pi pi-exclamation-triangle"></i>
                 <span>Your session has expired. Reconnect to resume trading — your saved API keys are reused, no need to re-enter them.</span>
