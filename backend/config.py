@@ -40,9 +40,9 @@ class Settings(BaseSettings):
     # a mismatch with the IP Kotak reports at login is flagged on the account.
     kotak_expected_static_ip: str = ""
 
-    # Delta Exchange — Indian endpoint for BTC option strategies.
+    # Delta Exchange — Indian endpoint (broker kept for future crypto strategies).
     delta_exchange_base_url: str = "https://api.india.delta.exchange/v2"
-    # USD → INR conversion rate used for BTC option PnL display.
+    # USD → INR conversion rate used for crypto PnL display.
     usd_to_inr_rate: float = 85.0
 
     # Firebase
@@ -88,6 +88,10 @@ class Settings(BaseSettings):
     order_status_timeout_seconds: float = 3.0
 
     # MCX Crude Oil Mini (CRUDEOILM) straddle.
+    # Master switch for NEW crude entries. Set CRUDE_TRADING_ENABLED=false to stop all crude
+    # entries (e.g. while brokers have MCX API orders disabled). Exits still run, so any leg
+    # that is already open is still closed at 23:24.
+    crude_trading_enabled: bool = True
     crude_entry_time: str = "15:30"
     crude_exit_time: str = "23:24"
     # Contract selection near option expiry: trade the nearest option expiry that is at least

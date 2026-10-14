@@ -215,3 +215,9 @@ def test_live_feed_keys():
     assert lf.upstox_key_for({"broker": "jainam", "instrumentKey": "4455", "exchange": "MCX"}) is None
     assert lf.upstox_key_for({"broker": "jainam", "instrumentKey": "43427"}) == "NSE_FO|43427"
     assert lf.upstox_key_for({"broker": "upstox", "instrumentKey": "NSE_FO|43427"}) == "NSE_FO|43427"
+
+
+def test_market_data_functions_used_elsewhere_exist():
+    # Guards against a market_data_service rewrite silently dropping helpers other modules call.
+    for name in ("get_atm_data", "get_option_ltp", "get_ltps", "get_nifty_spot", "atm_from_chain"):
+        assert callable(getattr(md, name, None)), name

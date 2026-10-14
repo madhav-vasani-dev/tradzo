@@ -19,11 +19,6 @@ Crude Oil Mini — MCX CRUDEOILM straddle (Mon–Fri):
 Kotak Neo (Mon–Fri):
   08:45     kotak_daily_login     — fresh TOTP + MPIN session for every connected account
 
-BTC option selling (every day):
-  16:56     pre_entry_check_btc   — validate Delta accounts, set status="ready"
-  17:00:45  execute_btc_entry     — pre-stage, then sell ATM BTC CE + PE at 17:01:00
-  17:29     execute_btc_exit      — cancel SL orders, square off BTC positions
-
 Continuous:
   every minute  sync_order_statuses — poll open positions for SL/target hits
 
@@ -208,31 +203,6 @@ def start_scheduler() -> AsyncIOScheduler | None:
         _run_sync(crude_execution.eod_cleanup_crude),
         CronTrigger(day_of_week=_WEEKDAYS, hour=eod_at.hour, minute=eod_at.minute, timezone=IST),
         id="eod_cleanup_crude",
-        replace_existing=True,
-    )
-
-    # ── 16:56 — BTC pre-entry check (5 min before the 17:01 BTC entry) ────────
-    _scheduler.add_job(
-        _run_sync(execution_service.pre_entry_check_btc),
-        CronTrigger(day_of_week="*", hour=16, minute=56, timezone=IST),
-        id="pre_entry_check_btc",
-        replace_existing=True,
-    )
-
-    # ── 17:00:45 — Pre-stage, then sell ATM BTC CE + PE at 17:01:00 sharp ─────
-    _scheduler.add_job(
-        _run_async(execution_service.execute_btc_entry),
-        _prestage_trigger(execution_service.BTC_ENTRY_TIME, "*"),
-        id="execute_btc_entry",
-        replace_existing=True,
-        misfire_grace_time=10,
-    )
-
-    # ── 17:29 — BTC exit: cancel SL orders, square off BTC positions (365 days) 
-    _scheduler.add_job(
-        _run_async(execution_service.execute_btc_exit),
-        CronTrigger(day_of_week="*", hour=17, minute=29, timezone=IST),
-        id="execute_btc_exit",
         replace_existing=True,
     )
 

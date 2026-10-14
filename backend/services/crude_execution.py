@@ -48,6 +48,11 @@ def pre_entry_check_crude() -> dict:
     entry itself never waits on a login. Also warms the Upstox MCX instrument cache.
     """
     today = ex._today()
+    if not getattr(settings, "crude_trading_enabled", True):
+        log.info("Crude pre-entry check skipped: CRUDE_TRADING_ENABLED=false.")
+        ex._log("pre_entry_check", "Crude Oil Mini is switched off (CRUDE_TRADING_ENABLED=false) — "
+                "no entry today.", "info", date_str=today)
+        return {"ready": 0, "skipped": 0, "disabled": True}
     deployments = [d for d in firebase_service.list_deployments_by_status("enabled")
                    if d.get("strategyCode") == CRUDE_CODE]
     accounts = ex._accounts_by_id()
@@ -231,6 +236,9 @@ async def execute_crude_entry(entry: str | None = None) -> dict:
 
     entry = entry or entry_time()
     today = ex._today()
+    if not getattr(settings, "crude_trading_enabled", True):
+        log.info("Crude entry skipped: CRUDE_TRADING_ENABLED=false.")
+        return {"placed": 0, "failed": 0, "skipped": 0, "disabled": True}
     target = ex.entry_target_dt(entry)
     t_start = time.monotonic()
 

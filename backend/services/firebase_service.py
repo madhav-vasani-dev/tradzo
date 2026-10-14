@@ -272,16 +272,25 @@ def update_user_strategy_status(doc_id: str, status: str) -> None:
     })
 
 
-def reset_all_strategy_statuses_to_enabled() -> int:
-    """Reset all non-paused userStrategies to 'enabled' (called at 08:00 AM).
+# Per-day statuses that the 08:00 reset clears back to "enabled". A deployment the user
+# disabled ("paused") or stopped — or one an admin paused — is a standing choice and must
+# stay off until someone turns it back on.
+DAILY_STATUSES = ("ready", "trade_active", "trade_closed", "disabled_today")
 
-    Returns the count of documents updated.
+
+def reset_all_strategy_statuses_to_enabled() -> int:
+    """Reset yesterday's per-day statuses to 'enabled' (called at 08:00 AM).
+
+    Only `DAILY_STATUSES` are reset; "paused" (user disabled), "stopped", "disabled" and
+    admin-paused deployments are left exactly as they are. Returns the count updated.
     """
     docs = get_db().collection("userStrategies").stream()
     count = 0
     for d in docs:
-        data = d.to_dict()
-        if not data.get("pausedByAdmin") and data.get("status") != "enabled":
+        data = d.to_dict() or {}
+        if data.get("pausedByAdmin"):
+            continue
+        if data.get("status") in DAILY_STATUSES:
             update_user_strategy_status(d.id, "enabled")
             count += 1
     return count

@@ -312,3 +312,39 @@ def test_cancel_is_resent_until_order_is_dead(env):
     assert summary["placed"] == 2
     assert fake.cancel_calls >= 3
     assert all(abs(v) == 2 for v in fake.net.values())   # no duplicate short
+
+
+def test_crude_switch_off_places_nothing(env, monkeypatch):
+    fake, store = env
+    monkeypatch.setattr(settings, "crude_trading_enabled", False)
+    out = run(crude_execution.execute_crude_entry(entry=datetime.now(IST).strftime("%H:%M")))
+    assert out.get("disabled") and out["placed"] == 0 and not fake.orders
+
+
+def test_daily_reset_keeps_user_disabled_deployments(monkeypatch):
+    from services import firebase_service as fb
+
+    class Doc:
+        def __init__(self, i, d):
+            self.id, self._d = i, d
+
+        def to_dict(self):
+            return self._d
+
+    docs = [Doc("a", {"status": "paused"}), Doc("b", {"status": "stopped"}),
+            Doc("c", {"status": "trade_closed"}), Doc("d", {"status": "disabled_today"}),
+            Doc("e", {"status": "ready", "pausedByAdmin": True}), Doc("f", {"status": "enabled"}),
+            Doc("g", {"status": "disabled"})]
+
+    class Coll:
+        def stream(self):
+            return docs
+
+    class DB:
+        def collection(self, name):
+            return Coll()
+    monkeypatch.setattr(fb, "get_db", lambda: DB())
+    changed = []
+    monkeypatch.setattr(fb, "update_user_strategy_status", lambda i, st: changed.append((i, st)))
+    assert fb.reset_all_strategy_statuses_to_enabled() == 2
+    assert changed == [("c", "enabled"), ("d", "enabled")]

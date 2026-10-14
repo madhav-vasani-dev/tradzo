@@ -4,7 +4,7 @@ Run once from the backend directory:
   python scripts/seed_crude_strategy.py
 
 Creates/updates strategies/crude-oil-mini-straddle and adds `supportedBrokers` to the existing
-Nifty / BTC strategy docs (merge — no other field is changed).
+Nifty strategy doc (merge — no other field is changed).
 """
 import os
 import sys
@@ -20,8 +20,7 @@ def main():
     db = get_db()
     db.collection("strategies").document("crude-oil-mini-straddle").set(CRUDE_OIL_MINI_DOC, merge=True)
     print("[OK] strategies/crude-oil-mini-straddle")
-    for doc_id, brokers in (("nifty-straddle", ["upstox", "jainam", "kotak"]),
-                            ("btc-option-selling", ["delta"])):
+    for doc_id, brokers in (("nifty-straddle", ["upstox", "jainam", "kotak"]),):
         ref = db.collection("strategies").document(doc_id)
         if ref.get().exists:
             ref.set({"supportedBrokers": brokers}, merge=True)

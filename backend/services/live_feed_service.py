@@ -25,9 +25,8 @@ its `marketDataKey` (the matching Upstox key, when one was recorded at entry) or
 Kotak's own quotes API through the client's session. Jainam MCX positions carry a
 `marketDataKey` too, because their bare token is not an NSE_FO token.
 
-Delta Exchange (BTC) is not on this websocket — its positions are marked from the existing
-Delta REST LTP endpoint on the same interval. BTC trades in a 30-minute window with two
-legs, so the request volume is negligible.
+Delta Exchange positions (if any) are not on this websocket — they are marked from the
+Delta REST LTP endpoint on the same interval.
 
 Robustness
 ----------
@@ -74,7 +73,7 @@ def upstox_key_for(position: dict) -> str | None:
     raw = str(position.get("instrumentKey") or "").strip()
     if not raw:
         return None
-    if position.get("strategyCode") == "BTC_OPTION_SELLING" or position.get("broker") == "delta":
+    if position.get("broker") == "delta":
         return None
     if position.get("broker") == "kotak" or raw.count("|") >= 2:
         return None                                  # Kotak key — marked via Kotak quotes
@@ -300,7 +299,7 @@ async def run_upstox_feed() -> None:
 
 async def _resolve_ltp(position: dict) -> float:
     """Current price for a position: websocket cache first, REST as a fallback."""
-    if position.get("strategyCode") == "BTC_OPTION_SELLING" or position.get("broker") == "delta":
+    if position.get("broker") == "delta":
         from services import delta_service
         try:
             return float(await delta_service.get_option_ltp(int(position["instrumentKey"])))
