@@ -632,6 +632,40 @@ async def _resolve_leg_instruments(staged: list[dict], atm_data: dict) -> None:
         await asyncio.gather(*lookups, return_exceptions=True)
 
 
+async def _refresh_strike_before_fire(staged: list[dict], atm_data: dict) -> bool:
+    """Re-read the spot just before T0; switch the strike if it no longer rounds to the same ATM.
+
+    The snapshot is taken several seconds early so instrument lookups can finish, which means
+    the strike can be picked from a price that has since moved. Returns True if it changed.
+    Any failure keeps the strike already chosen.
+    """
+    try:
+        fresh = await market_data_service.get_nifty_spot()
+        new_atm = market_data_service.get_atm_strike(fresh)
+        if new_atm == atm_data["atm_strike"]:
+            atm_data["spot"] = fresh
+            return False
+        picked = market_data_service.atm_from_chain(
+            atm_data["chain"], fresh, date.fromisoformat(atm_data["expiry"])
+        )
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Pre-fire spot refresh failed (%s) - keeping strike %s.", exc, atm_data.get("atm_strike"))
+        return False
+
+    old = atm_data["atm_strike"]
+    atm_data.update(picked)
+    log.warning("Spot moved to %.2f before firing: ATM strike %d -> %d.", fresh, old, picked["atm_strike"])
+    _log(
+        "entry_strike_adjusted",
+        f"Nifty moved to {fresh:.2f} just before entry - strike changed {old} -> {picked['atm_strike']}.",
+        "info",
+        date_str=_today(),
+        metadata={"oldStrike": old, "newStrike": picked["atm_strike"], "spot": fresh},
+    )
+    await _resolve_leg_instruments(staged, atm_data)
+    return True
+
+
 async def _resolve_kotak_nifty_keys(item: dict, atm_data: dict) -> None:
     """Kotak keys/LTPs for the Nifty ATM CE + PE from Kotak's own option chain."""
     from services import kotak_service
@@ -694,6 +728,12 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
         log.info("Entry: no eligible Nifty deployments (%d skipped).", skipped)
         return {"placed": 0, "failed": 0, "skipped": skipped, "elapsedSec": 0.0}
 
+    # Resolve the expiry now (T-15s) so the T-6s snapshot doesn't spend time on it.
+    try:
+        await market_data_service.get_nearest_expiry()
+    except Exception as exc:  # noqa: BLE001 — get_atm_data retries it properly
+        log.warning("Early expiry lookup failed: %s", exc)
+
     # ── Stage 2 (T-6s): market snapshot, as late as instrument resolution allows ──
     md_lead = max(0, int(getattr(settings, "entry_marketdata_lead_seconds", 6)))
     await _sleep_until(target - timedelta(seconds=md_lead), "entry:market-data")
@@ -726,6 +766,12 @@ async def execute_entry(entry_time: str = NIFTY_ENTRY_TIME) -> dict:
 
     # ── Stage 3 (still pre-T0): resolve every leg's broker instrument key ────────
     await _resolve_leg_instruments(staged, atm_data)
+
+    # ── Stage 3b: re-read the spot a moment before T0 and correct the strike if it moved ──
+    refresh_lead = float(getattr(settings, "entry_spot_refresh_lead_seconds", 0.6))
+    if refresh_lead > 0:
+        await _sleep_until(target - timedelta(seconds=refresh_lead), "entry:spot-refresh")
+        await _refresh_strike_before_fire(staged, atm_data)
     all_orders = [o for item in staged for o in item["orders"]]
 
     # ── Stage 4 + 5: fire at exactly T0, then protect + persist ─────────────────

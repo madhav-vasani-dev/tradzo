@@ -3,7 +3,7 @@
 Used by the execution engine at 12:00 PM to:
   1. Fetch the Nifty 50 spot price.
   2. Fetch the option chain to find ATM CE/PE instrument keys + LTPs.
-  3. Determine the current Tuesday expiry date.
+  3. Determine the nearest live expiry from Upstox's own contract list.
 
 All calls use the admin's market data access token (stored in token_store
 against the isMarketDataSource broker account).
@@ -11,6 +11,7 @@ against the isMarketDataSource broker account).
 No WebSocket is used in Phase 1. Price polling for P&L display is REST-based.
 """
 import logging
+import math
 from datetime import datetime, date, timedelta
 
 import httpx
@@ -28,22 +29,100 @@ IST = pytz.timezone("Asia/Kolkata")
 
 
 # ── Expiry helpers ────────────────────────────────────────────────────────────
+# The expiry is NEVER computed from a calendar rule. NSE moves it for holidays (and has
+# changed the weekday before), so it is read from Upstox's contract list instead.
 
-def get_current_tuesday_expiry() -> date:
-    """Return the current (or next) Tuesday's date — the Nifty weekly expiry.
+_expiry_cache: dict[str, date] = {}     # today's IST date -> chosen expiry
 
-    If today IS Tuesday, return today.
-    If today is Wednesday–Monday, return the coming Tuesday.
+
+def _today_ist() -> date:
+    return datetime.now(IST).date()
+
+
+def pick_nearest_expiry(expiries: list[date], today: date) -> date | None:
+    """The soonest expiry on or after `today` (today itself counts: expiry-day trading)."""
+    upcoming = sorted(e for e in expiries if e >= today)
+    return upcoming[0] if upcoming else None
+
+
+async def get_nifty_expiries(access_token: str | None = None) -> list[date]:
+    """Every live Nifty option expiry on/after today, from Upstox's option-contract list."""
+    token = access_token or _get_market_data_token()
+    if not token:
+        raise RuntimeError("No valid access token available for market data.")
+
+    async with httpx.AsyncClient(timeout=20) as client:
+        resp = await client.get(
+            f"{UPSTOX_BASE}/option/contract",
+            params={"instrument_key": NIFTY_INDEX_KEY},
+            headers=_auth_headers(token),
+        )
+    if resp.status_code != 200:
+        raise RuntimeError(f"Option contract list failed: {resp.status_code} {resp.text}")
+
+    today = _today_ist()
+    found: set[date] = set()
+    for row in resp.json().get("data") or []:
+        raw = row.get("expiry")
+        if not raw:
+            continue
+        try:
+            d = date.fromisoformat(str(raw)[:10])
+        except ValueError:
+            continue
+        if d >= today:
+            found.add(d)
+    return sorted(found)
+
+
+async def _probe_expiry_via_chain(token: str | None, today: date, days: int = 14) -> date | None:
+    """Fallback: walk forward from today and take the first date that HAS an option chain."""
+    for offset in range(days + 1):
+        d = today + timedelta(days=offset)
+        if d.weekday() >= 5:
+            continue
+        try:
+            if await get_option_chain(d, token):
+                log.info("Expiry found by probing the option chain: %s", d)
+                return d
+        except Exception as exc:  # noqa: BLE001 — a missing expiry just means no chain
+            log.debug("No chain for %s: %s", d, exc)
+    return None
+
+
+async def get_nearest_expiry(access_token: str | None = None, *, refresh: bool = False) -> date:
+    """The nearest live Nifty expiry, resolved from Upstox (cached for the day).
+
+    Order of trust: Upstox's contract list -> probing option chains day by day.
+    Raises RuntimeError only if neither can find one.
     """
-    today = date.today()
-    weekday = today.weekday()   # Monday=0, Tuesday=1, …
-    days_to_tuesday = (1 - weekday) % 7
-    return today if days_to_tuesday == 0 else today + timedelta(days=days_to_tuesday)
+    today = _today_ist()
+    key = today.isoformat()
+    if not refresh and key in _expiry_cache:
+        return _expiry_cache[key]
+
+    expiry: date | None = None
+    try:
+        expiry = pick_nearest_expiry(await get_nifty_expiries(access_token), today)
+    except Exception as exc:  # noqa: BLE001
+        log.warning("Contract-list expiry lookup failed (%s) - probing option chains instead.", exc)
+    if expiry is None:
+        expiry = await _probe_expiry_via_chain(access_token, today)
+    if expiry is None:
+        raise RuntimeError("Could not determine the Nifty option expiry from Upstox.")
+
+    _expiry_cache.clear()
+    _expiry_cache[key] = expiry
+    log.info("Nifty expiry resolved from Upstox: %s", expiry)
+    return expiry
 
 
 def get_atm_strike(spot: float, step: int = 50) -> int:
-    """Round spot price to nearest multiple of step (50 for Nifty)."""
-    return round(spot / step) * step
+    """Nearest multiple of `step` to spot; exact ties round UP (22725 -> 22750).
+
+    (Python's round() is banker's rounding, which sent 22725 down but 22775 up.)
+    """
+    return int(math.floor(spot / step + 0.5)) * step
 
 
 # ── Market data token ─────────────────────────────────────────────────────────
@@ -171,35 +250,14 @@ async def get_option_chain(
     return resp.json().get("data", [])
 
 
-async def get_atm_data(access_token: str | None = None) -> dict:
-    """One-shot helper that returns everything the execution engine needs at entry.
-
-    Returns:
-      {
-        "spot":         float,
-        "atm_strike":   int,
-        "expiry":       "YYYY-MM-DD",
-        "ce_key":       str,   # Upstox instrument key for CE leg
-        "pe_key":       str,   # Upstox instrument key for PE leg
-        "ce_ltp":       float,
-        "pe_ltp":       float,
-      }
-
-    Raises RuntimeError if data cannot be fetched.
-    """
-    spot = await get_nifty_spot(access_token)
+def atm_from_chain(chain: list[dict], spot: float, expiry: date) -> dict:
+    """Pick the ATM row for `spot` out of an already-fetched option chain."""
     atm = get_atm_strike(spot)
-    expiry = get_current_tuesday_expiry()
-
-    log.info("Nifty spot=%.2f  ATM=%d  expiry=%s", spot, atm, expiry)
-
-    chain = await get_option_chain(expiry, access_token)
-
     for row in chain:
         if int(row.get("strike_price", 0)) == atm:
             ce = row.get("call_options", {})
             pe = row.get("put_options", {})
-            result = {
+            return {
                 "spot": spot,
                 "atm_strike": atm,
                 "expiry": expiry.isoformat(),
@@ -208,69 +266,48 @@ async def get_atm_data(access_token: str | None = None) -> dict:
                 "ce_ltp": ce.get("market_data", {}).get("ltp", 0.0),
                 "pe_ltp": pe.get("market_data", {}).get("ltp", 0.0),
             }
-            log.info(
-                "ATM data: CE=%s ltp=%.2f | PE=%s ltp=%.2f",
-                result["ce_key"], result["ce_ltp"],
-                result["pe_key"], result["pe_ltp"],
-            )
-            return result
-
+    strikes = sorted(int(r.get("strike_price", 0)) for r in chain)
+    near = [k for k in strikes if abs(k - atm) <= 300]
     raise RuntimeError(
-        f"ATM strike {atm} not found in option chain for expiry {expiry}. "
-        f"Available strikes: {[r.get('strike_price') for r in chain[:5]]} …"
+        f"ATM strike {atm} (spot {spot:.2f}) not found in the option chain for expiry {expiry} "
+        f"({len(chain)} strikes; near spot: {near or strikes[:5]})."
     )
 
 
-async def get_option_ltp(
-    instrument_key: str,
-    access_token: str | None = None,
-) -> float:
-    """Fetch the current LTP for a single option instrument (for P&L display)."""
-    token = access_token or _get_market_data_token()
-    if not token:
-        return 0.0
+async def get_atm_data(access_token: str | None = None) -> dict:
+    """One-shot helper that returns everything the execution engine needs at entry.
 
-    url = f"{UPSTOX_BASE}/market-quote/ltp"
-    params = {"instrument_key": instrument_key}
+    Returns:
+      {
+        "spot":         float,
+        "atm_strike":   int,
+        "expiry":       "YYYY-MM-DD",   # resolved from Upstox, never calendar-guessed
+        "ce_key":       str,   # Upstox instrument key for CE leg
+        "pe_key":       str,   # Upstox instrument key for PE leg
+        "ce_ltp":       float,
+        "pe_ltp":       float,
+        "chain":        list,  # the full chain, so the strike can be re-picked on a fresher spot
+      }
 
-    try:
-        async with httpx.AsyncClient(timeout=10) as client:
-            resp = await client.get(url, params=params, headers=_auth_headers(token))
-        if resp.status_code != 200:
-            return 0.0
-        data = resp.json().get("data", {})
-        for val in data.values():
-            return float(val.get("last_price") or val.get("ltp") or 0.0)
-    except Exception as exc:  # noqa: BLE001
-        log.warning("LTP fetch failed for %s: %s", instrument_key, exc)
-    return 0.0
-
-
-async def get_ltps(instrument_keys: list[str], access_token: str | None = None) -> dict[str, float]:
-    """LTPs for several Upstox instrument keys in one call → {instrument_key: ltp}.
-
-    Upstox keys the response by "EXCHANGE:TRADINGSYMBOL", so each row is matched back to the
-    requested key through its `instrument_token` field. Missing/failed keys are omitted.
+    Raises RuntimeError if data cannot be fetched.
     """
-    keys = [k for k in dict.fromkeys(instrument_keys) if k]
-    if not keys:
-        return {}
-    token = access_token or _get_market_data_token()
-    if not token:
-        raise RuntimeError("No valid Upstox market-data token (connect the admin Upstox account).")
-    async with httpx.AsyncClient(timeout=10) as client:
-        resp = await client.get(f"{UPSTOX_BASE}/market-quote/ltp",
-                                params={"instrument_key": ",".join(keys)},
-                                headers=_auth_headers(token))
-    if resp.status_code != 200:
-        raise RuntimeError(f"Upstox LTP fetch failed: {resp.status_code} {resp.text[:200]}")
-    out: dict[str, float] = {}
-    rows = (resp.json() or {}).get("data", {}) or {}
-    for name, val in rows.items():
-        key = str(val.get("instrument_token") or "")
-        ltp = float(val.get("last_price") or val.get("ltp") or 0.0)
-        if key in keys and ltp > 0:
-            out[key] = ltp
-        elif len(keys) == 1 and ltp > 0:
-            out[keys[0]] = ltp
-    return out
+    spot = await get_nifty_spot(access_token)
+    expiry = await get_nearest_expiry(access_token)
+
+    chain = await get_option_chain(expiry, access_token)
+    if not chain:
+        # The cached/resolved expiry has no chain (rolled, or stale) - resolve again, once.
+        log.warning("No option chain for %s - re-resolving the expiry.", expiry)
+        expiry = await get_nearest_expiry(access_token, refresh=True)
+        chain = await get_option_chain(expiry, access_token)
+    if not chain:
+        raise RuntimeError(f"Option chain for expiry {expiry} is empty.")
+
+    result = atm_from_chain(chain, spot, expiry)
+    result["chain"] = chain
+    log.info(
+        "Nifty spot=%.2f ATM=%d expiry=%s | CE=%s ltp=%.2f | PE=%s ltp=%.2f",
+        spot, result["atm_strike"], expiry,
+        result["ce_key"], result["ce_ltp"], result["pe_key"], result["pe_ltp"],
+    )
+    return result

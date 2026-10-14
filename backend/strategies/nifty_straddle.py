@@ -2,7 +2,7 @@
 
 Rules
 -----
-Entry   : 12:00 PM — sell ATM Nifty CE + PE (current Tuesday expiry).
+Entry   : 12:00 PM — sell ATM Nifty CE + PE (nearest live expiry, resolved from Upstox).
 Stop-loss: 30 % above entry price per leg, placed as BUY SL-M at entry time.
 Exit    : 15:29 PM — cancel open SL orders, place BUY MARKET for all open legs.
 

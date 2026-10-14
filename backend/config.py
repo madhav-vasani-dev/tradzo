@@ -60,6 +60,10 @@ class Settings(BaseSettings):
     # How long before T0 the market snapshot is taken. Must be < entry_prestage_lead_seconds,
     # and large enough to cover the option-chain fetch plus any broker instrument lookups.
     entry_marketdata_lead_seconds: int = 6
+    # The strike chosen at the snapshot above can be several seconds stale by the time the
+    # orders fire. This long before T0 the spot is read AGAIN; if it now rounds to a
+    # different ATM strike, the strike (and broker keys) are switched before firing.
+    entry_spot_refresh_lead_seconds: float = 0.6
 
     # Orders
     # Product code for equity/F&O legs. "delivery" = Upstox "D" / Jainam "NRML" (carry
